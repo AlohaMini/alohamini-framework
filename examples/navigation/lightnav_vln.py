@@ -1,4 +1,4 @@
-"""Stream the AlohaMini forward camera to a LightNav-0 VLN server over WebSocket."""
+"""Stream one AlohaMini camera to a LightNav-0 VLN server over WebSocket."""
 
 import argparse
 import base64
@@ -46,8 +46,15 @@ def velocity(waypoint):
                  for v, scale, limit in zip(waypoint, scales, limits))
 
 
+def camera_topic(camera):
+    if camera in ("forward", "chest"):
+        return f"/alohamini/cameras/{camera}/image_raw/compressed"
+    if camera.startswith("/"):
+        return camera
+    raise ValueError("Select forward, chest, or an absolute compressed-image topic")
+
+
 def main():
-    from lightnav_clearance import GuardedPrediction
     import rclpy
     import websocket
     from geometry_msgs.msg import Twist
@@ -57,12 +64,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", required=True)
     parser.add_argument("--instruction", required=True)
-    parser.add_argument("--camera", default="/alohamini/cameras/forward/image_raw/compressed")
+    parser.add_argument("--camera", default="forward", type=camera_topic,
+                        help="forward, chest, or an absolute compressed-image topic")
     parser.add_argument("--drive", action="store_true", help="Publish to the robot /cmd_vel")
     args = parser.parse_args()
     if not args.instruction.strip():
         parser.error("provide a navigation instruction")
-    guard = GuardedPrediction()
     rclpy.init(args=[])
     node = rclpy.create_node("alohamini_lightnav_vln")
     topic = "/cmd_vel" if args.drive else "/alohamini/lightnav/preview_cmd_vel"
@@ -91,31 +98,24 @@ def main():
             rclpy.spin_once(node, timeout_sec=period)
             msg, latest = latest, None
             command = Twist()
-            valid = False
             if msg is not None:
                 stamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
                 age = (node.get_clock().now().nanoseconds - stamp) / 1e9
                 if stamp > 0 and (previous_stamp is None or stamp > previous_stamp) and 0 <= age < max_age:
                     previous_stamp = stamp
-                    waypoint, evidence = guard.evaluate(predict, ws, seq, bytes(msg.data), args.instruction,
-                                                        stamp, lambda: pub.publish(Twist()))
+                    waypoint = predict(ws, seq, bytes(msg.data), args.instruction)
                     seq += 1
                     if waypoint is None:
                         node.get_logger().info("LightNav reported goal reached")
                         break
                     age = (node.get_clock().now().nanoseconds - stamp) / 1e9
                     if 0 <= age < max_age and time.monotonic() - started < max_age:
-                        valid = True
                         command.linear.x, command.linear.y, command.angular.z = velocity(waypoint)
-                        guard.constrain(command, evidence)
-            if not valid:
-                guard.gate.update(False, previous_stamp or 0)
             pub.publish(command)
             time.sleep(max(0, period - (time.monotonic() - started)))
     finally:
         if rclpy.ok():
             pub.publish(Twist())
-        guard.close()
         if ws is not None:
             ws.close()
         node.destroy_node()
