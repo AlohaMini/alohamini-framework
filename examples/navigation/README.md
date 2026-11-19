@@ -2,17 +2,29 @@
 
 Use a [LightNav-0 navigation server](https://github.com/lightorigins/LightNav-0/blob/main/docs/DEPLOYMENT.md)
 started with `--task vln` in its own GPU environment. The adapter runs with the
-[AlohaMini ROS 2 bridge](../../docs/ros2.md) using the ROS system Python and
-the `python3-websocket` (websocket-client) package. The forward compressed
-image topic must be publishing, with image timestamps in the ROS clock domain.
+[AlohaMini ROS 2 bridge](../../docs/ros2.md). From the checkout root, load the
+repository's ROS Conda environment and install the WebSocket client in that
+environment:
+
+```bash
+source ros2/env.bash
+python -m pip install websocket-client
+```
+
+For a ROS environment installed in a custom prefix, export
+`ALOHAMINI_ROS_ENV=/absolute/path/to/environment` before sourcing the script.
+The forward compressed image topic must be publishing, with image timestamps
+in the ROS clock domain.
 
 Preview one instruction with the command bridge disabled:
 
 ```bash
 python3 examples/navigation/lightnav_vln.py --server ws://127.0.0.1:8051 \
   --instruction "Go down the corridor and stop at the door on the left."
-ros2 topic echo /alohamini/lightnav/preview_cmd_vel  # in a second ROS terminal
 ```
+
+In a second terminal with the same ROS environment loaded, run
+`ros2 topic echo /alohamini/lightnav/preview_cmd_vel` to observe the output.
 
 The client opens one session per instruction, sends at most four images per
 second, and uses the first robot-local waypoint. Forward and left map to
