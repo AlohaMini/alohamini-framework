@@ -8,8 +8,13 @@ environment:
 
 ```bash
 source ros2/env.bash
-python -m pip install websocket-client
+python -m pip install websocket-client onnxruntime opencv-python-headless
 ```
+
+Set `ALOHAMINI_FLOOR_MODEL` to a local copy of
+[Xenova/segformer-b0-finetuned-ade-512-512](https://huggingface.co/Xenova/segformer-b0-finetuned-ade-512-512/tree/d3e5499fa8701ff0453ca940a8dfeae39b2f1504)
+containing `config.json`, `preprocessor_config.json`, and `onnx/model.onnx`.
+The site default is `~/workspace/jjy/models/segformer-b0-ade`.
 
 For a ROS environment installed in a custom prefix, export
 `ALOHAMINI_ROS_ENV=/absolute/path/to/environment` before sourcing the script.
@@ -36,8 +41,12 @@ its independent velocity watchdog.
 
 For supervised hardware testing after preview, enable the bridge's velocity
 command channel as described in the ROS guide and add `--drive` to the
-client invocation. Only the base velocity topic is published. This example
-does not provide odometry-based MPC or an obstacle detector.
+client invocation. Only the base velocity topic is published. The forward RGB guard estimates floor coverage and local contrast in a trapezoid
+in the lower center of the 640 x 480 frame. Obstructions hold both translation axes
+at zero while allowing the requested turn. Releasing translation takes at least
+three fresh clear frames spanning 0.5 seconds. Unknown image geometry or poor
+visibility holds all axes. The region and thresholds depend on camera mounting
+and floor appearance. This estimate has no depth or swept-footprint measurement.
 
 Run the wire protocol and conversion tests without ROS or a model:
 
