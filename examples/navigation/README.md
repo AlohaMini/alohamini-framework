@@ -47,6 +47,10 @@ python3 -m unittest discover -s examples/navigation
 
 ### Workstation dual-camera trial
 
+For the repository client, add
+`--chest-camera /alohamini/cameras/chest/image_raw/compressed` to the preview
+command above. The workstation uses the vLLM backend with a batch size of two.
+
 The optional jjy launcher opens one LightNav WebSocket session per camera on a
 shared model server. Each session receives its own chronological JPEG sequence
 and the same instruction. Only pairs with capture times within 80 ms enter a

@@ -48,7 +48,8 @@ def velocity(waypoint):
 
 def main():
     import rclpy
-    import websocket
+    from functools import partial
+    from lightnav_views import FrameSet, ViewSessions
     from geometry_msgs.msg import Twist
     from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import CompressedImage
@@ -57,58 +58,60 @@ def main():
     parser.add_argument("--server", required=True)
     parser.add_argument("--instruction", required=True)
     parser.add_argument("--camera", default="/alohamini/cameras/forward/image_raw/compressed")
+    parser.add_argument("--chest-camera", metavar="TOPIC", help="check the forward waypoint against a synchronized chest view")
     parser.add_argument("--drive", action="store_true", help="Publish to the robot /cmd_vel")
     args = parser.parse_args()
     if not args.instruction.strip():
         parser.error("provide a navigation instruction")
+    if args.chest_camera == args.camera:
+        parser.error("provide distinct forward and chest camera topics")
     rclpy.init(args=[])
     node = rclpy.create_node("alohamini_lightnav_vln")
     topic = "/cmd_vel" if args.drive else "/alohamini/lightnav/preview_cmd_vel"
     pub = node.create_publisher(Twist, topic, 1)
-    latest = None
-
-    def receive(msg):
-        nonlocal latest
-        latest = msg
-
-    qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
-    node.create_subscription(CompressedImage, args.camera, receive, qos)
     period = 0.25
     max_age = 0.45  # shorter than the default 0.5 s bridge watchdog
+    cameras = {"forward": args.camera}
+    if args.chest_camera:
+        cameras["chest"] = args.chest_camera
+    frames = FrameSet(cameras, max_age=max_age)
+
+    def receive(name, msg):
+        stamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+        frames.put(name, stamp, msg.data)
+
+    qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+    for name, camera_topic in cameras.items():
+        node.create_subscription(CompressedImage, camera_topic, partial(receive, name), qos)
     seq = 0
-    previous_stamp = None
-    ws = None
+    sessions = None
     try:
-        ws = websocket.create_connection(args.server, timeout=2.0)
-        exchange(ws, "login", {"clientId": "alohamini"})
-        exchange(ws, "reset", {})
-        ws.settimeout(max_age)
+        sessions = ViewSessions(args.server, cameras, max_age)
         node.get_logger().info(f"LightNav velocity output: {topic}")
         while rclpy.ok():
             started = time.monotonic()
-            rclpy.spin_once(node, timeout_sec=period)
-            msg, latest = latest, None
+            pair = None
+            while pair is None and time.monotonic() - started < period:
+                rclpy.spin_once(node, timeout_sec=0.025)
+                pair = frames.take(node.get_clock().now().nanoseconds)
             command = Twist()
-            if msg is not None:
-                stamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+            if pair is not None:
+                stamp, images = pair
+                waypoint, reason = sessions.step(seq, images, args.instruction)
+                seq += 1
+                if waypoint is None:
+                    node.get_logger().info(reason)
+                    break
                 age = (node.get_clock().now().nanoseconds - stamp) / 1e9
-                if stamp > 0 and (previous_stamp is None or stamp > previous_stamp) and 0 <= age < max_age:
-                    previous_stamp = stamp
-                    waypoint = predict(ws, seq, bytes(msg.data), args.instruction)
-                    seq += 1
-                    if waypoint is None:
-                        node.get_logger().info("LightNav reported goal reached")
-                        break
-                    age = (node.get_clock().now().nanoseconds - stamp) / 1e9
-                    if 0 <= age < max_age and time.monotonic() - started < max_age:
-                        command.linear.x, command.linear.y, command.angular.z = velocity(waypoint)
+                if 0 <= age < max_age and time.monotonic() - started < max_age:
+                    command.linear.x, command.linear.y, command.angular.z = velocity(waypoint)
             pub.publish(command)
             time.sleep(max(0, period - (time.monotonic() - started)))
     finally:
         if rclpy.ok():
             pub.publish(Twist())
-        if ws is not None:
-            ws.close()
+        if sessions is not None:
+            sessions.close()
         node.destroy_node()
         rclpy.try_shutdown()
 
