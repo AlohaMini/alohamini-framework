@@ -97,10 +97,18 @@ class FloorDetector:
         diff = lab.astype(np.float32) - cv2.medianBlur(lab, 25).astype(np.float32)
         diff[:,:,0] *= 0.55
         contrast = (np.sum(diff * diff, axis=2) > 19**2) & self.corridor
-        contrast_area = largest_patch(contrast)
+        binary = contrast.astype(np.uint8)
+        _, components, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        # Short thin edges can have substantial area without a solid interior.
+        # Keep large thin regions as well as smaller regions with a compact core.
+        distance = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+        core_labels = np.unique(components[distance >= 2.5])
+        areas = stats[:, cv2.CC_STAT_AREA]
+        contrast_area = int(areas[1:].max()) if len(areas) > 1 else 0
+        compact_area = int(areas[core_labels].max()) if core_labels.size else 0
         if nonfloor_area >= 18 or fraction < 0.97:
             reason = "nonfloor_or_uncertain"
-        elif contrast_area >= 24:
+        elif compact_area >= 24 or contrast_area >= 64:
             reason = "local_obstruction"
         else:
             reason = "clear"
