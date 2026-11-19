@@ -42,8 +42,12 @@ its independent velocity watchdog.
 For supervised hardware testing after preview, enable the bridge's velocity
 command channel as described in the ROS guide and add `--drive` to the
 client invocation. Only the base velocity topic is published. The forward RGB guard estimates floor coverage and local contrast in a trapezoid
-in the lower center of the 640 x 480 frame. Obstructions hold both translation axes
-at zero while allowing the requested turn. Releasing translation takes at least
+in the lower center of the 640 x 480 frame. On obstruction the adapter checks the lower center and two side regions. With a
+visible side route it holds a turn direction and scales requested forward speed
+to 25% (at most 0.045 m/s) for up to one second per encounter. Close obstacles
+suppress translation. The avoidance yaw target is at least 0.32 rad/s and scales
+the requested magnitude by 1.25, within the configured yaw cap. Without a
+visible side route all axes hold at zero. Releasing translation takes at least
 three fresh clear frames spanning 0.5 seconds. Unknown image geometry or poor
 visibility holds all axes. The region and thresholds depend on camera mounting
 and floor appearance. This estimate has no depth or swept-footprint measurement.
