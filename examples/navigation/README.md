@@ -44,26 +44,3 @@ Run the wire protocol and conversion tests without ROS or a model:
 ```bash
 python3 -m unittest discover -s examples/navigation
 ```
-
-### Workstation dual-camera trial
-
-For the repository client, add
-`--chest-camera /alohamini/cameras/chest/image_raw/compressed` to the preview
-command above. The workstation uses the vLLM backend with a batch size of two.
-
-The optional jjy launcher opens one LightNav WebSocket session per camera on a
-shared model server. Each session receives its own chronological JPEG sequence
-and the same instruction. Only pairs with capture times within 80 ms enter a
-prediction. The oldest image must still be under 450 ms old when the reply is
-used. This requires aligned Pi and workstation clocks.
-
-The forward session supplies the robot-local waypoint. A stop from either view
-ends the trial. If both predict at least 3 cm of translation and their headings
-differ by more than 60 degrees, or their turns have opposite signs and both
-exceed 0.1 rad in magnitude (including equality), the client holds zero velocity
-for that pair. These thresholds are experimental. A chest stop or disagreement
-can indicate a viewpoint mismatch. Neither is a distance measurement.
-
-With the Pi Host publishing both cameras (`--cameras forward chest`), the jjy
-workstation launcher accepts `--dual-camera --preview` for read-only evaluation
-and `--dual-camera` for an attended trial. Single-camera operation is the default.
