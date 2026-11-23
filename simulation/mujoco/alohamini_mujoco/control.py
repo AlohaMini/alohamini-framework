@@ -17,6 +17,9 @@ import mujoco
 import numpy as np
 from scipy.optimize import least_squares
 
+from alohamini.simulation.actuators import ServoIntegral, gravity_position_targets
+
+from .actuators import JointActuator, ServoReference
 from .audit import contacts
 from .frames import rigid_transform
 
@@ -88,14 +91,17 @@ class FollowerSettings:
     start_linear_tolerance_m: float = 1e-7
     penetration_tolerance_m: float = 0.0005
     joint_gains: Mapping = field(default_factory=dict)
+    feedforward: str = "auto"
 
     def __post_init__(self):
         if any(
             isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v) or v <= 0
             for name, v in vars(self).items()
-            if name != "joint_gains"
+            if name not in ("joint_gains", "feedforward")
         ):
             raise ValueError("Follower settings must be finite and positive")
+        if self.feedforward not in ("auto", "none", "gravity", "bias"):
+            raise ValueError("Feedforward must be auto, none, gravity or bias")
         if not isinstance(self.joint_gains, Mapping):
             raise ValueError("Joint gains must map joint names to kp and kd")
         gains = {}
@@ -117,9 +123,25 @@ class FollowerSettings:
 
     def to_dict(self):
         return {
-            **{name: float(value) for name, value in vars(self).items() if name != "joint_gains"},
+            **{
+                name: float(value)
+                for name, value in vars(self).items()
+                if name not in ("joint_gains", "feedforward")
+            },
             "joint_gains": {name: dict(value) for name, value in self.joint_gains.items()},
+            "feedforward": self.feedforward,
         }
+
+
+def gravity_generalized_force(model, data, jacobian=None):
+    """Return G(q) after mj_forward, excluding velocity-dependent bias forces.
+
+    The world subtree COM includes every body's gravity in the same world frame
+    as model.opt.gravity. Its Jacobian handles fixed bases and free objects.
+    """
+    jacobian = np.empty((3, model.nv)) if jacobian is None else jacobian
+    mujoco.mj_jacSubtreeCom(model, data, jacobian, 0)
+    return -jacobian.T @ (model.body_subtreemass[0] * model.opt.gravity)
 
 
 class DynamicFollower:
@@ -154,6 +176,26 @@ class DynamicFollower:
         self.qpos_ids = self.model.jnt_qposadr[self.joint_ids]
         self.dof_ids = self.model.jnt_dofadr[self.joint_ids]
         self.effort_limits = self.model.actuator_ctrlrange[:, 1].copy()
+        profiles = robot.manifest.get("actuation", {}).get("joints", {})
+        conflict = settings.joint_gains.keys() & profiles.keys()
+        if conflict:
+            raise ValueError(f"Change identified gains in the actuator profile: {sorted(conflict)}")
+        self.servos = {
+            self.names.index(name): JointActuator(**values) for name, values in profiles.items()
+        }
+        for index, servo in self.servos.items():
+            self.effort_limits[index] = servo.peak_effort_Nm
+        self.references = {
+            index: ServoReference(servo, self.data.qpos[self.qpos_ids[index]], self.data.time)
+            for index, servo in self.servos.items()
+        }
+        self.integrals = {
+            index: ServoIntegral(servo)
+            for index, servo in self.servos.items()
+            if servo.ki_Nm_per_rad_s
+        }
+        self._gravity_jacobian = np.empty((3, self.model.nv))
+        self.position_feedforward = np.zeros(len(self.names))
         self.kinds = [robot.description.joints[n].kind for n in self.names]
         self.target = self.data.qpos[self.qpos_ids].copy()
         self.target_velocity = np.zeros(len(self.names))
@@ -176,17 +218,100 @@ class DynamicFollower:
         for name, gains in settings.joint_gains.items():
             index = self.names.index(name)
             self.kp[index], self.kd[index] = gains["kp"], gains["kd"]
+        for index, servo in self.servos.items():
+            self.kp[index], self.kd[index] = servo.kp_Nm_per_rad, servo.kd_Nm_s_per_rad
+
+    def controller_state(self):
+        return {
+            "target": self.target.tolist(),
+            "target_velocity": self.target_velocity.tolist(),
+            "references": {self.names[i]: ref.state() for i, ref in self.references.items()},
+            "integrals": {self.names[i]: state.state() for i, state in self.integrals.items()},
+        }
+
+    def restore_controller_state(self, state):
+        expected = {self.names[i] for i in self.references}
+        if set(state["references"]) != expected:
+            raise ValueError("Controller state actuator names differ from the model")
+        for key in ("target", "target_velocity"):
+            values = np.asarray(state[key], dtype=float)
+            if values.shape != self.target.shape or not np.isfinite(values).all():
+                raise ValueError("Controller state needs finite values for every driven joint")
+            getattr(self, key)[:] = values
+        for index, reference in self.references.items():
+            reference.restore(state["references"][self.names[index]])
+            if not math.isclose(reference.time_s, self.data.time, rel_tol=0, abs_tol=1e-9):
+                raise ValueError("Controller state time differs from physics")
+        integral_states = state.get("integrals", {})
+        if set(integral_states) != {self.names[i] for i in self.integrals}:
+            raise ValueError("Controller state integral names differ from the model")
+        for index, integral in self.integrals.items():
+            integral.restore(integral_states[self.names[index]])
 
     def step(self):
         data = self.data
         mujoco.mj_forward(self.model, data)
+        mode = self.settings.feedforward
+        feedforward = np.zeros(len(self.names))
+        if mode in ("auto", "bias"):
+            feedforward[:] = data.qfrc_bias[self.dof_ids]
+        elif mode == "gravity":
+            feedforward[:] = gravity_generalized_force(self.model, data, self._gravity_jacobian)[
+                self.dof_ids
+            ]
+        if mode == "auto":
+            # Measured servo baselines have no external feedforward. Generic
+            # simulation drives retain their existing bias compensation.
+            feedforward[list(self.servos)] = 0
         effort = (
             self.kp * (self.target - data.qpos[self.qpos_ids])
             + self.kd * (self.target_velocity - data.qvel[self.dof_ids])
-            + data.qfrc_bias[self.dof_ids]
+            + feedforward
         )
         saturated = np.abs(effort) > self.effort_limits
         data.ctrl[:] = np.clip(effort, -self.effort_limits, self.effort_limits)
+        self.position_feedforward[:] = 0
+        for index, servo in self.servos.items():
+            joint = self.joint_ids[index]
+            lower, upper = self.model.jnt_range[joint]
+            goal = gravity_position_targets(
+                self.target[index],
+                feedforward[index],
+                servo.kp_Nm_per_rad,
+                lower,
+                upper,
+                calibrated_gain=servo.gravity_position_gain_rad_per_Nm,
+            )
+            self.position_feedforward[index] = goal - self.target[index]
+            reference, velocity = self.references[index].advance(
+                float(goal), float(data.time), float(self.model.opt.timestep)
+            )
+            effective = (
+                reference
+                + servo.reference_velocity_gain_Nm_s_per_rad / servo.kp_Nm_per_rad * velocity
+            )
+            if index in self.integrals:
+                q = data.qpos[self.qpos_ids[index]]
+                pd_effort = (
+                    servo.kp_Nm_per_rad * (effective - q)
+                    - servo.kd_Nm_s_per_rad * data.qvel[self.dof_ids[index]]
+                )
+                integral = self.integrals[index]
+                request = effective + integral.effort / servo.kp_Nm_per_rad
+                blocked = (request < lower and reference < q) or (request > upper and reference > q)
+                effective += (
+                    integral.advance(
+                        reference - q, float(self.model.opt.timestep), pd_effort, blocked=blocked
+                    )
+                    / servo.kp_Nm_per_rad
+                )
+            control = float(np.clip(effective, lower, upper))
+            effort[index] = (
+                servo.kp_Nm_per_rad * (control - data.qpos[self.qpos_ids[index]])
+                - servo.kd_Nm_s_per_rad * data.qvel[self.dof_ids[index]]
+            )
+            saturated[index] = abs(effort[index]) > servo.peak_effort_Nm
+            data.ctrl[index] = control
         mujoco.mj_step(self.model, data)
         if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
             raise RuntimeError("Nonfinite dynamics state")
@@ -251,7 +376,7 @@ class DynamicFollower:
             saturated_steps += self.step()
             expected, _ = trajectory.reference(float(self.data.time) - begin)
             max_error = np.maximum(max_error, np.abs(self.data.qpos[position_ids] - expected))
-            peak_torque = np.maximum(peak_torque, np.abs(self.data.ctrl))
+            peak_torque = np.maximum(peak_torque, np.abs(self.data.actuator_force))
             peak_speed = np.maximum(peak_speed, np.abs(self.data.qvel[self.dof_ids]))
             for index, name in enumerate(self.names):
                 joint = self.robot.description.joints[name]
@@ -317,9 +442,13 @@ class DynamicFollower:
                 "kp": self.kp.tolist(),
                 "kd": self.kd.tolist(),
                 "derivation": (
+                    "profiled joints use recorded SI actuator gains; other joints use "
+                    if self.servos
+                    else ""
+                )
+                + (
                     "diagonal effective inertia at initialization; "
-                    "kp=I*(2*pi*f)^2, kd=2*zeta*I*2*pi*f; "
-                    "joint_gains explicitly override selected joints"
+                    "kp=I*(2*pi*f)^2, kd=2*zeta*I*2*pi*f; joint_gains override selected joints"
                 ),
             },
         }
@@ -354,7 +483,11 @@ def gravity_load_report(robot, positions=None, *, reference_data=None):
     names = tuple(robot.model.actuator(i).name for i in range(robot.model.nu))
     dofs = [robot.model.jnt_dofadr[robot.model.joint(n).id] for n in names]
     effort = data.qfrc_bias[dofs]
-    limits = robot.model.actuator_ctrlrange[:, 1]
+    limits = robot.model.actuator_ctrlrange[:, 1].copy()
+    continuous = robot.manifest.get("actuation", {}).get("continuous_effort_limits_Nm", {})
+    for i, name in enumerate(names):
+        if name in continuous:
+            limits[i] = continuous[name]
     utilization = np.abs(effort) / limits
     overloaded = utilization > 1 + 1e-12
     return {

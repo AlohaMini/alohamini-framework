@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import mujoco
@@ -204,6 +205,8 @@ def main(argv=None):
         )
         command.add_argument("--collision-bundle", type=_path_argument)
         command.add_argument("--inertial-bundle", type=_path_argument)
+        command.add_argument("--actuator-profile", type=_path_argument)
+    view.add_argument("--feedforward", choices=("auto", "none", "gravity", "bias"))
     args = parser.parse_args(argv)
     if args.operation == "evaluate" and not (args.libero_bundle and args.scene_config):
         parser.error("evaluate requires --libero-bundle and --scene-config")
@@ -273,6 +276,7 @@ def main(argv=None):
                 timestep=configuration.get("timestep_s", 0.001),
                 collision_bundle=args.collision_bundle,
                 inertial_bundle=args.inertial_bundle,
+                actuator_profile=args.actuator_profile,
             ),
             scene=scene,
         )
@@ -312,6 +316,10 @@ def main(argv=None):
         if args.operation == "view":
             from .viewer import run_viewer
 
+            if args.feedforward is not None:
+                follower_settings = replace(
+                    follower_settings or FollowerSettings(), feedforward=args.feedforward
+                )
             run_viewer(
                 robot,
                 trajectory,

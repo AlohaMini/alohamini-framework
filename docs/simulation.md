@@ -53,6 +53,34 @@ In standard `view`, left double-click selects a link; Ctrl + right drag applies 
 
 The `alohamini-mujoco` window saves `Print data`, model exports, and screenshots under `~/Alohamini_workspace/simulation/viewer/` by default, respecting `ALOHAMINI_WORKSPACE`. Relative command paths resolve from the launch directory.
 
+## Servo models and compensation
+
+Load measured servo parameters from JSON using `--actuator-profile`:
+
+```bash
+alohamini-mujoco view --actuator-profile /path/to/actuators.json --paused
+```
+
+The file uses the `alohamini-actuators-v1` format with `robot_model`, `joints` keyed by URDF joint name, and `provenance` documenting measurement conditions and applicability. Revolute-joint parameters are:
+
+| Field | Unit |
+| --- | --- |
+| `kp_Nm_per_rad`, `kd_Nm_s_per_rad` | N·m/rad, N·m·s/rad |
+| `friction_Nm`, `peak_effort_Nm` | N·m |
+| `velocity_rad_s`, `acceleration_rad_s2` | rad/s, rad/s² |
+| `delay_s` (default 0) | s |
+| `reference_velocity_gain_Nm_s_per_rad` (default 0) | N·m·s/rad |
+| `gravity_position_gain_rad_per_Nm` (optional) | rad/(N·m) |
+| `ki_Nm_per_rad_s` (default 0) | N·m/(rad·s) |
+| `integral_effort_limit_Nm`, `integral_deadband_rad` | N·m, rad |
+| `integral_period_s` (default: update every physics step) | s |
+
+With I enabled, integral torque limits must be positive and no greater than peak torque.
+
+`--feedforward auto` is the default: measured joints use the file's servo response, while others use simulated PD with gravity/Coriolis feedforward. `--feedforward gravity` compensates gravity only; measured joints use calibrated position-feedforward gain, falling back to `1/kp_Nm_per_rad` when omitted. Position feedforward respects joint travel, velocity, acceleration, and peak-torque limits. `none` disables all external feedforward; `bias` compensates the full dynamics bias. Action JSON `controller.feedforward` accepts the same values.
+
+`peak_effort_Nm` limits instantaneous torque; URDF `effort` is used for continuous-load checks. Parameters must match actual servos, PID, power supply, and installation conditions. Validate compensation with hardware measurements before deployment.
+
 ## ManiSkill and RoboTwin
 
 View the same scene in the ManiSkill environment:

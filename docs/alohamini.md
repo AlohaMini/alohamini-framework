@@ -29,6 +29,20 @@ AM-ARM leaders use 5 V; followers use 12 V.
 
 For EDU sensor naming, driver startup, mapping, and navigation, see [EDU sensors, mapping, and navigation](ros2-navigation.md).
 
+### Wired connection (Linux / NetworkManager)
+
+Connect the PC and Raspberry Pi by Ethernet. Choose different static IP addresses with the same subnet and prefix length, separate from Wi-Fi. Run the following on each device, replacing the connection name, local wired IP, prefix length, and interface:
+
+```bash
+nmcli device status
+sudo nmcli connection modify "<CONNECTION>" \
+  connection.autoconnect yes ipv4.method manual ipv4.addresses "<LOCAL_WIRED_IP>/<PREFIX_LENGTH>" \
+  ipv4.gateway "" ipv4.never-default yes
+sudo nmcli device reapply "<INTERFACE>"
+```
+
+After changing the saved IP, run the last command again. Use the Pi's wired IP for `<PI_IP>` below.
+
 ## 2. Leader and follower calibration
 
 Use the Home procedure below for AM-ARM models (`alohamini2`, `alohamini2pro`, and `alohamini2edu`). Stop the Host, teleoperation, and other serial programs first. Secure both arms and support the lift.

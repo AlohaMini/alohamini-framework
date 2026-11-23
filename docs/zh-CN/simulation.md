@@ -53,6 +53,34 @@ alohamini-mujoco view --window-egl-device 0 \
 
 `alohamini-mujoco` 窗口的 `Print data`、模型导出和截图默认保存到 `~/Alohamini_workspace/simulation/viewer/`；自定义工作区使用 `ALOHAMINI_WORKSPACE`。命令中的相对路径按启动目录解析。
 
+## 舵机模型与补偿
+
+有实测舵机参数时，用 `--actuator-profile` 加载 JSON 文件：
+
+```bash
+alohamini-mujoco view --actuator-profile /path/to/actuators.json --paused
+```
+
+参数文件使用 `alohamini-actuators-v1` 格式，包含 `robot_model`、按 URDF 关节名索引的 `joints` 和记录测量条件、适用范围的 `provenance`。各旋转关节参数为：
+
+| 字段 | 单位 |
+| --- | --- |
+| `kp_Nm_per_rad`、`kd_Nm_s_per_rad` | N·m/rad、N·m·s/rad |
+| `friction_Nm`、`peak_effort_Nm` | N·m |
+| `velocity_rad_s`、`acceleration_rad_s2` | rad/s、rad/s² |
+| `delay_s`（默认 0） | s |
+| `reference_velocity_gain_Nm_s_per_rad`（默认 0） | N·m·s/rad |
+| `gravity_position_gain_rad_per_Nm`（可选） | rad/(N·m) |
+| `ki_Nm_per_rad_s`（默认 0） | N·m/(rad·s) |
+| `integral_effort_limit_Nm`、`integral_deadband_rad` | N·m、rad |
+| `integral_period_s`（默认每个物理步更新） | s |
+
+启用 I 时，积分扭矩限幅须大于 0 且不超过峰值扭矩。
+
+`--feedforward auto` 为默认设置：实测关节使用参数文件中的舵机响应，其余关节使用仿真 PD 与重力／科里奥利前馈。`--feedforward gravity` 仅补偿重力；实测关节使用标定的位置前馈增益，省略时使用 `1/kp_Nm_per_rad`。位置前馈受关节行程、速度、加速度和峰值扭矩限制。`none` 关闭全部外部前馈，`bias` 补偿完整动力学偏置。动作 JSON 的 `controller.feedforward` 使用相同取值。
+
+`peak_effort_Nm` 控制瞬时扭矩上限，URDF 的 `effort` 用于连续负载校核。参数须对应实际舵机、PID、供电与安装条件；真机补偿通过实测验证后部署。
+
 ## ManiSkill 与 RoboTwin
 
 在 ManiSkill 环境查看同一场景：

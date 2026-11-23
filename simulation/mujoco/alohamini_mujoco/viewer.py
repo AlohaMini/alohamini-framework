@@ -123,6 +123,7 @@ class DynamicPlayback:
         )
         self.initial_data = mujoco.MjData(robot.model)
         mujoco.mj_copyData(self.initial_data, robot.model, self.data)
+        self.initial_controller_state = self.follower.controller_state()
         self.start_time_s = float(self.data.time)
         self.paused = paused
         self.completed = False
@@ -140,9 +141,8 @@ class DynamicPlayback:
 
     def reset(self):
         mujoco.mj_copyData(self.data, self.robot.model, self.initial_data)
-        self.follower.target[:] = self.initial_target
+        self.follower.restore_controller_state(self.initial_controller_state)
         self.manual_target[:] = self.initial_target
-        self.follower.target_velocity[:] = 0
         self.paused = True
         self.completed = False
         self.saturated_steps = 0
@@ -284,6 +284,8 @@ def run_viewer(
         with window.lock():
             set_geometry(window.opt, collisions=collisions)
             set_camera(robot, window.cam)
+            if hasattr(playback, "configure_camera"):
+                playback.configure_camera(window.cam)
         published_time = float(display_data.time)
 
         perturbation = None
@@ -385,18 +387,23 @@ def run_viewer(
                     joint_controls.publish(display_data)
             # Overlay updates wait for the render thread. It must be able to
             # acquire the viewer lock while processing the request.
+            extra_labels, extra_values = (
+                playback.overlay_text() if hasattr(playback, "overlay_text") else ("", "")
+            )
             window.set_texts(
                 (
                     mujoco.mjtFont.mjFONT_NORMAL,
                     mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
-                    "AlohaMini\nTime / speed\nGeometry\nContacts / saturated steps\nControls",
+                    "AlohaMini\nTime / speed\nGeometry\nContacts / saturated steps\nControls"
+                    + extra_labels,
                     f"{mode}\n{playback.data.time:.3f} s / {realtime_factor:.2f}x\n"
                     f"{'Collision convex hulls' if collisions else 'Visual meshes'}\n"
                     f"{playback.data.ncon} / {playback.saturated_steps}\n"
                     "Space: pause  F8: geometry  F9: reset  Right: step  F6: frames"
                     + (
                         "  Sliders: joint targets (rad/m)  Ctrl+drag: force" if mouse_forces else ""
-                    ),
+                    )
+                    + extra_values,
                 )
             )
             window.sync(state_only=True)

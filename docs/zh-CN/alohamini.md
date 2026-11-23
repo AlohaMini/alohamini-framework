@@ -29,6 +29,20 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 
 EDU 的传感器设备名配置、驱动启动和建图导航见 [EDU 传感器、建图与导航](ros2-navigation.md)。
 
+### 有线直连（Linux / NetworkManager）
+
+用网线连接 PC 与树莓派，两端设置同一网段中不同的静态 IP，使用相同前缀长度，并与 Wi-Fi 网段分开。以下命令在两端分别执行，按实际替换连接名、本端有线 IP、前缀长度和网卡名：
+
+```bash
+nmcli device status
+sudo nmcli connection modify "<连接名>" \
+  connection.autoconnect yes ipv4.method manual ipv4.addresses "<本端有线IP>/<前缀长度>" \
+  ipv4.gateway "" ipv4.never-default yes
+sudo nmcli device reapply "<网卡名>"
+```
+
+以后修改保存的 IP 后，重新执行最后一条命令。下文的 `<树莓派_IP>` 使用树莓派的有线地址。
+
 ## 2. 主从臂标定
 
 AM-ARM（`alohamini2`、`alohamini2pro`、`alohamini2edu`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。

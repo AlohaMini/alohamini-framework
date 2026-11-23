@@ -233,6 +233,11 @@ class EpisodeReplay:
                 raise ValueError("Episode environment differs from its dataset manifest")
             group = file["data/demo_0"]
             self.specification = json.loads(group.attrs["controller"])
+            self.initial_controller_state = (
+                json.loads(group.attrs["initial_controller_state"])
+                if "initial_controller_state" in group.attrs
+                else None
+            )
             names = json.loads(group.attrs["joint_names"])
             if names != [model.actuator(i).name for i in range(model.nu)]:
                 raise ValueError("Episode actuator order differs from its model")
@@ -270,6 +275,10 @@ class EpisodeReplay:
         self.follower.kp[:] = self.specification["kp"]
         self.follower.kd[:] = self.specification["kd"]
         restore_state(model, data, self.states[0])
+        if self.initial_controller_state is not None:
+            self.follower.restore_controller_state(self.initial_controller_state)
+        elif self.follower.servos:
+            raise ValueError("Identified actuator replay requires its initial controller state")
         self.paused, self.completed = True, False
         self.frame_index = self.substep = self.saturated_steps = 0
         self.maximum_error = 0.0
@@ -419,6 +428,10 @@ def collect_episode(
                     "settings": follower.settings.to_dict(),
                 }
             )
+            if follower.servos:
+                group.attrs["initial_controller_state"] = json.dumps(
+                    follower.controller_state(), allow_nan=False
+                )
             states = group.create_dataset(
                 "states",
                 (frame_count + 1, len(physics_state(robot.model, follower.data))),

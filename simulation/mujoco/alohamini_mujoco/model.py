@@ -15,6 +15,7 @@ import numpy as np
 
 from alohamini.model import get_robot_model
 
+from .actuators import ActuatorProfile
 from .collision import load_bundle
 from .compilation import compile_xml
 from .description import Description, numbers, origin
@@ -59,8 +60,13 @@ class ModelProfile:
     collision_bundle: Path | None = None
     inertial_bundle: Path | None = None
     description: str = "auto"
+    actuator_profile: ActuatorProfile | Path | Mapping | None = None
 
     def __post_init__(self):
+        if self.actuator_profile is not None:
+            object.__setattr__(
+                self, "actuator_profile", ActuatorProfile.load(self.actuator_profile)
+            )
         for name in ("locked_positions", "initial_positions"):
             value = getattr(self, name)
             if name == "locked_positions" and value is None:
@@ -141,6 +147,21 @@ def build_model(robot_model=None, profile=None, *, scene=None):
             if virtual & requested:
                 name = "planning"
     description = Description(robot_model, name=name)
+    actuator_profile = profile.actuator_profile
+    if actuator_profile is not None:
+        if actuator_profile.robot_model != description.robot_model.model_id:
+            raise ValueError("Actuator profile robot_model differs from the loaded robot")
+        for name in actuator_profile.joints:
+            joint = description.joints.get(name)
+            if (
+                joint is None
+                or joint.kind not in ("revolute", "continuous")
+                or joint.lower is None
+                or joint.upper is None
+            ):
+                raise ValueError(
+                    f"Actuator profile requires bounded rotational robot joints: {name}"
+                )
     if profile.locked_positions is None:
         profile = replace(
             profile,
@@ -409,18 +430,45 @@ def build_model(robot_model=None, profile=None, *, scene=None):
                 armatures.update((inertial_binding or {}).get("joint_armature_kg_m2", {}))
                 if joint.name in armatures:
                     attributes["armature"] = text([armatures[joint.name]])
+                servo = actuator_profile.joints.get(joint.name) if actuator_profile else None
+                if servo is not None:
+                    # Identified velocity damping lives inside the native PD
+                    # actuator; do not add the URDF's generic damping again.
+                    attributes.update(
+                        damping="0",
+                        frictionloss=text([servo.friction_Nm]),
+                        solimpfriction="0.9999 0.9999 0.001 0.5 2",
+                        solreffriction="0.005 1",
+                    )
                 ET.SubElement(child, "joint", **attributes)
-                ET.SubElement(
-                    actuators,
-                    "motor",
-                    name=joint.name,
-                    joint=joint.name,
-                    gear="1",
-                    ctrllimited="true",
-                    forcelimited="true",
-                    ctrlrange=text([-joint.effort, joint.effort]),
-                    forcerange=text([-joint.effort, joint.effort]),
-                )
+                if servo is None:
+                    ET.SubElement(
+                        actuators,
+                        "motor",
+                        name=joint.name,
+                        joint=joint.name,
+                        gear="1",
+                        ctrllimited="true",
+                        forcelimited="true",
+                        ctrlrange=text([-joint.effort, joint.effort]),
+                        forcerange=text([-joint.effort, joint.effort]),
+                    )
+                else:
+                    ET.SubElement(
+                        actuators,
+                        "general",
+                        name=joint.name,
+                        joint=joint.name,
+                        gear="1",
+                        gaintype="fixed",
+                        biastype="affine",
+                        gainprm=text([servo.kp_Nm_per_rad]),
+                        biasprm=text([0, -servo.kp_Nm_per_rad, -servo.kd_Nm_s_per_rad]),
+                        ctrllimited="true",
+                        ctrlrange=text([joint.lower, joint.upper]),
+                        forcelimited="true",
+                        forcerange=text([-servo.peak_effort_Nm, servo.peak_effort_Nm]),
+                    )
         return body
 
     add_link(world, description.root, T_world_root)
@@ -485,6 +533,16 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     }
     if scene is not None:
         manifest["scene"] = scene.manifest
+    if actuator_profile is not None:
+        manifest["actuation"] = actuator_profile.to_dict()
+        manifest["actuation"]["joints"] = {
+            name: values
+            for name, values in manifest["actuation"]["joints"].items()
+            if name not in profile.locked_positions
+        }
+        manifest["actuation"]["continuous_effort_limits_Nm"] = {
+            name: description.joints[name].effort for name in manifest["actuation"]["joints"]
+        }
     if runtime is not None:
         manifest["prepared_model"] = runtime
         manifest["collision_profile_status"] = "prepared structural collision geometry"
