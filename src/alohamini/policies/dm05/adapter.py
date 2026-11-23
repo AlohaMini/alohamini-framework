@@ -11,6 +11,8 @@ from .configuration_dm05 import DM05Config
 
 
 class DM05Algorithm(ChunkAlgorithm):
+    visual_backbone_modules = ("model.model.vlm.model.vision_tower",)
+
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = DM05Config

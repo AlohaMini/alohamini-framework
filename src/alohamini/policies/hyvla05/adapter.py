@@ -66,6 +66,8 @@ class HyVLA05Policy(ChunkPolicy):
 
 
 class HyVLA05Algorithm(ChunkAlgorithm):
+    visual_backbone_modules = ("network.model.dual_tower.vlm.model.visual",)
+
     tokenizer_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     supports_field_transforms = True

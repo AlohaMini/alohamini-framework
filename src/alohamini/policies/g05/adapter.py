@@ -15,6 +15,8 @@ from .configuration_g05 import G05Config
 
 
 class G05Algorithm(ChunkAlgorithm):
+    visual_backbone_modules = ("backend.model.vision_tower",)
+
     asset_fields = ("assets_path",)
     config_class = G05Config
     supports_field_transforms = True

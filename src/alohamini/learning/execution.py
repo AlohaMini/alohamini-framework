@@ -18,6 +18,7 @@ from accelerate.utils import (
     patch_environment,
 )
 
+from alohamini.learning.data_index import batches_per_epoch
 from alohamini.learning.metrics import MetricAccumulator
 from alohamini.learning.training_state import EpisodeAwareSampler
 
@@ -356,12 +357,7 @@ class RankBatchSampler:
         self.size, self.batch_size = size, batch_size
         self.rank, self.world_size, self.drop_last = rank, world_size, drop_last
         self.sampler = EpisodeAwareSampler([0], [size], shuffle=True, seed=seed)
-        global_batch = batch_size * world_size
-        self.batches = (
-            size // global_batch if drop_last else (size + global_batch - 1) // global_batch
-        )
-        if not self.batches:
-            raise ValueError("drop_last would discard every global batch")
+        self.batches = batches_per_epoch(size, batch_size, world_size, drop_last)
         self.epoch, self.offset = divmod(consumed, self.batches)
 
     def __len__(self):

@@ -27,6 +27,8 @@ class FastWAMProcessor:
 
 
 class FastWAMAlgorithm(ResourceAlgorithm):
+    training_parameter_fields = {"chunk_size": "action_horizon"}
+
     asset_fields = ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id")
     include_task = True
     fsdp_classes = ("MoTLayer",)

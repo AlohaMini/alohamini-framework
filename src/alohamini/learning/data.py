@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from copy import deepcopy
+from fractions import Fraction
 from functools import wraps
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import StateSelection
 from alohamini.datasets.tools import check_dataset, dataset_info
 from alohamini.datasets.video_reader import VideoFrameCache
-from alohamini.learning.data_index import EpisodeLayout, ordered_indices
+from alohamini.learning.data_index import EpisodeLayout, ordered_indices, recorded_frame
 from alohamini.learning.data_store import FileBackedIntSequence, IndexSet, RowStore
 from alohamini.learning.logging import log_stage
 from alohamini.learning.processor import DEFAULT_IMAGE_SIZE, image_tensor
@@ -224,11 +225,11 @@ class AlohaMiniDataset(Dataset):
     row offsets, e.g. {"observation.state": [-1, 0], "action": [0, 1, 2]}.
     Windowed fields gain a leading time dimension and a ``<key>_is_pad`` mask;
     boundary values are repeated, as in LeRobot's DatasetReader. Offsets follow
-    recorded row order, not nearest physical timestamps. No interpolation,
-    resampling or new image/state/action pairing is performed.
+    the episode-local training clock. Optional fps selects whole recorded rows
+    on a nearest-frame nominal grid. downsample_rate strides window anchors.
 
     Only episodes bound windows. All selected fields must be usable throughout
-    the selected episodes; invalid values raise with their episode/frame location.
+    the selected training rows; invalid values raise with their recorded episode/frame location.
     Safety events never remove samples. ``sample_indices`` maps
     Dataset indices to physical ``rows``/``records``/``locations`` indices.
     Control events and camera intervals do not split windows. Timing
@@ -261,6 +262,8 @@ class AlohaMiniDataset(Dataset):
         image_size=DEFAULT_IMAGE_SIZE,
         image_resize_mode="stretch",
         image_pad_value=0.0,
+        fps=None,
+        downsample_rate=1,
         drop_n_first_frames=0,
         drop_n_last_frames=0,
         review_note="",
@@ -322,7 +325,7 @@ class AlohaMiniDataset(Dataset):
             )
             logging.getLogger(__name__).warning(
                 "Dataset has %d warning(s): %s. No samples are removed by quality warnings; "
-                "timestamps are not resampled. Full report is available as samples.report.",
+                "original timestamps are preserved. Full report is available as samples.report.",
                 self.report["warnings"],
                 ", ".join(codes),
             )
@@ -340,6 +343,16 @@ class AlohaMiniDataset(Dataset):
 
             self._storage = SimulationSource(self.root)
             self.info = self._storage.info
+        self.source_fps = self.info["fps"]
+        if fps is not None and (type(fps) is not int or not 0 < fps <= self.source_fps):
+            raise ValueError("fps must be a positive integer at or below the recorded FPS")
+        if type(downsample_rate) is not int or downsample_rate < 1:
+            raise ValueError("downsample_rate must be a positive integer")
+        self.downsample_rate = downsample_rate
+        self.frame_ratio = Fraction(str(self.source_fps)) / fps if fps else Fraction(1)
+        if self.frame_ratio != 1:
+            # The storage reader keeps the original FPS for video and timestamp lookup.
+            self.info = {**self.info, "fps": fps}
         requested_annotations = {} if annotation_fields is None else annotation_fields
         self.annotation_context = annotation_fields is not None
         if not isinstance(requested_annotations, Mapping) or any(
@@ -551,7 +564,14 @@ class AlohaMiniDataset(Dataset):
                         records = _safety_records(safety_path)
                         episode_resources.callback(records.close)
                         pairs = zip(rows, records, strict=True)
-                    for row, record in pairs:
+                    next_frame = 0
+                    for frame, (row, record) in enumerate(pairs):
+                        if self.frame_ratio != 1:
+                            if frame != next_frame:
+                                continue
+                            next_frame = recorded_frame(
+                                len(self.rows) - start + 1, self.frame_ratio
+                            )
                         self.rows.append(row)
                         self.records.append(record)
                     spans.append((episode, start, len(self.rows)))
@@ -569,7 +589,7 @@ class AlohaMiniDataset(Dataset):
             cache_size_mb,
             cache_block_rows,
         )
-        layout = EpisodeLayout(spans)
+        layout = EpisodeLayout(spans, self.frame_ratio)
         self.locations = layout.view("location")
         self.segment_starts = layout.view("start")
         self.segment_ends = layout.view("end")
@@ -593,8 +613,15 @@ class AlohaMiniDataset(Dataset):
                 type="episode_windows_v3", drop_n_first_frames=drop_n_first_frames,
                 drop_n_last_frames=drop_n_last_frames,
             )
+        if self.frame_ratio != 1 or downsample_rate != 1:
+            self.sample_filter = dict(
+                type="episode_windows_v4", source_fps=self.source_fps, fps=self.info["fps"],
+                downsample_rate=downsample_rate, drop_n_first_frames=drop_n_first_frames,
+                drop_n_last_frames=drop_n_last_frames,
+            )
         for i in range(len(self.rows)):
-            if (i < self.segment_starts[i] + drop_n_first_frames
+            offset = i - self.segment_starts[i] - drop_n_first_frames
+            if (offset < 0 or offset % downsample_rate
                     or i >= self.segment_ends[i] - drop_n_last_frames):
                 continue
             windows, padding = self._get_query_indices(i)

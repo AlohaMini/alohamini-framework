@@ -16,6 +16,9 @@ from .semantic import JOINTS, configure, relative_actions, validate_layout
 
 
 class LingBotAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"nheads": "action_num_attention_heads"}
+    visual_backbone_modules = ("model.qwenvl.model.visual",)
+
     tokenizer_fields = ("text_tokenizer_path",)
     single_weight_file = True
     asset_fields = ("tokenizer_path", "text_tokenizer_path", "image_processor_path", "teacher_root")

@@ -33,6 +33,8 @@ class BSplineDataset(torch.utils.data.Dataset):
             action=source.info["features"]["action"],
             version=1,
         )
+        if getattr(source, "frame_ratio", 1) != 1:
+            identity["fps"] = source.info["fps"]
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         root = (
             options.get("parameter_cache_dir") or Path(tempfile.gettempdir()) / "alohamini-bspline"

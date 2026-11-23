@@ -27,6 +27,13 @@ class BSplineProcessor(Processor):
 
 
 class BSplineAlgorithm(DiffusionAlgorithm):
+    training_parameter_fields = {"chunk_size": "horizon"}
+    chunk_history_offset = None
+    visual_backbone_modules = (
+        "generator.diffusion.rgb_encoder.backbone",
+        "generator.diffusion.rgb_encoder.*.backbone",
+    )
+
     config_class = BSplineConfig
     supports_remote_chunks = True
     plan_capabilities = PlanCapabilities(

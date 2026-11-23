@@ -12,6 +12,13 @@ from .configuration_lingbot_va import LingBotVAConfig
 
 
 class LingBotVAAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "frame_chunk_size",
+        "nheads": "num_attention_heads",
+        "dec_layers": "num_layers",
+    }
+    actions_per_chunk_unit = "action_per_frame"
+
     asset_fields = ("wan_pretrained_path", "text_feature_store_path")
     config_class = LingBotVAConfig
     queues_online_observations = True

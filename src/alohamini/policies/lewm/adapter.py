@@ -11,6 +11,9 @@ from .preset import apply_preset
 
 
 class LeWMAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"enc_layers": "encoder_depth", "nheads": "encoder_heads"}
+    visual_backbone_modules = ("world.encoder",)
+
     allow_scratch = True
     config_class = LeWMConfig
     apply_preset = staticmethod(apply_preset)
@@ -44,7 +47,12 @@ class LeWMAlgorithm(ChunkAlgorithm):
 
     @staticmethod
     def prepare_options(options, samples):
-        size = options.get("action_block", 5) * options.get("planning_horizon", 5)
+        block = options.get("action_block", 5)
+        if "chunk_size" in options and "planning_horizon" not in options:
+            if type(block) is not int or block < 1 or options["chunk_size"] % block:
+                raise ValueError("LeWM chunk_size must be divisible by action_block")
+            options["planning_horizon"] = options["chunk_size"] // block
+        size = block * options.get("planning_horizon", 5)
         options.setdefault("chunk_size", size)
         options.setdefault("n_action_steps", size)
 

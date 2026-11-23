@@ -13,6 +13,8 @@ from .configuration_longwam import LongWAMConfig
 
 
 class LongWAMAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"chunk_size": "action_horizon"}
+
     tokenizer_fields = ("tokenizer_path",)
     asset_fields = ("tokenizer_path",)
     config_class = LongWAMConfig

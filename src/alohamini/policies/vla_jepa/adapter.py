@@ -12,6 +12,9 @@ from .configuration_vla_jepa import VLAJEPAConfig
 
 
 class VLAJEPAAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"nheads": "action_num_heads", "dec_layers": "action_num_layers"}
+    visual_backbone_modules = ("model.qwen.model.model.visual",)
+
     asset_fields = ("assets_path",)
     config_class = VLAJEPAConfig
     supports_field_transforms = True

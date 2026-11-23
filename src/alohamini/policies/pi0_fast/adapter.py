@@ -10,6 +10,9 @@ from .configuration_pi0_fast import PI0FastConfig
 
 
 class PI0FastAlgorithm(PI05Algorithm):
+    training_parameter_fields = {}
+    visual_backbone_modules = ("network.paligemma.model.vision_tower",)
+
     requires_fast_tokenizer = True
     asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.trajectory_execution import PlanCapabilities

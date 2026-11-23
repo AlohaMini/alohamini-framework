@@ -9,6 +9,14 @@ from .configuration_vqbet import VQBeTConfig
 
 
 class VQBeTAlgorithm(DiffusionAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "action_chunk_size",
+        "nheads": "gpt_n_head",
+        "dec_layers": "gpt_n_layer",
+    }
+    chunk_history_offset = None
+    visual_backbone_modules = ("vqbet.rgb_encoder.backbone",)
+
     config_class = VQBeTConfig
     include_task = False
     queues_online_observations = True

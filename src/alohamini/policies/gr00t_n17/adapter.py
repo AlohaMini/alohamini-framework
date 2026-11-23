@@ -19,6 +19,8 @@ from .preset import apply_preset
 
 
 class GR00TN17Algorithm(ChunkAlgorithm):
+    visual_backbone_modules = ("backbone.model.model.visual",)
+
     processor_kwargs = {"use_fast": False}
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)

@@ -306,6 +306,9 @@ class PI05TrainModel(torch.nn.Module):
 
 
 class PI05Algorithm(ResourceAlgorithm):
+    training_parameter_fields = {"chunk_size": "network.action_horizon"}
+    visual_backbone_modules = ("network.paligemma_with_expert.paligemma.model.vision_tower",)
+
     requires_fast_tokenizer = False
 
     def training_asset_checks(self, settings, options):

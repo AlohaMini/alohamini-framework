@@ -25,6 +25,11 @@ class ACDiTAlgorithm(ChunkAlgorithm):
     supports_remote_chunks = False
     fsdp_classes = ("RDTBlock", "SiglipEncoderLayer", "LoRALinear", "Linear1Layer", "Linear2Layer")
 
+    @staticmethod
+    def training_parameter_fields(options):
+        prefix = "mobility_" if options.get("stage") == "mobility" else ""
+        return {"nheads": prefix + "num_heads", "dec_layers": prefix + "num_layers"}
+
     def options(self, settings, device):
         options = deepcopy(settings.get("model", {}))
         self.mask_loss = options.get("mask_padding_loss", False)

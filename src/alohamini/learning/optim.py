@@ -1,6 +1,7 @@
 """Resolved optimizer/scheduler recipes, independent of the training backend."""
 
 import math
+from fnmatch import fnmatchcase
 from functools import partial
 
 import torch
@@ -28,6 +29,8 @@ def resolve_optimization(settings, policy_config):
             betas=list(getattr(policy_config, "optimizer_betas", (0.9, 0.999))),
             eps=getattr(policy_config, "optimizer_eps", 1e-8),
         )
+    if "lr_backbone" in supplied:
+        optimizer["lr_backbone"] = supplied["lr_backbone"]
     if supplied.keys() - optimizer.keys():
         raise ValueError(
             f"Unsupported {kind} options: {sorted(supplied.keys() - optimizer.keys())}"
@@ -36,6 +39,10 @@ def resolve_optimization(settings, policy_config):
     for key in ("lr", "weight_decay", "grad_clip_norm"):
         if not math.isfinite(optimizer[key]) or optimizer[key] < 0:
             raise ValueError(f"optimizer.{key} must be finite and nonnegative")
+    if "lr_backbone" in optimizer:
+        rate = optimizer["lr_backbone"]
+        if type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0:
+            raise ValueError("optimizer.lr_backbone must be finite and nonnegative")
     cfg["optimizer"] = optimizer
     preset = (
         dict(
@@ -60,6 +67,11 @@ def resolve_optimization(settings, policy_config):
         scheduler = {"type": "none"}
     else:
         scheduler = {**preset, **supplied_scheduler}
+    if "warmup_ratio" in scheduler:
+        ratio = scheduler.pop("warmup_ratio")
+        if type(ratio) not in (float, int) or not 0 <= ratio < 1:
+            raise ValueError("scheduler.warmup_ratio must be in [0, 1)")
+        scheduler.setdefault("warmup_steps", int(cfg["steps"] * ratio))
     kind = scheduler.get("type", "none")
     allowed = {"type"} if kind == "none" else {"type", "warmup_steps", "decay_steps", "decay_lr"}
     if kind in ("staged_cosine", "constant_with_warmup", "warmup_linear"):
@@ -118,6 +130,37 @@ def resolve_optimization(settings, policy_config):
     return cfg
 
 
+def _set_backbone_lr(model, params, rate):
+    """Partition existing groups by declared visual modules, retaining group options."""
+    from alohamini.policies.registry import algorithm
+
+    paths = getattr(algorithm(model.name), "visual_backbone_modules", ())
+    if not paths:
+        raise ValueError(f"{model.name} does not declare a visual backbone for --lr_backbone")
+    selected = {
+        id(p)
+        for name, module in model.named_modules(remove_duplicate=False)
+        if any(fnmatchcase(name, path) for path in paths)
+        for p in module.parameters()
+        if p.requires_grad
+    }
+    groups = params if params and isinstance(params[0], dict) else [{"params": params}]
+    result = []
+    found = False
+    for group in groups:
+        visual, remaining = [], []
+        for p in group["params"]:
+            (visual if id(p) in selected else remaining).append(p)
+        if remaining or not visual:
+            result.append({**group, "params": remaining})
+        if visual:
+            result.append({**group, "params": visual, "lr": rate})
+            found = True
+    if not found:
+        raise ValueError(f"{model.name} has no trainable visual backbone in the optimizer")
+    return result
+
+
 def make_optimizer_and_scheduler(cfg, model):
     options = dict(cfg["optimizer"])
     kind = options.pop("type")
@@ -129,6 +172,9 @@ def make_optimizer_and_scheduler(cfg, model):
         for group in params:
             if "lr_scale" in group:
                 group["lr"] = options["lr"] * group.pop("lr_scale")
+    backbone_lr = options.pop("lr_backbone", None)
+    if backbone_lr is not None:
+        params = _set_backbone_lr(model, params, backbone_lr)
     optimizer = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW, "sgd": torch.optim.SGD}[
         kind
     ](params, **options)

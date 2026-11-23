@@ -111,7 +111,7 @@ def checkpoint_sidecars(manifest):
     }
     for key in (
         "field_transforms", "statistics_features", "data_fields", "recorded_state_stats",
-        "image_resize_mode", "image_pad_value", "annotations",
+        "image_resize_mode", "image_pad_value", "annotations", "temporal_sampling",
     ):
         if key in manifest:
             processor[key] = manifest[key]
@@ -147,30 +147,38 @@ def _merge(base, overrides):
     return result
 
 
-def resolve_pretrained(settings, *, expected_kind=None):
+def resolve_pretrained(settings, *, expected_kind=None, cli_keys=()):
     """Resolve native configs before policy presets, without depending on old sources on resume."""
+    from alohamini.learning.common_parameters import resolve_common_parameters
+
     cfg = deepcopy(settings)
+    kind = cfg.get("policy", expected_kind or "act")
     mode = cfg.get("normalization", "dataset")
     if mode not in ("dataset", "checkpoint"):
         raise ValueError("normalization must be dataset or checkpoint")
     if cfg.get("resume"):
-        return cfg
+        return resolve_common_parameters(cfg, kind, cli_keys=cli_keys)
     if mode == "checkpoint" and cfg.get("stats"):
         raise ValueError("Choose --normalization=checkpoint or --stats, not both")
     path = model_directory(cfg["pretrained_path"]) if cfg.get("pretrained_path") else None
     if path is None or not (path / "policy.json").is_file():
         if mode == "checkpoint":
             raise ValueError("--normalization=checkpoint requires a native --policy.path")
-        return cfg  # External base: the algorithm's existing importer applies.
+        return resolve_common_parameters(cfg, kind, cli_keys=cli_keys)
     path, manifest = read_checkpoint(path)
     kind = cfg.get("policy", expected_kind)
     if kind is not None and kind != manifest["kind"]:
         raise ValueError(f"--policy.path contains {manifest['kind']}, not a {kind} checkpoint")
+    resolve_common_parameters(
+        cfg, manifest["kind"], base_model=manifest["config"], cli_keys=cli_keys
+    )
     cfg["policy"] = manifest["kind"]
     cfg["pretrained_path"] = str(path)
     cfg.setdefault(
         "trainable_dtype", manifest.get("training", {}).get("trainable_dtype", "preserve")
     )
+    for key, value in manifest.get("temporal_sampling", {}).items():
+        cfg.setdefault(key, value)
     overrides = cfg.get("model", {})
     options = _merge(manifest["config"], overrides)
     from alohamini.policies.registry import algorithm

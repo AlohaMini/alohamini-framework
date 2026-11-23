@@ -14,6 +14,9 @@ from .semantic import XiaomiFields
 
 
 class XiaomiAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"dec_layers": "num_layers"}
+    visual_backbone_modules = ("network.vlm.model.visual",)
+
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = XiaomiConfig

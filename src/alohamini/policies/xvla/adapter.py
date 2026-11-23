@@ -11,6 +11,9 @@ from .configuration_xvla import XVLAConfig
 
 
 class XVLAAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"nheads": "num_heads", "dec_layers": "depth"}
+    visual_backbone_modules = ("model.vlm.vision_tower",)
+
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = XVLAConfig

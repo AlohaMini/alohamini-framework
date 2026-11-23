@@ -17,6 +17,10 @@ from alohamini.learning.resources import ResourceAlgorithm, training_weights
 
 
 class DiffusionAlgorithm(ResourceAlgorithm):
+    training_parameter_fields = {"chunk_size": "horizon"}
+    chunk_history_offset = -1
+    visual_backbone_modules = ("diffusion.rgb_encoder.backbone", "diffusion.rgb_encoder.*.backbone")
+
     single_weight_file = True
     weights_directory_only = True
     allow_scratch = True

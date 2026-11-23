@@ -23,6 +23,8 @@ def loss_counts(batch):
 
 
 class ACTAlgorithm(ResourceAlgorithm):
+    visual_backbone_modules = ("model.backbone",)
+
     allow_scratch = True
     supports_remote_chunks = True
 

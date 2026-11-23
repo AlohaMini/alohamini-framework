@@ -105,6 +105,13 @@ class SpiritTrainModel(torch.nn.Module):
 
 
 class SpiritAlgorithm(ResourceAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "network.chunk_size",
+        "dec_layers": "network.dit_num_layers",
+        "nheads": "network.dit_num_heads",
+    }
+    visual_backbone_modules = ("network.qwen.model.visual",)
+
     single_weight_file = True
     processor_fields = ("backbone_path",)
     asset_fields = ("backbone_path",)

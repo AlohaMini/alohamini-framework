@@ -21,6 +21,13 @@ class Evo1Processor(TaskProcessor):
 
 
 class Evo1Algorithm(ChunkAlgorithm):
+    training_parameter_fields = {
+        "nheads": "num_heads",
+        "enc_layers": "vlm_num_layers",
+        "dec_layers": "num_layers",
+    }
+    visual_backbone_modules = ("model.embedder.model.vision_tower",)
+
     tokenizer_fields = ("vlm_model_name",)
     asset_fields = ("vlm_model_name",)
     config_class = Evo1Config

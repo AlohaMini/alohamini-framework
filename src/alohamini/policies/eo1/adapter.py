@@ -11,6 +11,9 @@ from .configuration_eo1 import EO1Config
 
 
 class EO1Algorithm(ChunkAlgorithm):
+    training_parameter_fields = {"dec_layers": "num_action_layers"}
+    visual_backbone_modules = ("model.vlm_backbone.model.visual",)
+
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = EO1Config

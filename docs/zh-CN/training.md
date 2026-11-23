@@ -147,6 +147,59 @@ TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理
 
 ## 4. 训练
 
+### 训练配置参数总表
+
+模型结构参数的适用范围随策略而异，指定未提供的结构参数会报错。策略专用参数见下方策略索引。
+
+| 参数 | 用途 |
+| --- | --- |
+| `--steps` | 总优化器更新次数，与 num_epochs 二选一。 |
+| `--num_epochs` | 完整遍历训练集的轮数。每轮末尾剩余的批次单独更新。 |
+| `--fps` | 训练轨迹频率，默认取录制帧率。正整数，不能超过源帧率；每个时刻选最近的原始帧。 |
+| `--downsample_rate` | 窗口起点步长，单位为训练帧，默认 1。窗口内的动作和观测仍按 fps 取样。 |
+| `--batch_size`, `--gradient_accumulation_steps` | 每进程的 batch 大小、每次更新累积的 batch 数。 |
+| `--seed`, `--cudnn_deterministic`, `--deterministic_algorithms` | 随机种子、cuDNN 确定性模式、PyTorch 确定性算子。 |
+| `--policy.type`, `--policy.path`, `--policy.device` | 策略名称、初始化权重或原生 checkpoint 路径、训练设备。 |
+| `--dataset.root`, `--dataset.repo_id` | 本地数据集目录、可选的数据集标识。 |
+| `--dataset.episodes`, `--dataset.eval_episodes` | 训练回合和留出验证回合，两者须互斥。 |
+| `--dataset.allow_unannotated` | 允许读取缺少 Host 元数据的原始 LeRobot v3 数据。 |
+| `--state`, `--cameras` | 输入状态字段、按顺序使用的相机名称列表。 |
+| `--image_size`, `--image_resize_mode`, `--image_pad_value` | 输入图像高宽、缩放方式（stretch 或 pad）、补边像素值。 |
+| `--data.state_representation`, `--data.action_representation` | 选择状态与动作表示，例如录制坐标、关节相对目标或 TCP。 |
+| `--data.joint_delta_fields`, `--data.rotation_representation`, `--data.tcp_delta_frame` | 关节相对目标的字段映射、旋转表示、TCP 增量参考系。 |
+| `--data.kinematics.reference_pose`, `--data.kinematics.path`, `--data.kinematics.spec` | 指定运动学参考姿态或描述文件，三选一。 |
+| `--normalization`, `--stats` | 归一化统计来源（dataset 或 checkpoint）、预计算的训练统计文件。 |
+| `--num_workers`, `--prefetch_factor`, `--persistent_workers` | 每进程的数据加载 worker 数、每个 worker 预取的批数、跨轮保留 worker。 |
+| `--dataloader_multiprocessing_context`, `--cpu_threads` | 数据加载进程启动方式、每个训练进程的 CPU 计算线程数。 |
+| `--video_backend`, `--video_cache_size`, `--camera_workers`, `--return_uint8` | 视频解码后端、解码器缓存数量、多相机读取线程数、是否输出 uint8 图像。 |
+| `--dataset.streaming`, `--dataset.streaming_episode_pool_size` | 启用流式采样、设置并行混合采样的回合数。 |
+| `--dataset.cache_size_mb`, `--dataset.cache_block_rows`, `--dataset.cache_dir` | 每个进程和数据集的数值缓存预算、每块行数、磁盘缓存目录。 |
+| `--drop_last` | 丢弃不足一个全局 batch 的轮末样本。 |
+| `--optimizer.type`, `--lr` (`--optimizer.lr`), `--optimizer.weight_decay`, `--optimizer.grad_clip_norm` | 优化器类型、主学习率、权重衰减、梯度范数裁剪阈值。 |
+| `--optimizer.betas`, `--optimizer.eps` | Adam／AdamW 的动量系数与数值稳定项。 |
+| `--optimizer.momentum`, `--optimizer.dampening`, `--optimizer.nesterov` | SGD 动量、阻尼、Nesterov 开关。 |
+| `--scheduler.type`, `--scheduler.warmup_steps`, `--scheduler.decay_steps`, `--scheduler.decay_lr` | 学习率曲线、预热步数、衰减步数、终点学习率。 |
+| `--scheduler.start_step`, `--scheduler.before_start` | 分阶段调度的起始步与开始前各参数组的学习率倍率。 |
+| `--ema.enable`, `--ema.use_for_eval`, `--ema.update_after_step` | 启用参数滑动平均、验证时使用平均权重、开始更新的步数。 |
+| `--ema.decay`, `--ema.schedule`, `--ema.inv_gamma`, `--ema.power`, `--ema.min_decay`, `--ema.max_decay` | 固定衰减率，或设置衰减曲线及其形状和范围。 |
+| `--mixed_precision`, `--trainable_dtype`, `--tf32` | 混合精度计算、可训练参数存储精度、CUDA FP32 运算的 TF32 开关。 |
+| `--num_processes`, `--distributed_backend`, `--dataset_preparation_timeout_s` | 本机训练进程数、DDP 或 FSDP2 后端、等待数据准备的秒数。 |
+| `--eval_steps`, `--eval_batch_size`, `--eval_log_freq` | 每隔多少更新步验证、验证批大小、验证日志间隔。 |
+| `--eval_num_workers`, `--eval_prefetch_factor`, `--eval_persistent_workers` | 验证加载的 worker 数、预取批数和跨轮复用。 |
+| `--save_freq`, `--keep_last_checkpoints`, `--log_freq` | 按更新步数保存 checkpoint、保留最近的份数、训练日志间隔。 |
+| `--config`, `--config_path`, `--resume` | 加载训练 JSON（两个路径参数同义）；resume 从 checkpoint 恢复训练状态。 |
+| `--output_dir`, `--run_name`, `--background`, `--foreground` | 指定输出目录或工作区运行名，选择后台或前台启动。 |
+| `--policy.push_to_hub`, `--wandb.enable` | 本地训练仅接受 false，训练日志和 checkpoint 保存在本地。 |
+| `--lr_backbone`（`--optimizer.lr_backbone`） | 可训练视觉骨干的绝对基础学习率。省略时沿用策略的参数组设置。 |
+| `--chunk_size` | 每次预测或规划的动作数，单位为训练帧。历史帧、帧分组和预训练权重对长度的约束随策略而异。 |
+| `--backbone` | 可替换的视觉骨干名称或路径，预训练权重须与骨干匹配。 |
+| `--nheads` | 策略中可配置的 Transformer 模块的注意力头数。 |
+| `--enc_layers`、`--dec_layers` | 可配置的编码器、解码器或动作专家层数。DiT-Block 的编码器和解码器层数须相同。 |
+| `--kl_weight` | KL 损失权重，适用于启用 VAE 的 ACT 和 AM-ACT。 |
+| `--policy.n_action_steps` | 按块执行时，每次预测后实际执行多少步再重新规划。 |
+
+例如，30 FPS 数据使用 `--fps=10 --downsample_rate=2` 时，窗口起点是原始帧 0、6、12，首个动作块取帧 0、3、6。降频适用于绝对目标或速度命令；外部数据若存储逐帧位移增量，须先转换为绝对目标。
+
 ### 策略选择
 
 各策略的训练命令、权重准备和专用参数见对应目录：
@@ -411,7 +464,7 @@ python -m alohamini.learning.train \
   --output_dir="$HOME/Alohamini_workspace/runs/act_finetune_01" \
   --policy.device=cuda \
   --optimizer.lr=5e-6 \
-  --policy.optimizer_lr_backbone=5e-6 \
+  --lr_backbone=5e-6 \
   --scheduler.type=none \
   --steps=50000 --batch_size=2 \
   --save_freq=5000 --eval_steps=1000 --log_freq=100 \
@@ -445,13 +498,10 @@ python -m alohamini.learning.train \
 | 选项 | 作用 |
 | --- | --- |
 | `--optimizer.lr=5e-6` | 设置主学习率；在 ACT／AM-ACT 中用于视觉骨干以外的网络 |
-| `--policy.optimizer_lr_backbone=5e-6` | 单独设置 ACT／AM-ACT 的视觉骨干学习率，控制图像特征提取网络的更新幅度 |
+| `--lr_backbone=5e-6` | 单独设置 ACT／AM-ACT 的视觉骨干学习率，控制图像特征提取网络的更新幅度 |
 | `--scheduler.type=none` | 不随训练步数改变学习率，各部分始终使用设定值；不是停止学习 |
 
-**只改 `--optimizer.lr` 不会覆盖 ACT／AM-ACT 的视觉骨干学习率。**
-想让两部分使用同一学习率，就像上例一样同时设置；想让视觉特征变化更小，
-可分别设为 `--optimizer.lr=5e-6 --policy.optimizer_lr_backbone=1e-6`。
-其他算法使用各自的参数分组，不要直接套用 ACT 的骨干选项。
+用 `--lr=1e-4 --lr_backbone=1e-5` 分别指定两组基础学习率。省略骨干学习率时，ACT 使用独立默认值，Multi-Task DiT 按主学习率乘以配置倍率。训练中的学习率调度仍作用于两组。
 
 若希望先逐渐提高学习率、再逐渐降低，可将微调命令中的 `--scheduler.type=none` 替换为：
 
@@ -522,7 +572,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --policy.n_action_steps 10 --policy.temporal_ensemble_coeff none
 ```
 
-`--fps` 与训练数据一致。每个动作块执行前 `n_action_steps` 步，再重新预测。
+同步关节控制的 `--fps` 取 checkpoint 的训练帧率。每个动作块执行前 `n_action_steps` 步，再重新预测。
 ACT／AM-ACT 每步预测并融合时，使用 `--policy.n_action_steps 1 --policy.temporal_ensemble_coeff 0.01`；
 `none` 关闭融合，`0` 为等权融合。更换执行参数无需重新训练。
 

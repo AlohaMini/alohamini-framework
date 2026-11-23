@@ -386,8 +386,11 @@ def load_training_checkpoint(path, cfg, samples, validation):
     # data order; cache capacity/blocking only changes storage performance.
     saved = resolve_dataset_options(saved)
     cfg = resolve_dataset_options({"distributed_backend": "ddp", **cfg})
+    if ("num_epochs" in saved) != ("num_epochs" in cfg):
+        raise ValueError("Resume must retain the original steps or num_epochs budget mode")
     mutable = {
         "steps",
+        "num_epochs",
         "save_freq",
         "keep_last_checkpoints",
         "log_freq",

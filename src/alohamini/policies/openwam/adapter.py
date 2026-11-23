@@ -46,10 +46,12 @@ class OpenWAMAlgorithm(ChunkAlgorithm):
         cfg.setdefault("mixed_precision", "bfloat16")
         cfg.setdefault("batch_size", 16)
         cfg.setdefault("steps", 30000)
+        schedule_duration = {"warmup_steps": int(cfg["steps"] * 0.05), "decay_steps": cfg["steps"]}
+        if cfg.get("num_epochs"):
+            schedule_duration = {"warmup_ratio": 0.05}
         cfg["scheduler"] = {
             "type": "diffusers_cosine",
-            "warmup_steps": int(cfg["steps"] * 0.05),
-            "decay_steps": cfg["steps"],
+            **schedule_duration,
             "decay_lr": 1e-6,
             **(cfg.get("scheduler") or {}),
         }

@@ -41,6 +41,7 @@ def evaluate_checkpoint(
         dataset,
         episodes=episodes,
         **sample_spec,
+        **manifest.get("temporal_sampling", {}),
         state=manifest["state"],
         cameras=manifest["cameras"],
         image_size=tuple(manifest["image_size"]),

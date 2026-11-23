@@ -22,6 +22,14 @@ class CDPProcessor(Processor):
 
 
 class CDPAlgorithm(DiffusionAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "horizon",
+        "nheads": "num_heads",
+        "dec_layers": "num_layers",
+    }
+    chunk_history_offset = 0
+    visual_backbone_modules = ("vision.encoders",)
+
     fsdp_classes = ("CausalBlock", "BasicBlock", "Bottleneck")
 
     @property

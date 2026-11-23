@@ -12,6 +12,9 @@ from .configuration_fineart_vla import FineARTVLAConfig
 
 
 class FineARTVLAAlgorithm(ChunkAlgorithm):
+    training_parameter_fields = {"chunk_size": "network.action_horizon"}
+    visual_backbone_modules = ("network.paligemma_with_expert.paligemma.model.vision_tower",)
+
     asset_fields = ("assets_path", "fast_tokenizer_path")
     config_class = FineARTVLAConfig
     fsdp_classes = ("GemmaRMSNorm", "Embedding")

@@ -40,6 +40,7 @@ from alohamini.learning.checkpoint import (
 )
 from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
 from alohamini.learning.data_fields import prepare_fields
+from alohamini.learning.data_index import batches_per_epoch
 from alohamini.learning.ema import EMAManager, validate_ema_setup
 from alohamini.learning.execution import Execution, RankBatchSampler, validate_local_workers
 from alohamini.learning.loading import loader_options, make_loader, resolve_data_pipeline
@@ -57,7 +58,7 @@ from alohamini.learning.precision import resolve_tf32, tf32_context, validate_tr
 from alohamini.learning.resources import prepare_training
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
 from alohamini.learning.streaming import StreamingBatchSampler
-from alohamini.learning.train_config import resolve_dataset_options
+from alohamini.learning.train_config import resolve_dataset_options, validate_training_budget
 from alohamini.learning.training_state import (
     load_training_checkpoint,
     restore_rng,
@@ -80,6 +81,7 @@ logger = logging.getLogger("alohamini.learning.train")
 
 def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
+    validate_training_budget(settings)
     validate_ema_setup(settings)
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     resolve_tf32(settings)
@@ -87,6 +89,8 @@ def launch_training(settings):
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
     settings = prepare_training(settings).settings
+    if "num_epochs" in settings:
+        settings.pop("steps", None)
     run = (
         Path(settings["output_dir"]).expanduser().resolve()
         if settings.get("output_dir")
@@ -285,6 +289,7 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
 
 
 def train(settings):
+    validate_training_budget(settings)
     prepared = prepare_training(settings)
     settings = {
         key: value for key, value in prepared.settings.items() if key != "_resolved_weight_sources"
@@ -328,6 +333,7 @@ def _train(settings, execution, *, prepared=None):
     if type(accumulation) is not int or accumulation < 1:
         raise ValueError("gradient_accumulation_steps must be a positive integer")
     cfg["world_size"] = execution.world_size
+    epochs = cfg.get("num_epochs")
     steps, batch_size = cfg.get("steps", 1000), cfg.get("batch_size", 8)
     if type(steps) is not int or steps < 1 or type(batch_size) is not int or batch_size < 1:
         raise ValueError("steps and batch_size must be positive integers")
@@ -403,6 +409,16 @@ def _train(settings, execution, *, prepared=None):
         validation = prepare_fields(validation, cfg, components, options=options)
     if cfg.get("drop_last", False) and len(samples) < batch_size:
         raise ValueError("drop_last would discard every sample; reduce batch_size")
+    if epochs is not None:
+        batch_count = batches_per_epoch(
+            len(samples), batch_size, execution.world_size, cfg.get("drop_last", False)
+        )
+        steps = epochs * ((batch_count + accumulation - 1) // accumulation)
+        cfg["steps"] = steps
+        logger.info(
+            "%d epochs, %d batches per rank per epoch, %d optimizer updates (accumulation %d)",
+            epochs, batch_count, steps, accumulation,
+        )
     pretrained_manifest = validate_pretrained(cfg, samples)
     options["input_features"] = samples.input_features
     options["output_features"] = samples.output_features
@@ -627,7 +643,9 @@ def _train(settings, execution, *, prepared=None):
         )
         progress = TrainingProgress(
             execution,
-            frames=len(samples),
+            frames=(
+                consumed_samples(sampler, sampler.batches) if epochs is not None else len(samples)
+            ),
             episodes=len(train_episodes),
             steps=steps,
             samples=consumed_samples(sampler, consumed),
@@ -766,7 +784,10 @@ def _train(settings, execution, *, prepared=None):
                 started = time.perf_counter()
                 previous_consumed = consumed
                 batches = []
-                for _ in range(accumulation):
+                microbatches = accumulation
+                if epochs is not None:
+                    microbatches = min(accumulation, sampler.batches - consumed % sampler.batches)
+                for _ in range(microbatches):
                     try:
                         batch = next(iterator)
                     except StopIteration:
@@ -778,26 +799,32 @@ def _train(settings, execution, *, prepared=None):
                 data_s = time.perf_counter() - started
                 if execution.device.type == "cuda":
                     torch.cuda.reset_peak_memory_stats(execution.device)
-                update = execution.update(
-                    wrapped,
-                    batches,
-                    optimizer,
-                    cfg["optimizer"]["grad_clip_norm"],
-                    processor,
-                    reduction=loss_counts,
-                    metric_specs=metric_specs,
-                    ema=ema,
-                )
+                while True:
+                    update = execution.update(
+                        wrapped,
+                        batches,
+                        optimizer,
+                        cfg["optimizer"]["grad_clip_norm"],
+                        processor,
+                        reduction=loss_counts,
+                        metric_specs=metric_specs,
+                        ema=ema,
+                    )
+                    if not update["optimizer_step"]:
+                        skipped += 1
+                        if execution.main:
+                            logger.warning(
+                                "AMP overflow: skipped update; scale=%s",
+                                execution.scaler.get_scale(),
+                            )
+                        if skipped >= 20:
+                            raise RuntimeError(
+                                "20 consecutive AMP overflows; check data/model precision"
+                            )
+                        if epochs is not None:
+                            continue
+                    break
                 if not update["optimizer_step"]:
-                    skipped += 1
-                    if execution.main:
-                        logger.warning(
-                            "AMP overflow: skipped update; scale=%s", execution.scaler.get_scale()
-                        )
-                    if skipped >= 20:
-                        raise RuntimeError(
-                            "20 consecutive AMP overflows; check data/model precision"
-                        )
                     continue
                 skipped = 0
                 step += 1

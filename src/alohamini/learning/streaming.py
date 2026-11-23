@@ -13,6 +13,8 @@ from bisect import bisect_left
 from dataclasses import dataclass
 from itertools import islice
 
+from alohamini.learning.data_index import batches_per_epoch
+
 _MASK64 = (1 << 64) - 1
 
 
@@ -161,10 +163,7 @@ class StreamingBatchSampler:
         except TypeError as error:
             raise ValueError("seed must be an integer") from error
         self._ranges = _episode_ranges(samples)
-        width = self.batch_size * self.world_size
-        self.batches = self.size // width if drop_last else (self.size + width - 1) // width
-        if not self.batches:
-            raise ValueError("drop_last would discard every global batch")
+        self.batches = batches_per_epoch(self.size, self.batch_size, self.world_size, drop_last)
         self.epoch, self.offset = divmod(consumed, self.batches)
 
     def __len__(self):

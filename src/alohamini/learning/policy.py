@@ -74,6 +74,11 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
         "sample_boundary": "episode",
         "sample_filter": samples.sample_filter,
     }
+    if getattr(samples, "frame_ratio", 1) != 1 or getattr(samples, "downsample_rate", 1) != 1:
+        manifest["temporal_sampling"] = {
+            "fps": samples.info["fps"], "downsample_rate": samples.downsample_rate,
+        }
+        manifest["source_info"] = {**samples.info, "fps": samples.source_fps}
     from alohamini.learning.fixed import action_summary
 
     manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
@@ -170,7 +175,7 @@ class NativePolicy:
             self.robot_metadata is None or robot_model != self.robot_metadata["robot_model"]
         ):
             raise ValueError("Declared robot model differs from checkpoint")
-        self.fps = self.source["fps"]
+        self.fps = manifest.get("temporal_sampling", {}).get("fps", self.source["fps"])
         self.names = self.source["features"]["action"]["names"]
         if not offline and self.names != state_names(self.robot_metadata["robot_model"]):
             raise ValueError("Checkpoint action coordinates must retain all Host targets")

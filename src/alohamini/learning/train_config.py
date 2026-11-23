@@ -52,6 +52,16 @@ def value(text):
         return text
 
 
+def validate_training_budget(settings):
+    epochs = settings.get("num_epochs")
+    if epochs is None:
+        return
+    if type(epochs) is not int or epochs < 1:
+        raise ValueError("num_epochs must be a positive integer")
+    if settings.get("steps") is not None and not settings.get("resume"):
+        raise ValueError("Choose steps or num_epochs")
+
+
 def parse_training_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Local policy training on LeRobot v3 and AlohaMini datasets"
@@ -134,6 +144,11 @@ def parse_training_args(argv=None):
         help="Trainable storage, independent of mixed_precision (default: policy preset)",
     )
     parser.add_argument("--distributed_backend", choices=("ddp", "fsdp2"))
+    budget = parser.add_mutually_exclusive_group()
+    budget.add_argument("--steps", type=int, help="Total optimizer updates")
+    budget.add_argument("--num_epochs", type=int, help="Complete passes over the selected samples")
+    parser.add_argument("--fps", type=int, help="Trajectory FPS (default: recorded)")
+    parser.add_argument("--downsample_rate", type=int, help="Stride between eligible window starts")
     parser.add_argument("--drop_last", type=boolean)
     parser.add_argument("--cameras", type=json.loads)
     parser.add_argument("--image_size", type=json.loads)
@@ -145,7 +160,6 @@ def parse_training_args(argv=None):
         "--dataloader_multiprocessing_context", choices=("spawn", "forkserver", "fork")
     )
     for name in (
-        "steps",
         "batch_size",
         "save_freq",
         "keep_last_checkpoints",
@@ -166,9 +180,23 @@ def parse_training_args(argv=None):
         "dataset_preparation_timeout_s",
     ):
         parser.add_argument(f"--{name}", type=int)
+    for name, value_type, description in (
+        ("lr", float, "Main base learning rate"),
+        ("lr_backbone", float, "Absolute base learning rate for the trainable visual backbone"),
+        ("chunk_size", int, "Actions per predicted chunk or plan"),
+        ("backbone", str, "Visual backbone model name or path"),
+        ("nheads", int, "Attention heads in the configurable Transformer stack"),
+        ("enc_layers", int, "Encoder depth"),
+        ("dec_layers", int, "Decoder or action-expert depth"),
+        ("kl_weight", float, "KL loss coefficient for policies with a KL objective"),
+    ):
+        parser.add_argument(
+            f"--{name}", type=value_type, help=description, default=argparse.SUPPRESS
+        )
     for name in (
         "type",
         "lr",
+        "lr_backbone",
         "weight_decay",
         "betas",
         "eps",
@@ -221,6 +249,10 @@ def parse_training_args(argv=None):
     cfg = json.loads(config_path.expanduser().read_text()) if config_path else {}
     if not isinstance(cfg, dict):
         parser.error("Training config must be a JSON object")
+    if args["num_epochs"] is not None:
+        cfg.pop("steps", None)
+    elif args["steps"] is not None:
+        cfg.pop("num_epochs", None)
     model = dict(cfg.get("model", {}))
     for name, setting in args.items():
         if name.startswith("policy."):
@@ -237,7 +269,14 @@ def parse_training_args(argv=None):
         elif setting is not None:
             cfg[name] = setting
     cfg["model"] = model
-    cfg = resolve_pretrained(cfg)
+    try:
+        validate_training_budget(cfg)
+    except ValueError as exc:
+        parser.error(str(exc))
+    for name in ("fps", "downsample_rate"):
+        if name in cfg and (type(cfg[name]) is not int or cfg[name] < 1):
+            parser.error(f"{name} must be a positive integer")
+    cfg = resolve_pretrained(cfg, cli_keys={k for k, v in args.items() if v is not None})
     validate_trainable_dtype(cfg.get("trainable_dtype", "preserve"))
     cfg = algorithm(cfg.get("policy", "act")).apply_preset(cfg)
     validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
@@ -273,4 +312,6 @@ def parse_training_args(argv=None):
             parser.error(
                 "Resume requires --config_path=<checkpoint>/pretrained_model/train_config.json"
             )
+    if "num_epochs" in cfg:
+        cfg.pop("steps", None)
     return resolve_data_pipeline(cfg), background

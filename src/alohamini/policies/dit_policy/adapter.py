@@ -9,6 +9,15 @@ REVISION = "ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73"
 
 
 class DiTPolicyAlgorithm(DiffusionAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "horizon",
+        "nheads": "num_heads",
+        "enc_layers": "num_layers",
+        "dec_layers": "num_layers",
+    }
+    chunk_history_offset = None
+    visual_backbone_modules = ("vision.encoders",)
+
     fsdp_classes = ("_SelfAttnEncoder", "_DiTDecoder", "BasicBlock", "Bottleneck")
 
     @property

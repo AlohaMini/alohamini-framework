@@ -12,6 +12,8 @@ from .configuration_wall_oss_05 import WallOSS05Config
 
 
 class WallOSS05Algorithm(ChunkAlgorithm):
+    visual_backbone_modules = ("model.visual",)
+
     processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = WallOSS05Config

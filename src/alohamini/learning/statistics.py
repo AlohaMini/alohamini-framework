@@ -50,6 +50,8 @@ def sample_arguments(cfg, components, options):
         root=str(root),
         **components.sample_spec(options, cameras=cameras),
         state=state,
+        fps=cfg.get("fps"),
+        downsample_rate=cfg.get("downsample_rate", 1),
         cameras=cfg.get("cameras"),
         image_size=tuple(cfg.get("image_size", DEFAULT_IMAGE_SIZE)),
         image_resize_mode=cfg.get("image_resize_mode", "stretch"),

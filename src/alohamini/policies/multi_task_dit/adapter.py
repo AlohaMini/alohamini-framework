@@ -17,6 +17,18 @@ CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
 
 class MultiTaskDiTAlgorithm(ResourceAlgorithm):
+    training_parameter_fields = {
+        "chunk_size": "horizon",
+        "backbone": "vision_encoder_name",
+        "nheads": "num_heads",
+        "dec_layers": "num_layers",
+    }
+    chunk_history_offset = -1
+    visual_backbone_modules = (
+        "observation_encoder.vision_encoder",
+        "observation_encoder.vision_encoders",
+    )
+
     single_weight_file = True
     weights_directory_only = True
     allow_scratch = True

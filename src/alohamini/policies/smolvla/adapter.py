@@ -11,6 +11,9 @@ from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
 class SmolVLAAlgorithm(ResourceAlgorithm):
+    training_parameter_fields = {"enc_layers": "num_vlm_layers", "dec_layers": "num_expert_layers"}
+    visual_backbone_modules = ("model.vlm_with_expert.vlm.model.vision_model",)
+
     single_weight_file = True
     weights_directory_only = True
     processor_fields = ("vlm_model_name",)

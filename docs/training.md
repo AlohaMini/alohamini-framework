@@ -147,6 +147,59 @@ TCP data must retain joint observations even with `--state=none`. See [Inference
 
 ## 4. Training
 
+### Training parameter reference
+
+Architecture options depend on the policy. Unsupported options raise an error. See the policy index below for additional options.
+
+| Parameter | Purpose |
+| --- | --- |
+| `--steps` | Total optimizer updates. Choose this or num_epochs. |
+| `--num_epochs` | Complete passes through training samples. The final partial accumulation group updates at each epoch end. |
+| `--fps` | Training trajectory rate. Defaults to the recording rate. A positive integer up to that rate selects the nearest recorded frame per tick. |
+| `--downsample_rate` | Stride between eligible window starts in training frames (default 1). Within-window spacing follows fps. |
+| `--batch_size`, `--gradient_accumulation_steps` | Batch size per process and batches accumulated per update. |
+| `--seed`, `--cudnn_deterministic`, `--deterministic_algorithms` | Random seed, deterministic cuDNN mode, and deterministic PyTorch operations. |
+| `--policy.type`, `--policy.path`, `--policy.device` | Policy name, initial weights or native checkpoint path, and training device. |
+| `--dataset.root`, `--dataset.repo_id` | Local dataset directory and optional dataset label. |
+| `--dataset.episodes`, `--dataset.eval_episodes` | Training and held-out validation episode IDs. Selections must be disjoint. |
+| `--dataset.allow_unannotated` | Read original LeRobot v3 recordings without Host metadata. |
+| `--state`, `--cameras` | State fields and ordered list of input cameras. |
+| `--image_size`, `--image_resize_mode`, `--image_pad_value` | Input height and width, resize mode (stretch or pad), and padding value. |
+| `--data.state_representation`, `--data.action_representation` | Select state and action representations such as recorded coordinates, relative joint targets, or TCP. |
+| `--data.joint_delta_fields`, `--data.rotation_representation`, `--data.tcp_delta_frame` | Joint-delta field mapping, rotation representation, and TCP delta reference frame. |
+| `--data.kinematics.reference_pose`, `--data.kinematics.path`, `--data.kinematics.spec` | Select one kinematics reference pose, descriptor path, or specification. |
+| `--normalization`, `--stats` | Normalization source (dataset or checkpoint) and optional prepared statistics file. |
+| `--num_workers`, `--prefetch_factor`, `--persistent_workers` | Loader workers per process, prefetched batches per worker, and worker reuse across epochs. |
+| `--dataloader_multiprocessing_context`, `--cpu_threads` | Loader process start method and CPU compute threads per training process. |
+| `--video_backend`, `--video_cache_size`, `--camera_workers`, `--return_uint8` | Video decoder backend, cached decoder count, camera read threads, and uint8 image output. |
+| `--dataset.streaming`, `--dataset.streaming_episode_pool_size` | Enable streaming sampling and set the episode mixing pool size. |
+| `--dataset.cache_size_mb`, `--dataset.cache_block_rows`, `--dataset.cache_dir` | Numeric cache size per dataset per process, rows per block, and disk cache directory. |
+| `--drop_last` | Drop each epoch’s incomplete global batch. |
+| `--optimizer.type`, `--lr` (`--optimizer.lr`), `--optimizer.weight_decay`, `--optimizer.grad_clip_norm` | Optimizer type, main learning rate, weight decay, and gradient norm clip threshold. |
+| `--optimizer.betas`, `--optimizer.eps` | Adam/AdamW moment coefficients and numerical stability term. |
+| `--optimizer.momentum`, `--optimizer.dampening`, `--optimizer.nesterov` | SGD momentum, dampening, and Nesterov switch. |
+| `--scheduler.type`, `--scheduler.warmup_steps`, `--scheduler.decay_steps`, `--scheduler.decay_lr` | Learning-rate schedule, warmup steps, decay steps, and final learning rate. |
+| `--scheduler.start_step`, `--scheduler.before_start` | Stage start step and per-group learning-rate multipliers before that step. |
+| `--ema.enable`, `--ema.use_for_eval`, `--ema.update_after_step` | Enable weight averaging, use averaged weights for evaluation, and delay updates. |
+| `--ema.decay`, `--ema.schedule`, `--ema.inv_gamma`, `--ema.power`, `--ema.min_decay`, `--ema.max_decay` | Fixed EMA decay or the decay schedule, shape, and bounds. |
+| `--mixed_precision`, `--trainable_dtype`, `--tf32` | Mixed-precision computation, trainable parameter storage, and TF32 for CUDA FP32 operations. |
+| `--num_processes`, `--distributed_backend`, `--dataset_preparation_timeout_s` | Local process count, DDP or FSDP2 backend, and dataset preparation timeout in seconds. |
+| `--eval_steps`, `--eval_batch_size`, `--eval_log_freq` | Optimizer updates between validations, validation batch size, and validation logging interval. |
+| `--eval_num_workers`, `--eval_prefetch_factor`, `--eval_persistent_workers` | Validation loader workers, prefetched batches, and persistent workers. |
+| `--save_freq`, `--keep_last_checkpoints`, `--log_freq` | Updates between checkpoints, recent checkpoints retained, and training logging interval. |
+| `--config`, `--config_path`, `--resume` | Load training JSON (the path flags are aliases). Resume restores checkpoint training state. |
+| `--output_dir`, `--run_name`, `--background`, `--foreground` | Set the output directory or workspace run name and launch detached or in the foreground. |
+| `--policy.push_to_hub`, `--wandb.enable` | Local training accepts false only. Logs and checkpoints are stored locally. |
+| `--lr_backbone` (`--optimizer.lr_backbone`) | Absolute base learning rate for trainable visual backbone parameters. Omit to use the policy’s parameter groups. |
+| `--chunk_size` | Number of actions per prediction or plan, in training frames. History, frame grouping and pretrained shape constraints depend on the policy. |
+| `--backbone` | Visual backbone name or path for policies with a replaceable encoder. Select compatible pretrained weights. |
+| `--nheads` | Attention heads in the policy’s configurable Transformer stack. |
+| `--enc_layers`, `--dec_layers` | Encoder and decoder/action-expert depth where configurable. DiT-Block ties both depths. |
+| `--kl_weight` | KL loss coefficient for policies with this objective (ACT and AM-ACT with VAE enabled). |
+| `--policy.n_action_steps` | Actions executed from a predicted chunk before replanning during chunked execution. |
+
+For a 30 FPS recording, `--fps=10 --downsample_rate=2` starts windows at source frames 0, 6, 12. The first chunk uses frames 0, 3, 6. Use FPS reduction for absolute targets or velocity commands. Convert recorded per-frame displacement increments to absolute targets first.
+
 ### Policy selection
 
 See each policy directory for training commands, weight preparation, and policy-specific arguments:
@@ -411,7 +464,7 @@ python -m alohamini.learning.train \
   --output_dir="$HOME/Alohamini_workspace/runs/act_finetune_01" \
   --policy.device=cuda \
   --optimizer.lr=5e-6 \
-  --policy.optimizer_lr_backbone=5e-6 \
+  --lr_backbone=5e-6 \
   --scheduler.type=none \
   --steps=50000 --batch_size=2 \
   --save_freq=5000 --eval_steps=1000 --log_freq=100 \
@@ -445,13 +498,10 @@ but do not guarantee higher success; select them using validation metrics. `5e-6
 | Option | Effect |
 | --- | --- |
 | `--optimizer.lr=5e-6` | Set the main learning rate; for ACT/AM-ACT, this applies outside the visual backbone |
-| `--policy.optimizer_lr_backbone=5e-6` | Set the ACT/AM-ACT visual-backbone learning rate independently, controlling image-feature extractor updates |
+| `--lr_backbone=5e-6` | Set the ACT/AM-ACT visual-backbone learning rate independently, controlling image-feature extractor updates |
 | `--scheduler.type=none` | Keep learning rates constant at their configured values throughout training; learning continues |
 
-**Changing only `--optimizer.lr` does not override the ACT/AM-ACT visual-backbone learning rate.**
-Set both as above to use the same rate, or update visual features more slowly
-with `--optimizer.lr=5e-6 --policy.optimizer_lr_backbone=1e-6`.
-Other algorithms use their own parameter groups; do not reuse ACT backbone options indiscriminately.
+Use `--lr=1e-4 --lr_backbone=1e-5` to set the two base rates independently. When the backbone rate is omitted, ACT uses its own base rate and Multi-Task DiT scales the main rate by its configured multiplier. The scheduler applies to both groups.
 
 To increase the learning rate gradually and then reduce it, replace `--scheduler.type=none` in the fine-tuning command with:
 
@@ -522,7 +572,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --policy.n_action_steps 10 --policy.temporal_ensemble_coeff none
 ```
 
-Match `--fps` to training data. Each action chunk executes its first `n_action_steps` before predicting again.
+For synchronous joint control, set `--fps` to the checkpoint’s training frequency. Each action chunk executes its first `n_action_steps` before predicting again.
 For ACT/AM-ACT prediction and temporal ensembling at every step, use `--policy.n_action_steps 1 --policy.temporal_ensemble_coeff 0.01`;
 `none` disables ensembling; `0` uses equal weights. Execution settings can change without retraining.
 

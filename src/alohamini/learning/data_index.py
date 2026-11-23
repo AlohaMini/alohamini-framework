@@ -7,13 +7,29 @@ from collections.abc import Sequence
 from alohamini.learning.data_store import IndexSet
 
 
+def batches_per_epoch(size, batch_size, world_size, drop_last):
+    width = batch_size * world_size
+    full, remainder = divmod(size, width)
+    count = full + int(bool(remainder) and not drop_last)
+    if not count:
+        raise ValueError("drop_last would discard every global batch")
+    return count
+
+
 def ordered_indices(indices):
     """Keep legacy set order deterministic without copying file-backed bit masks."""
     return iter(indices) if isinstance(indices, IndexSet) else iter(sorted(indices))
 
 
+def recorded_frame(tick, ratio):
+    """Nearest original frame on an episode-local nominal clock (ties round up)."""
+    n, d = ratio.numerator, ratio.denominator
+    return (2 * tick * n + d) // (2 * d)
+
+
 class EpisodeLayout:
-    def __init__(self, spans):
+    def __init__(self, spans, frame_ratio=1):
+        self.frame_ratio = frame_ratio
         self.spans = tuple(spans)
         self.ends = tuple(end for _, _, end in self.spans)
         previous = 0
@@ -46,14 +62,14 @@ class _EpisodeView(Sequence):
             raise IndexError("episode layout index out of range")
         episode, start, end = self.layout.spans[bisect_right(self.layout.ends, index)]
         if self.field == "location":
-            return episode, index - start
+            return episode, recorded_frame(index - start, self.layout.frame_ratio)
         return start if self.field == "start" else end
 
     def __iter__(self):
         for episode, start, end in self.layout.spans:
             for frame in range(end - start):
                 yield (
-                    (episode, frame)
+                    (episode, recorded_frame(frame, self.layout.frame_ratio))
                     if self.field == "location"
                     else (start if self.field == "start" else end)
                 )
