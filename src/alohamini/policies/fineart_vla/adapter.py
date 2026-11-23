@@ -6,13 +6,12 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.processor import quantile_statistics
-from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_fineart_vla import FineARTVLAConfig
 
 
-class FineARTVLAAlgorithm(RequiredSafetensorsBase, ChunkAlgorithm):
+class FineARTVLAAlgorithm(ChunkAlgorithm):
     asset_fields = ("assets_path", "fast_tokenizer_path")
     config_class = FineARTVLAConfig
     fsdp_classes = ("GemmaRMSNorm", "Embedding")
@@ -183,9 +182,7 @@ class FineARTVLAAlgorithm(RequiredSafetensorsBase, ChunkAlgorithm):
         from alohamini.learning.weights import load_weights
 
         load_weights(
-            model.network,
-            required_pretrained_path(settings),
-            prefix=model.config.base_weights_prefix,
+            model.network, settings["pretrained_path"], prefix=model.config.base_weights_prefix
         )
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):

@@ -27,7 +27,7 @@ from typing_extensions import Unpack
 
 from alohamini.policies.transformers_compat import crop_cache_to_length
 
-from .configuration_smolvla import SmolVLAConfig, read_smolvla_base
+from .configuration_smolvla import SmolVLAConfig
 from .helpers import (
     create_sinusoidal_pos_embedding,
     euler_integrate,
@@ -152,9 +152,15 @@ class SmolVLAPolicy(nn.Module):
 
     def load_base_weights(self, directory):
         """Initialize from a local official SmolVLA base, without its data statistics."""
+        import json
+        from pathlib import Path
+
         from safetensors.torch import load_model
 
-        saved, weights = read_smolvla_base(directory)
+        root = Path(directory).expanduser().resolve()
+        saved = json.loads((root / "config.json").read_text())
+        if saved.get("type") != "smolvla" or saved.get("use_peft", False):
+            raise ValueError("Expected a full official SmolVLA checkpoint, not a PEFT adapter")
         for name in (
             "max_state_dim", "max_action_dim", "num_vlm_layers", "num_expert_layers",
             "self_attn_every_n_layers", "expert_width_multiplier", "attention_mode",
@@ -163,7 +169,7 @@ class SmolVLAPolicy(nn.Module):
             default = getattr(SmolVLAConfig(), name)
             if saved.get(name, default) != getattr(self.config, name):
                 raise ValueError(f"Base checkpoint architecture/coordinates differ: {name}")
-        load_model(self, weights, strict=True)
+        load_model(self, root / "model.safetensors", strict=True)
 
     def _get_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]

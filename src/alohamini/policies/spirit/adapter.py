@@ -13,11 +13,6 @@ from safetensors.torch import load_file, load_model
 
 from alohamini.datasets.kinematic_fields import KinematicFields
 from alohamini.learning.metrics import MetricSpec, loss_count
-from alohamini.learning.weights import (
-    DEFAULT_WEIGHTS_FILENAME,
-    TrainingWeightSource,
-    required_pretrained_path,
-)
 from alohamini.policies.chunk import local_bpe_assets
 
 from .configuration_spirit import SpiritConfig
@@ -148,7 +143,13 @@ class SpiritAlgorithm:
                 options.pop(key, None)
             options = {**manifest["config"], **options}
             return self.checkpoint_options(checkpoint, options, device, None, "checkpoint")
-        path = required_pretrained_path(settings)
+        path = (
+            Path(settings["pretrained_path"]).expanduser()
+            if settings.get("pretrained_path")
+            else None
+        )
+        if not settings.get("resume") and path is None:
+            raise ValueError("Spirit fine-tuning requires --policy.path to local base weights")
         if path and not (path / "policy.json").exists() and (path / "config.json").is_file():
             external = json.loads((path / "config.json").read_text())
             from .configuration_spirit import NETWORK_DEFAULTS
@@ -232,15 +233,9 @@ class SpiritAlgorithm:
                 {**source, "robot_metadata": metadata}
             )
 
-    @staticmethod
-    def training_weight_sources(settings, options):
-        root = required_pretrained_path(settings)
-        path = root / DEFAULT_WEIGHTS_FILENAME if root.is_dir() else root
-        return (TrainingWeightSource(path),)
-
     def initialize(self, model, settings):
-        (source,) = self.training_weight_sources(settings, None)
-        weights = load_file(source.path, device="cpu")
+        path = Path(settings["pretrained_path"]).expanduser()
+        weights = load_file(path / "model.safetensors" if path.is_dir() else path, device="cpu")
         normalization = {
             k for k in model.network.state_dict() if k.startswith(("normalize_", "unnormalize_"))
         }

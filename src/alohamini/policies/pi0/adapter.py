@@ -3,7 +3,6 @@
 from copy import deepcopy
 from pathlib import Path
 
-from alohamini.learning.weights import required_pretrained_path
 from alohamini.policies.pi05.adapter import PI05Algorithm, PI05TrainModel
 
 from .configuration_pi0 import PI0Config, PI0TrainingConfig
@@ -59,8 +58,8 @@ class PI0Algorithm(PI05Algorithm):
         result = deepcopy(settings.get("model", {}))
         if result.get("tokenizer_path"):
             result["tokenizer_path"] = str(Path(result["tokenizer_path"]).expanduser().resolve())
-        if not settings.get("resume"):
-            required_pretrained_path(settings)
+        if not settings.get("resume") and not settings.get("pretrained_path"):
+            raise ValueError("Pi0 requires --policy.path to a local OpenPI PyTorch base")
         result.setdefault("n_action_steps", result.get("network", {}).get("action_horizon", 50))
         return result
 

@@ -45,21 +45,3 @@ def algorithm(name):
     except KeyError as exc:
         raise ValueError(f"Unknown policy: {name}") from exc
     return getattr(import_module(module), cls)()
-
-
-_LABELS = {
-    "act": "ACT",
-    "am_act": "AM-ACT",
-    "pi05": "π0.5",
-    "pi0": "π0",
-    "pi0_fast": "π0-FAST",
-    "smolvla": "SmolVLA",
-    "diffusion": "Diffusion Policy",
-}
-
-
-def training_catalog():
-    return [
-        {"id": name, "label": _LABELS.get(name, name.replace("_", " ").upper())}
-        for name in sorted(ALGORITHMS)
-    ]

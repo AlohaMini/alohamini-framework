@@ -6,7 +6,6 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.metrics import MetricSpec, loss_count
-from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, TaskProcessor, local_assets
 
 from .configuration_evo1 import Evo1Config
@@ -21,7 +20,7 @@ class Evo1Processor(TaskProcessor):
         return self.numeric.action(tensor[..., : self.action_dim])
 
 
-class Evo1Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
+class Evo1Algorithm(ChunkAlgorithm):
     asset_fields = ("vlm_model_name",)
     config_class = Evo1Config
     fsdp_classes = ("InternVLVisionLayer", "Qwen2DecoderLayer", "BasicTransformerBlock")
@@ -128,7 +127,7 @@ class Evo1Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
     def initialize(model, settings):
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, required_pretrained_path(settings))
+        load_weights(model, settings["pretrained_path"])
 
     @staticmethod
     def checkpoint_options(path, options, device, n_action_steps, temporal_ensemble_coeff):

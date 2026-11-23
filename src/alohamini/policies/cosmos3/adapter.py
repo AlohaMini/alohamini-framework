@@ -6,13 +6,12 @@ from pathlib import Path
 
 from alohamini.learning.ema import ema_settings
 from alohamini.learning.processor import quantile_statistics
-from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_cosmos3 import Cosmos3EdgeConfig, Cosmos3NanoConfig
 
 
-class Cosmos3Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
+class Cosmos3Algorithm(ChunkAlgorithm):
     asset_fields = ("tokenizer_path",)
     config_class = Cosmos3NanoConfig
     supports_field_transforms = True
@@ -169,7 +168,7 @@ class Cosmos3Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
         heads = tuple("model.network." + n + "." for n in model.model.network._action_modules)
         load_weights(
             model,
-            required_pretrained_path(settings),
+            settings["pretrained_path"],
             reinitialize=heads if model.config.reinitialize_robot_heads else (),
         )
         if model.config.reinitialize_robot_heads:

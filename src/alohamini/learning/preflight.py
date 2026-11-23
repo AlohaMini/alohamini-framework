@@ -1,24 +1,33 @@
-"""供桌面端在启动训练前读取算法、设备和本地模型文件。"""
+"""给 Studio 提供训练算法目录和只读预检。"""
 
-from alohamini.policies.registry import algorithm
-from alohamini.policies.registry import training_catalog as training_catalog
+from alohamini.policies.registry import ALGORITHMS, algorithm
+
+_DISPLAY_NAMES = {
+    "act": "ACT",
+    "am_act": "AM-ACT",
+    "pi0": "π0",
+    "pi05": "π0.5",
+    "pi0_fast": "π0-FAST",
+    "smolvla": "SmolVLA",
+    "diffusion": "Diffusion Policy",
+}
+
+
+def training_catalog():
+    return [
+        {"id": name, "label": _DISPLAY_NAMES.get(name, name.replace("_", " ").upper())}
+        for name in sorted(ALGORITHMS)
+    ]
 
 
 def inspect_training(policy, device, pretrained_path, assets):
-    from safetensors import SafetensorError
+    from safetensors import SafetensorError, safe_open
 
     from alohamini.learning.checkpoint import _asset_fields, model_directory, resolve_pretrained
     from alohamini.learning.execution import validate_local_workers
-    from alohamini.learning.weights import (
-        DEFAULT_WEIGHTS_FILENAME,
-        MissingTrainingWeights,
-        TrainingWeightSource,
-    )
 
     component = algorithm(policy)
     fields = _asset_fields(component)
-    weight_sources = getattr(component, "training_weight_sources", None)
-    tokenizer_sources = getattr(component, "training_tokenizers", None)
     issues = []
     resource_errors = (OSError, ValueError, KeyError, TypeError, RuntimeError, SafetensorError)
 
@@ -29,50 +38,48 @@ def inspect_training(policy, device, pretrained_path, assets):
         validate_local_workers(1, device)
     except (ValueError, RuntimeError) as error:
         issue("device", error)
-    device_issues = len(issues)
 
     settings = {
         "policy": policy,
         "device": device,
         "model": {name: assets[name] for name in fields if name in assets},
     }
-    native = False
     if pretrained_path:
+        settings["pretrained_path"] = pretrained_path
         try:
             root = model_directory(pretrained_path)
-            settings["pretrained_path"] = str(root)
             if not root.exists():
                 raise FileNotFoundError(root)
-            native = (root / "policy.json").is_file()
-            if native:
+            if (root / "policy.json").is_file():
                 settings = resolve_pretrained(settings)
-                TrainingWeightSource(root / DEFAULT_WEIGHTS_FILENAME).inspect()
-            if not native and weight_sources is None:
-                issue("native_checkpoint", root)
+                with safe_open(root / "model.safetensors", framework="numpy"):
+                    pass
+            elif check_weights := getattr(component, "inspect_base_weights", None):
+                check_weights(root)
+            elif root.is_file() and root.suffix == ".safetensors":
+                with safe_open(root, framework="numpy"):
+                    pass
         except resource_errors as error:
             issue("weights", error)
 
     options = settings["model"]
-    option_error = None
-    if len(issues) == device_issues:
+    if not any(item["code"] == "weights" for item in issues):
         try:
             settings = component.apply_preset(settings)
             options = settings.get("model", {})
             options = component.options(settings, device)
         except (*resource_errors, ImportError) as error:
-            option_error = error
+            # 只归类训练入口已经报出的 CLI 参数缺项。
+            detail = str(error)
+            if not pretrained_path and "--policy.path" in detail:
+                issue("missing_weights", detail)
+            elif detail == "--policy.path requires an AlohaMini checkpoint model directory":
+                issue("native_checkpoint", detail)
+            else:
+                issue("options", detail)
 
-    if not native and weight_sources is not None and len(issues) == device_issues:
-        try:
-            for source in weight_sources(settings, options):
-                source.inspect()
-        except MissingTrainingWeights as error:
-            issue("missing_weights", error)
-        except resource_errors as error:
-            issue("weights", error)
-
-    if tokenizer_sources is not None:
-        for code, path, check in tokenizer_sources(options):
+    if tokenizers := getattr(component, "training_tokenizers", None):
+        for code, path, check in tokenizers(options):
             if not path:
                 issue(f"missing_{code}")
                 continue
@@ -81,7 +88,4 @@ def inspect_training(policy, device, pretrained_path, assets):
             except resource_errors as error:
                 issue(code, error)
 
-    if option_error is not None and len(issues) == device_issues:
-        code = "missing_weights" if isinstance(option_error, MissingTrainingWeights) else "options"
-        issue(code, option_error)
     return {"assets": list(fields), "issues": issues}

@@ -5,13 +5,12 @@ from copy import deepcopy
 from pathlib import Path
 
 from alohamini.learning.processor import quantile_statistics
-from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_dm05 import DM05Config
 
 
-class DM05Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
+class DM05Algorithm(ChunkAlgorithm):
     asset_fields = ("assets_path",)
     config_class = DM05Config
     supports_field_transforms = True
@@ -115,4 +114,4 @@ class DM05Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
             for name in model.model.state_dict()
             if name.startswith(current)
         }
-        load_weights(model.model, required_pretrained_path(settings), key_mapping=mapping)
+        load_weights(model.model, settings["pretrained_path"], key_mapping=mapping)

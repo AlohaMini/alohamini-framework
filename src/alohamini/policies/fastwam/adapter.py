@@ -7,11 +7,6 @@ from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
-from alohamini.learning.weights import (
-    DEFAULT_WEIGHTS_FILENAME,
-    TrainingWeightSource,
-    required_pretrained_path,
-)
 
 
 class FastWAMProcessor:
@@ -103,10 +98,12 @@ class FastWAMAlgorithm:
     def options(self, settings, device):
         options = dict(settings.get("model", {}))
         options["device"] = device
+        if not settings.get("resume") and not settings.get("pretrained_path"):
+            raise ValueError("FastWAM requires --policy.path to a local converted base checkpoint")
         if not settings.get("resume"):
-            (source,) = self.training_weight_sources(settings, None)
-            if not source.path.is_file():
-                raise FileNotFoundError(source.path)
+            weights = Path(settings["pretrained_path"]).expanduser() / "model.safetensors"
+            if not weights.is_file():
+                raise FileNotFoundError(weights)
         for key in ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"):
             if key not in options or not Path(options[key]).expanduser().is_dir():
                 raise ValueError(f"FastWAM requires --policy.{key} pointing to local assets")
@@ -157,15 +154,10 @@ class FastWAMAlgorithm:
     def processor(self, model, stats, device):
         return FastWAMProcessor(model.config, stats, device)
 
-    @staticmethod
-    def training_weight_sources(settings, options):
-        directory = required_pretrained_path(settings)
-        return (TrainingWeightSource(directory / DEFAULT_WEIGHTS_FILENAME),)
-
     def initialize(self, model, settings):
         """Load compatible core weights; only embodiment heads may be reinitialized."""
-        (source,) = self.training_weight_sources(settings, None)
-        state = load_file(source.path)
+        path = Path(settings["pretrained_path"]).expanduser()
+        state = load_file(path / "model.safetensors")
         own = model.state_dict()
         import re
 

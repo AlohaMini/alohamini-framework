@@ -2,66 +2,12 @@
 
 import json
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 
 from safetensors import safe_open
 
-DEFAULT_WEIGHTS_FILENAME = "model.safetensors"
 
-
-class MissingTrainingWeights(ValueError):
-    """训练适配器需要本地权重路径。"""
-
-
-def required_pretrained_path(settings):
-    value = settings.get("pretrained_path")
-    if not value:
-        raise MissingTrainingWeights("请通过 --policy.path 指定本地预训练权重")
-    return Path(value).expanduser()
-
-
-@dataclass(frozen=True)
-class TrainingWeightSource:
-    """训练权重的文件位置与格式，由实际加载它的算法适配器决定。"""
-
-    path: Path
-    shard_filename: str | None = None
-    safetensors: bool = True
-
-    def inspect(self):
-        if not self.shard_filename and not self.path.is_file():
-            raise FileNotFoundError(self.path)
-        if not self.safetensors:
-            with self.path.open("rb"):
-                return
-        files = (
-            _files(self.path, self.shard_filename)
-            if self.shard_filename
-            else [(self.path, None)]
-        )
-        for filename, expected in files:
-            with safe_open(filename, framework="numpy") as stream:
-                if not _shard_keys(stream, filename, expected):
-                    raise ValueError(f"权重文件不包含张量：{filename}")
-
-
-class RequiredSafetensorsBase:
-    """从 --policy.path 加载单个 safetensors 或带索引的分片。"""
-
-    @staticmethod
-    def training_weight_sources(settings, options):
-        return (TrainingWeightSource(required_pretrained_path(settings), DEFAULT_WEIGHTS_FILENAME),)
-
-
-def _shard_keys(stream, path, expected):
-    keys = set(stream.keys())
-    if expected is not None and keys != expected:
-        raise ValueError(f"Safetensors shard disagrees with its index: {path.name}")
-    return keys
-
-
-def _files(path, filename=DEFAULT_WEIGHTS_FILENAME):
+def _files(path, filename="model.safetensors"):
     if (
         not isinstance(filename, str)
         or Path(filename).name != filename
@@ -110,7 +56,7 @@ def load_weights(
     prefix="",
     key_mapping=None,
     exclude=(),
-    filename=DEFAULT_WEIGHTS_FILENAME,
+    filename="model.safetensors",
 ):
     """Validate the entire schema before loading one shard at a time.
 
@@ -152,7 +98,9 @@ def load_weights(
     shapes, aliases = {}, {}
     for shard, expected in files:
         with safe_open(shard, framework="pt", device="cpu") as stream:
-            keys = _shard_keys(stream, shard, expected)
+            keys = set(stream.keys())
+            if expected is not None and keys != expected:
+                raise ValueError(f"Safetensors shard disagrees with its index: {shard.name}")
             local_keys = {local_name(key) for key in keys}
             if len(local_keys) != len(keys):
                 raise ValueError("Checkpoint key mapping has colliding target names")

@@ -6,7 +6,6 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.processor import quantile_statistics
-from alohamini.learning.weights import TrainingWeightSource, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -173,22 +172,15 @@ class LingBotVAAlgorithm(ChunkAlgorithm):
         return LingBotVAProcessor(model.config, stats, device)
 
     @staticmethod
-    def training_weight_sources(settings, options):
-        return (TrainingWeightSource(
-            required_pretrained_path(settings) / "transformer",
-            "diffusion_pytorch_model.safetensors",
-        ),)
-
-    @classmethod
-    def initialize(cls, model, settings):
+    def initialize(model, settings):
         from alohamini.learning.weights import load_weights
 
-        (source,) = cls.training_weight_sources(settings, None)
+        path = Path(settings["pretrained_path"]) / "transformer"
         # Published weights retain an obsolete Conv3d; current author code uses only the MLP.
         load_weights(
             model.transformer,
-            source.path,
-            filename=source.shard_filename,
+            path,
+            filename="diffusion_pytorch_model.safetensors",
             exclude=("patch_embedding.",),
         )
         if model.config.reinitialize_robot_heads:

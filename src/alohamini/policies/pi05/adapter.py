@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import torch
 from safetensors.torch import load_model
 
-from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.configuration import PolicyConfig
 
 from .configuration_pi05 import PI05Config
@@ -305,7 +304,7 @@ class PI05TrainModel(torch.nn.Module):
         return self._actions.popleft()
 
 
-class PI05Algorithm(RequiredSafetensorsBase):
+class PI05Algorithm:
     asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
@@ -433,6 +432,17 @@ class PI05Algorithm(RequiredSafetensorsBase):
         return result
 
     @staticmethod
+    def inspect_base_weights(path):
+        from safetensors import safe_open
+
+        from alohamini.learning.weights import _files
+
+        for filename, expected in _files(path):
+            with safe_open(filename, framework="numpy") as stream:
+                if expected is not None and set(stream.keys()) != expected:
+                    raise ValueError(f"权重文件与分片索引不一致：{filename}")
+
+    @staticmethod
     def _training_fast_tokenizer(options):
         if options.get("training_recipe") == "ki":
             from alohamini.paths import WorkspacePaths
@@ -471,8 +481,8 @@ class PI05Algorithm(RequiredSafetensorsBase):
             if options.get("vlm_data_sha256") and options["vlm_data_sha256"] != digest:
                 raise ValueError("VLM co-training manifest changed")
             options["vlm_data_sha256"] = digest
-        if not settings.get("resume"):
-            required_pretrained_path(settings)
+        if not settings.get("resume") and not settings.get("pretrained_path"):
+            raise ValueError("PI0.5 requires --policy.path to local converted PyTorch base weights")
         return options
 
     def sample_spec(self, options, *, cameras=()):
@@ -501,7 +511,7 @@ class PI05Algorithm(RequiredSafetensorsBase):
         return {"_loss_weight": len(batch["action"])}
 
     def initialize(self, model, settings):
-        path = required_pretrained_path(settings)
+        path = Path(settings["pretrained_path"]).expanduser()
         load_base_weights(model.network, path)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
