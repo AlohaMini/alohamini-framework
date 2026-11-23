@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import IMAGENET_MEAN, IMAGENET_STD, limits_statistics
+from alohamini.learning.weights import TrainingWeightSource
 from alohamini.policies.chunk import ChunkAlgorithm
 
 from .configuration_lewm import LeWMConfig
@@ -111,14 +112,20 @@ class LeWMAlgorithm(ChunkAlgorithm):
         # world-model control benchmark. Validation still reports both losses.
         return False
 
-    def initialize(self, model, settings):
-        if settings.get("pretrained_path"):
-            from pathlib import Path
+    @staticmethod
+    def training_weight_sources(settings, options):
+        from pathlib import Path
 
+        if settings.get("pretrained_path"):
+            path = Path(settings["pretrained_path"]).expanduser() / "weights.pt"
+            return (TrainingWeightSource(path, safetensors=False),)
+        return ()
+
+    def initialize(self, model, settings):
+        for source in self.training_weight_sources(settings, None):
             import torch
 
-            path = Path(settings["pretrained_path"]).expanduser()
-            weights = torch.load(path / "weights.pt", map_location="cpu", weights_only=True)
+            weights = torch.load(source.path, map_location="cpu", weights_only=True)
             model.world.load_state_dict(weights, strict=True)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):

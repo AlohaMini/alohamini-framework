@@ -11,6 +11,7 @@ from alohamini.datasets.statistics import ExactQuantileStats
 from alohamini.learning.data_index import ordered_indices
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics
+from alohamini.learning.weights import DEFAULT_WEIGHTS_FILENAME, TrainingWeightSource
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
@@ -36,9 +37,7 @@ class GR00TN17Algorithm(ChunkAlgorithm):
         options = deepcopy(settings.get("model", {}))
         if settings.get("resume"):
             return options
-        base = Path(
-            settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
-        ).expanduser()
+        base = self._base_directory(settings)
         assets = local_assets(options.get("assets_path") or base / "backbone")
         options["assets_path"] = str(assets)
         source = base / "config.json"
@@ -148,15 +147,27 @@ class GR00TN17Algorithm(ChunkAlgorithm):
             )
         ]
 
-    def initialize(self, model, settings):
-        if not model.config.initialize_from_base:
-            return
-        root = Path(
+    @staticmethod
+    def _base_directory(settings):
+        return Path(
             settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
         ).expanduser()
+
+    def training_weight_sources(self, settings, options):
+        if not options.get("initialize_from_base", self.config_class.initialize_from_base):
+            return ()
+        return (TrainingWeightSource(self._base_directory(settings), DEFAULT_WEIGHTS_FILENAME),)
+
+    def initialize(self, model, settings):
+        sources = self.training_weight_sources(
+            settings, {"initialize_from_base": model.config.initialize_from_base}
+        )
+        if not sources:
+            return
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, root)
+        (source,) = sources
+        load_weights(model, source.path, filename=source.shard_filename)
         if model.config.reinitialize_embodiment:
             from ._vendor.embodiment_conditioned_mlp import CategorySpecificLinear
 

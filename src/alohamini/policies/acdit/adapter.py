@@ -8,6 +8,7 @@ from safetensors.torch import load_file
 from alohamini.learning.checkpoint import read_checkpoint
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import validate_statistics
+from alohamini.learning.weights import MissingTrainingWeights
 from alohamini.policies.chunk import ChunkAlgorithm
 
 from .configuration_acdit import ACDiTConfig
@@ -28,7 +29,7 @@ class ACDiTAlgorithm(ChunkAlgorithm):
         self.mask_loss = options.get("mask_padding_loss", False)
         if options.get("stage", "full") == "full" and not settings.get("resume"):
             if not settings.get("pretrained_path"):
-                raise ValueError(
+                raise MissingTrainingWeights(
                     "Train AC-DiT stage=mobility first; initialize stage=full with "
                     "--policy.path=<mobility checkpoint>"
                 )

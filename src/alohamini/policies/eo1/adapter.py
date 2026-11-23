@@ -5,12 +5,13 @@ from copy import deepcopy
 from dataclasses import fields
 from pathlib import Path
 
+from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_eo1 import EO1Config
 
 
-class EO1Algorithm(ChunkAlgorithm):
+class EO1Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
     asset_fields = ("assets_path",)
     config_class = EO1Config
     fsdp_classes = ("Qwen2_5_VLDecoderLayer", "Qwen2_5_VLVisionBlock")
@@ -86,7 +87,7 @@ class EO1Algorithm(ChunkAlgorithm):
     def initialize(model, settings):
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, settings["pretrained_path"])
+        load_weights(model, required_pretrained_path(settings))
 
     @staticmethod
     def save(path, model, manifest, model_state=None):

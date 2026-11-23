@@ -7,12 +7,13 @@ from pathlib import Path
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics
+from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm
 
 from .configuration_longwam import LongWAMConfig
 
 
-class LongWAMAlgorithm(ChunkAlgorithm):
+class LongWAMAlgorithm(RequiredSafetensorsBase, ChunkAlgorithm):
     asset_fields = ("tokenizer_path",)
     config_class = LongWAMConfig
     # Every control tick must reach the model's history, even while executing queued actions.
@@ -143,7 +144,7 @@ class LongWAMAlgorithm(ChunkAlgorithm):
             if model.config.reinitialize_embodiment_heads
             else ()
         )
-        missing = load_weights(model, settings["pretrained_path"], reinitialize=allowed)
+        missing = load_weights(model, required_pretrained_path(settings), reinitialize=allowed)
         if missing:
             import logging
 

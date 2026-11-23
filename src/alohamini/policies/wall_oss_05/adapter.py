@@ -6,12 +6,13 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.processor import quantile_statistics
+from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_wall_oss_05 import WallOSS05Config
 
 
-class WallOSS05Algorithm(ChunkAlgorithm):
+class WallOSS05Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
     asset_fields = ("assets_path",)
     config_class = WallOSS05Config
     supports_field_transforms = True
@@ -152,7 +153,7 @@ class WallOSS05Algorithm(ChunkAlgorithm):
     def initialize(model, settings):
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, settings["pretrained_path"])
+        load_weights(model, required_pretrained_path(settings))
         if model.config.reinitialize_robot_heads:
             model.model.action_preprocessor.w1.reset_parameters()
             model.model.action_preprocessor.action_proj_back.reset_parameters()

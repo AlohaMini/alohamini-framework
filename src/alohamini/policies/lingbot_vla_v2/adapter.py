@@ -9,6 +9,11 @@ import numpy as np
 
 from alohamini.datasets.statistics import ExactQuantileStats
 from alohamini.learning.metrics import MetricSpec, loss_count
+from alohamini.learning.weights import (
+    DEFAULT_WEIGHTS_FILENAME,
+    TrainingWeightSource,
+    required_pretrained_path,
+)
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets, local_bpe_assets
 
 from .configuration import LingBotConfig
@@ -209,12 +214,16 @@ class LingBotAlgorithm(ChunkAlgorithm):
 
         return LingBotProcessor(model.config, stats, device)
 
+    @staticmethod
+    def training_weight_sources(settings, options):
+        directory = required_pretrained_path(settings)
+        return (TrainingWeightSource(directory / DEFAULT_WEIGHTS_FILENAME),)
+
     def initialize(self, model, settings):
         from safetensors.torch import load_model
 
-        load_model(
-            model, Path(settings["pretrained_path"]).expanduser() / "model.safetensors", strict=True
-        )
+        (source,) = self.training_weight_sources(settings, None)
+        load_model(model, source.path, strict=True)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         result = deepcopy(options)

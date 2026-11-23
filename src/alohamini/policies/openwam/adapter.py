@@ -3,6 +3,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+from alohamini.learning.weights import TrainingWeightSource
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
@@ -172,8 +173,7 @@ class OpenWAMAlgorithm(ChunkAlgorithm):
         options = deepcopy(settings.get("model", {}))
         if settings.get("resume"):
             return options
-        source = Path(settings.get("pretrained_path") or WorkspacePaths().pretrained / "openwam")
-        source = source.expanduser()
+        source = self._base_directory(settings)
         if (source / "policy.json").is_file():
             from alohamini.learning.checkpoint import read_checkpoint
 
@@ -215,18 +215,26 @@ class OpenWAMAlgorithm(ChunkAlgorithm):
 
         return OpenWAMPolicy(self.config_class(**deepcopy(options)))
 
+    @staticmethod
+    def _base_directory(settings):
+        return Path(
+            settings.get("pretrained_path") or WorkspacePaths().pretrained / "openwam"
+        ).expanduser()
+
+    def training_weight_sources(self, settings, options):
+        root = self._base_directory(settings)
+        files = list(root.glob("checkpoint_step_*.safetensors"))
+        if len(files) != 1:
+            raise ValueError(
+                f"OpenWAM expects exactly one checkpoint_step_*.safetensors in {root}"
+            )
+        return (TrainingWeightSource(files[0]),)
+
     def initialize(self, model, settings):
         from safetensors.torch import load_file
 
-        path = Path(
-            settings.get("pretrained_path") or WorkspacePaths().pretrained / "openwam"
-        ).expanduser()
-        files = list(path.glob("checkpoint_step_*.safetensors"))
-        if len(files) != 1:
-            raise ValueError(
-                "OpenWAM base directory must contain exactly one checkpoint_step_*.safetensors"
-            )
-        state = load_file(files[0])
+        (source,) = self.training_weight_sources(settings, None)
+        state = load_file(source.path)
         if model.config.action_representation == "alpha80":
             # Same semantic boundary: retain the pretrained I/O and state projections.
             model.network.load_state_dict(state, strict=True)

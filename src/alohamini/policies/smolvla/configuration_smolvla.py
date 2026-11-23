@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from alohamini.learning.weights import DEFAULT_WEIGHTS_FILENAME
 from alohamini.policies.configuration import NormalizationMode, PolicyFeature
+
+
+def read_smolvla_base(directory):
+    root = Path(directory).expanduser().resolve()
+    saved = json.loads((root / "config.json").read_text())
+    if saved.get("type") != "smolvla" or saved.get("use_peft", False):
+        raise ValueError("Expected a full official SmolVLA checkpoint, not a PEFT adapter")
+    return saved, root / DEFAULT_WEIGHTS_FILENAME
 
 
 @dataclass

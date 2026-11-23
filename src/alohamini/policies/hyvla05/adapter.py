@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from alohamini.learning.weights import DEFAULT_WEIGHTS_FILENAME, TrainingWeightSource
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.chunk import ChunkAlgorithm, ChunkPolicy, local_assets, padded_mean
 
@@ -81,11 +82,7 @@ class HyVLA05Algorithm(ChunkAlgorithm):
             return options
         from ._vendor.configuration_hy_vla import HyVLAConfig
 
-        path = local_assets(
-            options.get("assets_path")
-            or settings.get("pretrained_path")
-            or WorkspacePaths().pretrained / "hyvla05"
-        )
+        path = local_assets(self._asset_directory(settings, options.get("assets_path")))
         options["assets_path"] = str(path)
         if not options.get("network") or "vlm_config_dict" not in options["network"]:
             source = json.loads((path / "config.json").read_text())
@@ -128,8 +125,23 @@ class HyVLA05Algorithm(ChunkAlgorithm):
             if key != "action"
         }
 
+    @staticmethod
+    def _asset_directory(settings, assets_path):
+        return (
+            assets_path
+            or settings.get("pretrained_path")
+            or WorkspacePaths().pretrained / "hyvla05"
+        )
+
+    def training_weight_sources(self, settings, options):
+        assets = self._asset_directory(settings, options.get("assets_path"))
+        directory = Path(settings.get("pretrained_path") or assets).expanduser()
+        return (TrainingWeightSource(directory / DEFAULT_WEIGHTS_FILENAME),)
+
     def initialize(self, model, settings):
         from safetensors.torch import load_model
 
-        path = Path(settings.get("pretrained_path") or model.config.assets_path).expanduser()
-        load_model(model.network, path / "model.safetensors", strict=True)
+        (source,) = self.training_weight_sources(
+            settings, {"assets_path": model.config.assets_path}
+        )
+        load_model(model.network, source.path, strict=True)

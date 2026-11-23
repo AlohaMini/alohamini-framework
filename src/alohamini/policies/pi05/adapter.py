@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import torch
 from safetensors.torch import load_model
 
+from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.policies.configuration import PolicyConfig
 
 from .configuration_pi05 import PI05Config
@@ -304,7 +305,7 @@ class PI05TrainModel(torch.nn.Module):
         return self._actions.popleft()
 
 
-class PI05Algorithm:
+class PI05Algorithm(RequiredSafetensorsBase):
     asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
@@ -431,16 +432,33 @@ class PI05Algorithm:
             }
         return result
 
+    @staticmethod
+    def _training_fast_tokenizer(options):
+        if options.get("training_recipe") == "ki":
+            from alohamini.paths import WorkspacePaths
+
+            return options.get("fast_tokenizer_path") or str(
+                WorkspacePaths().pretrained / "pi05_tokenizers" / "fast"
+            )
+        return None
+
+    def training_tokenizers(self, options):
+        from .tokenizer import PaligemmaTokenizer
+
+        yield "tokenizer", options.get("tokenizer_path"), PaligemmaTokenizer
+        fast_path = self._training_fast_tokenizer(options)
+        if fast_path is not None:
+            from .fast_tokenizer import fast_asset_files
+
+            yield "fast_tokenizer", fast_path, fast_asset_files
+
     def options(self, settings, device):
         options = dict(settings.get("model", {}))
         if options.get("training_recipe") == "ki" and options.get("finetuning_mode") == "b":
             raise ValueError("Mode b freezes the VLM; use training_recipe=flow for this baseline")
-        if options.get("training_recipe") == "ki" and not options.get("fast_tokenizer_path"):
-            from alohamini.paths import WorkspacePaths
-
-            options["fast_tokenizer_path"] = str(
-                WorkspacePaths().pretrained / "pi05_tokenizers" / "fast"
-            )
+        fast_path = self._training_fast_tokenizer(options)
+        if fast_path is not None:
+            options["fast_tokenizer_path"] = fast_path
         for key in ("tokenizer_path", "fast_tokenizer_path"):
             if options.get(key):
                 options[key] = str(Path(options[key]).expanduser().resolve())
@@ -453,8 +471,8 @@ class PI05Algorithm:
             if options.get("vlm_data_sha256") and options["vlm_data_sha256"] != digest:
                 raise ValueError("VLM co-training manifest changed")
             options["vlm_data_sha256"] = digest
-        if not settings.get("resume") and not settings.get("pretrained_path"):
-            raise ValueError("PI0.5 requires --policy.path to local converted PyTorch base weights")
+        if not settings.get("resume"):
+            required_pretrained_path(settings)
         return options
 
     def sample_spec(self, options, *, cameras=()):
@@ -483,7 +501,7 @@ class PI05Algorithm:
         return {"_loss_weight": len(batch["action"])}
 
     def initialize(self, model, settings):
-        path = Path(settings["pretrained_path"]).expanduser()
+        path = required_pretrained_path(settings)
         load_base_weights(model.network, path)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):

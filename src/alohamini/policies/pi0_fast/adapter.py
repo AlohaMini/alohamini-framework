@@ -3,6 +3,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+from alohamini.learning.weights import required_pretrained_path
 from alohamini.policies.pi05.adapter import PI05Algorithm
 from alohamini.policies.pi05.processor_pi05 import PI05Processor
 
@@ -59,14 +60,18 @@ class PI0FastAlgorithm(PI05Algorithm):
         return cfg
 
     @staticmethod
+    def _training_fast_tokenizer(options):
+        return options.get("fast_tokenizer_path") or ""
+
+    @staticmethod
     def options(settings, device):
         result = deepcopy(settings.get("model", {}))
         for name in ("tokenizer_path", "fast_tokenizer_path"):
             if not result.get(name):
                 raise ValueError(f"FAST requires local {name}")
             result[name] = str(Path(result[name]).expanduser().resolve())
-        if not settings.get("resume") and not settings.get("pretrained_path"):
-            raise ValueError("FAST requires --policy.path to a converted local PyTorch base")
+        if not settings.get("resume"):
+            required_pretrained_path(settings)
         return result
 
     @staticmethod
@@ -107,7 +112,9 @@ class PI0FastAlgorithm(PI05Algorithm):
         from alohamini.learning.weights import load_weights
 
         load_weights(
-            model.network, settings["pretrained_path"], prefix=model.config.base_weights_prefix
+            model.network,
+            required_pretrained_path(settings),
+            prefix=model.config.base_weights_prefix,
         )
 
     def initialize_checkpoint(self, path, model, manifest):

@@ -8,13 +8,14 @@ from copy import deepcopy
 from pathlib import Path
 
 from alohamini.learning.processor import quantile_statistics
+from alohamini.learning.weights import RequiredSafetensorsBase, required_pretrained_path
 from alohamini.learning.window_statistics import window_statistics
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_g05 import G05Config
 
 
-class G05Algorithm(ChunkAlgorithm):
+class G05Algorithm(RequiredSafetensorsBase, ChunkAlgorithm):
     asset_fields = ("assets_path",)
     config_class = G05Config
     supports_field_transforms = True
@@ -213,7 +214,7 @@ class G05Algorithm(ChunkAlgorithm):
         # Published converted bases use backend.model.* tensor names.
         load_weights(
             model.backend,
-            settings["pretrained_path"],
+            required_pretrained_path(settings),
             prefix="backend.",
             reinitialize=heads if model.config.reinitialize_robot_heads else (),
         )

@@ -7,6 +7,7 @@ import numpy as np
 
 from alohamini.datasets.statistics import ExactQuantileStats
 from alohamini.learning.metrics import MetricSpec, loss_count
+from alohamini.learning.weights import TrainingWeightSource, required_pretrained_path
 from alohamini.policies.chunk import ChunkAlgorithm, local_bpe_assets
 
 from .configuration import XiaomiConfig
@@ -202,13 +203,17 @@ class XiaomiAlgorithm(ChunkAlgorithm):
 
         return XiaomiProcessor(model.config, stats, device)
 
+    @staticmethod
+    def training_weight_sources(settings, options):
+        root = required_pretrained_path(settings)
+        path = root / "model_states.pt" if root.is_dir() else root
+        return (TrainingWeightSource(path, safetensors=False),)
+
     def initialize(self, model, settings):
         import torch
 
-        path = Path(settings["pretrained_path"]).expanduser()
-        if path.is_dir():
-            path = path / "model_states.pt"
-        state = torch.load(path, map_location="cpu", weights_only=True)
+        (source,) = self.training_weight_sources(settings, None)
+        state = torch.load(source.path, map_location="cpu", weights_only=True)
         state = state.get("state_dict", state.get("module", state))
         # Released runner export names the policy model; normalize only a uniform prefix.
         for prefix in ("model.", "module."):

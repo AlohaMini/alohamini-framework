@@ -4,7 +4,9 @@ from copy import deepcopy
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import validate_statistics
+from alohamini.learning.weights import TrainingWeightSource, required_pretrained_path
 
+from .configuration_smolvla import read_smolvla_base
 from .preset import apply_preset
 from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
@@ -76,10 +78,8 @@ class SmolVLAAlgorithm:
         options = dict(settings.get("model", {}))
         options["device"] = device
         options.setdefault("n_action_steps", options.get("chunk_size", 50))
-        if not settings.get("resume") and not settings.get("pretrained_path"):
-            raise ValueError(
-                "SmolVLA fine-tuning requires --policy.path to a local base checkpoint"
-            )
+        if not settings.get("resume"):
+            required_pretrained_path(settings)
         return options
 
     def sample_spec(self, options, *, cameras=()):
@@ -98,8 +98,13 @@ class SmolVLAAlgorithm:
             model.config, stats, model.model.vlm_with_expert.processor.tokenizer, device
         )
 
+    @staticmethod
+    def training_weight_sources(settings, options):
+        _, weights = read_smolvla_base(required_pretrained_path(settings))
+        return (TrainingWeightSource(weights),)
+
     def initialize(self, model, settings):
-        model.load_base_weights(settings["pretrained_path"])
+        model.load_base_weights(required_pretrained_path(settings))
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)

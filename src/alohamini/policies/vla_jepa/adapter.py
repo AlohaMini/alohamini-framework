@@ -6,6 +6,11 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.processor import limits_statistics
+from alohamini.learning.weights import (
+    DEFAULT_WEIGHTS_FILENAME,
+    TrainingWeightSource,
+    required_pretrained_path,
+)
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
 from .configuration_vla_jepa import VLAJEPAConfig
@@ -171,14 +176,35 @@ class VLAJEPAAlgorithm(ChunkAlgorithm):
         return VLAJEPAProcessor(model.config, stats, device)
 
     @staticmethod
-    def initialize(model, settings):
+    def _base_paths(settings, mode, assets_path, world_model):
+        if mode == "backbones":
+            assets = Path(assets_path)
+            return (assets / "qwen", assets / "vjepa2") if world_model else (assets / "qwen",)
+        return (required_pretrained_path(settings),)
+
+    def training_weight_sources(self, settings, options):
+        if "assets_path" not in options:
+            return ()
+        paths = self._base_paths(
+            settings,
+            options.get("base_weights_mode", self.config_class.base_weights_mode),
+            options["assets_path"],
+            options.get("enable_world_model", self.config_class.enable_world_model),
+        )
+        return tuple(TrainingWeightSource(path, DEFAULT_WEIGHTS_FILENAME) for path in paths)
+
+    @classmethod
+    def initialize(cls, model, settings):
         from alohamini.learning.weights import load_weights
 
         cfg = model.config
+        paths = cls._base_paths(
+            settings, cfg.base_weights_mode, cfg.assets_path, cfg.enable_world_model
+        )
         if cfg.base_weights_mode == "backbones":
-            load_weights(model.model.qwen.model, Path(cfg.assets_path) / "qwen")
+            load_weights(model.model.qwen.model, paths[0])
             if cfg.enable_world_model:
-                load_weights(model.model.video_encoder, Path(cfg.assets_path) / "vjepa2")
+                load_weights(model.model.video_encoder, paths[1])
         else:
             heads = (
                 (
@@ -197,7 +223,7 @@ class VLAJEPAAlgorithm(ChunkAlgorithm):
             excluded = (
                 () if cfg.enable_world_model else ("model.video_encoder.", "model.video_predictor.")
             )
-            load_weights(model, settings["pretrained_path"], reinitialize=heads, exclude=excluded)
+            load_weights(model, paths[0], reinitialize=heads, exclude=excluded)
             if cfg.reinitialize_robot_heads:
                 model.model.action_model.action_encoder.layer1.reset_parameters()
                 model.model.action_model.action_decoder.layer2.reset_parameters()
