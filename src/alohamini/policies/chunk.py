@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
+from alohamini.learning.resources import ResourceAlgorithm
 
 
 class ChunkPolicy(nn.Module):
@@ -47,7 +48,7 @@ class TaskProcessor:
         return self.numeric.action(tensor)
 
 
-class ChunkAlgorithm:
+class ChunkAlgorithm(ResourceAlgorithm):
     """Shared action-chunk mechanics with adapter-owned resource and data declarations.
 
     Optional ``prepare_training_assets(options, samples, stats, *, validation_samples=None)``
@@ -106,6 +107,8 @@ class ChunkAlgorithm:
 
 
 def local_assets(value):
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError("A local asset directory must be specified")
     path = Path(value).expanduser().resolve()
     if not path.is_dir():
         raise FileNotFoundError(f"Pretrained assets must be a local directory: {path}")

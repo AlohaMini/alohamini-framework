@@ -171,15 +171,42 @@ class LingBotVAAlgorithm(ChunkAlgorithm):
 
         return LingBotVAProcessor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        root = Path(settings.get("pretrained_path") or options["wan_pretrained_path"]).expanduser()
+        return {
+            "policy": weight_check(
+                "policy", root / "transformer", filename="diffusion_pytorch_model.safetensors"
+            )
+        }
+
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import json_check, tokenizer_check, weight_check
+
+        root = Path(options["wan_pretrained_path"])
+        for folder, filename in (
+            ("vae", "diffusion_pytorch_model.safetensors"),
+            ("text_encoder", "model.safetensors"),
+        ):
+            if (
+                folder == "text_encoder"
+                and options.get("text_feature_store_path")
+                and Path(options["text_feature_store_path"]).is_dir()
+            ):
+                continue
+            yield json_check(folder + ".config", root / folder / "config.json")
+            yield weight_check(folder, root / folder, filename=filename)
+        yield tokenizer_check("tokenizer", root / "tokenizer")
+
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
-        path = Path(settings["pretrained_path"]) / "transformer"
         # Published weights retain an obsolete Conv3d; current author code uses only the MLP.
         load_weights(
             model.transformer,
-            path,
+            training_weights(self, settings, model),
             filename="diffusion_pytorch_model.safetensors",
             exclude=("patch_embedding.",),
         )

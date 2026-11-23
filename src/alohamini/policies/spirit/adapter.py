@@ -13,6 +13,7 @@ from safetensors.torch import load_file, load_model
 
 from alohamini.datasets.kinematic_fields import KinematicFields
 from alohamini.learning.metrics import MetricSpec, loss_count
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 from alohamini.policies.chunk import local_bpe_assets
 
 from .configuration_spirit import SpiritConfig
@@ -103,7 +104,9 @@ class SpiritTrainModel(torch.nn.Module):
         return self._actions.popleft()
 
 
-class SpiritAlgorithm:
+class SpiritAlgorithm(ResourceAlgorithm):
+    single_weight_file = True
+    processor_fields = ("backbone_path",)
     asset_fields = ("backbone_path",)
     supports_field_transforms = True
     supports_remote_chunks = True
@@ -234,8 +237,7 @@ class SpiritAlgorithm:
             )
 
     def initialize(self, model, settings):
-        path = Path(settings["pretrained_path"]).expanduser()
-        weights = load_file(path / "model.safetensors" if path.is_dir() else path, device="cpu")
+        weights = load_file(training_weights(self, settings, model).single_file(), device="cpu")
         normalization = {
             k for k in model.network.state_dict() if k.startswith(("normalize_", "unnormalize_"))
         }

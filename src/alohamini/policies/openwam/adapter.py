@@ -1,8 +1,10 @@
 """OpenWAM-alpha registry adapter; all training infrastructure stays shared."""
 
+import re
 from copy import deepcopy
 from pathlib import Path
 
+from alohamini.learning.resources import training_weights, weight_check
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.chunk import ChunkAlgorithm, local_assets
 
@@ -10,6 +12,8 @@ from .configuration_openwam import OpenWAMConfig
 
 
 class OpenWAMAlgorithm(ChunkAlgorithm):
+    pin_policy_weights = True
+    tokenizer_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     supports_field_transforms = True
     loss_terms = ("loss_video", "loss_action")
@@ -174,6 +178,8 @@ class OpenWAMAlgorithm(ChunkAlgorithm):
             return options
         source = Path(settings.get("pretrained_path") or WorkspacePaths().pretrained / "openwam")
         source = source.expanduser()
+        if source.suffix == ".safetensors":
+            source = source.parent
         if (source / "policy.json").is_file():
             from alohamini.learning.checkpoint import read_checkpoint
 
@@ -215,18 +221,35 @@ class OpenWAMAlgorithm(ChunkAlgorithm):
 
         return OpenWAMPolicy(self.config_class(**deepcopy(options)))
 
-    def initialize(self, model, settings):
-        from safetensors.torch import load_file
-
+    def training_weight_sources(self, settings, options):
         path = Path(
             settings.get("pretrained_path") or WorkspacePaths().pretrained / "openwam"
         ).expanduser()
-        files = list(path.glob("checkpoint_step_*.safetensors"))
-        if len(files) != 1:
-            raise ValueError(
-                "OpenWAM base directory must contain exactly one checkpoint_step_*.safetensors"
-            )
-        state = load_file(files[0])
+        return {"policy": weight_check("policy", path, select=self._select_base_weights)}
+
+    @staticmethod
+    def _select_base_weights(path):
+        path = Path(path).expanduser()
+        if path.suffix == ".safetensors":
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            selected = path
+        else:
+            files = [
+                (int(match[1]), file.name, file)
+                for file in path.glob("checkpoint_step_*.safetensors")
+                if file.is_file()
+                and (match := re.fullmatch(r"checkpoint_step_(\d+)\.safetensors", file.name))
+            ]
+            if not files:
+                raise FileNotFoundError(f"No checkpoint_step_<number>.safetensors in {path}")
+            selected = max(files)[2]
+        return selected
+
+    def initialize(self, model, settings):
+        from safetensors.torch import load_file
+
+        state = load_file(training_weights(self, settings, model).single_file())
         if model.config.action_representation == "alpha80":
             # Same semantic boundary: retain the pretrained I/O and state projections.
             model.network.load_state_dict(state, strict=True)

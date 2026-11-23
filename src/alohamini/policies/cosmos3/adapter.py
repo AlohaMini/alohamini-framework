@@ -12,6 +12,7 @@ from .configuration_cosmos3 import Cosmos3EdgeConfig, Cosmos3NanoConfig
 
 
 class Cosmos3Algorithm(ChunkAlgorithm):
+    tokenizer_fields = ("tokenizer_path",)
     asset_fields = ("tokenizer_path",)
     config_class = Cosmos3NanoConfig
     supports_field_transforms = True
@@ -161,14 +162,14 @@ class Cosmos3Algorithm(ChunkAlgorithm):
 
         return Cosmos3Processor(model, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         heads = tuple("model.network." + n + "." for n in model.model.network._action_modules)
         load_weights(
             model,
-            settings["pretrained_path"],
+            training_weights(self, settings, model),
             reinitialize=heads if model.config.reinitialize_robot_heads else (),
         )
         if model.config.reinitialize_robot_heads:

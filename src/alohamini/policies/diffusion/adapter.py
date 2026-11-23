@@ -13,9 +13,13 @@ from alohamini.learning.processor import (
     limits_statistics,
     validate_statistics,
 )
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 
 
-class DiffusionAlgorithm:
+class DiffusionAlgorithm(ResourceAlgorithm):
+    single_weight_file = True
+    weights_directory_only = True
+    allow_scratch = True
     supports_remote_chunks = True
     queues_online_observations = True
     include_task = False
@@ -30,8 +34,11 @@ class DiffusionAlgorithm:
         return config.n_obs_steps - 1
 
     def live_history_spec(self, options, *, cameras=()):
-        return {k: v for k, v in self.sample_spec(options, cameras=cameras)["delta_indices"].items()
-                if k != "action"}
+        return {
+            k: v
+            for k, v in self.sample_spec(options, cameras=cameras)["delta_indices"].items()
+            if k != "action"
+        }
 
     @staticmethod
     def metric_specs(config):
@@ -155,6 +162,12 @@ class DiffusionAlgorithm:
 
         return DiffusionPolicy(self.config_class(**deepcopy(options)))
 
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import torchvision_backbone_checks
+
+        yield from super().training_asset_checks(settings, options)
+        yield from torchvision_backbone_checks(options, self.config_class)
+
     def processor(self, model, stats, device):
         return Processor.from_config(model.config, stats, device)
 
@@ -168,9 +181,9 @@ class DiffusionAlgorithm:
 
     def initialize(self, model, settings):
         if settings.get("pretrained_path"):
-            from pathlib import Path
-
-            self.load(Path(settings["pretrained_path"]).expanduser(), model)
+            model.load_state_dict(
+                load_file(training_weights(self, settings, model).single_file()), strict=True
+            )
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)

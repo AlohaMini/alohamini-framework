@@ -4,12 +4,16 @@ from copy import deepcopy
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import validate_statistics
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 
 from .preset import apply_preset
 from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
-class SmolVLAAlgorithm:
+class SmolVLAAlgorithm(ResourceAlgorithm):
+    single_weight_file = True
+    weights_directory_only = True
+    processor_fields = ("vlm_model_name",)
     asset_fields = ("vlm_model_name",)
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
@@ -98,8 +102,31 @@ class SmolVLAAlgorithm:
             model.config, stats, model.model.vlm_with_expert.processor.tokenizer, device
         )
 
+    def training_asset_checks(self, settings, options):
+        from pathlib import Path
+
+        from alohamini.learning.resources import ResourceCheck, weight_check
+
+        from .configuration_smolvla import read_base_config
+
+        if not settings.get("resume") and settings.get("pretrained_path"):
+            root = Path(settings["pretrained_path"])
+            if not (root / "policy.json").is_file():
+                yield ResourceCheck(
+                    "base.config",
+                    "config",
+                    root / "config.json",
+                    lambda path: read_base_config(path.parent),
+                )
+        yield from super().training_asset_checks(settings, options)
+        if options.get("load_vlm_weights", False):
+            yield weight_check("vlm_model_name.weights", options.get("vlm_model_name"))
+
     def initialize(self, model, settings):
-        model.load_base_weights(settings["pretrained_path"])
+        model.load_base_weights(
+            settings["pretrained_path"],
+            weights_path=training_weights(self, settings, model).single_file(),
+        )
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
@@ -115,6 +142,7 @@ class SmolVLAAlgorithm:
 
     def save(self, path, model, manifest, model_state=None):
         from alohamini.learning.checkpoint import save_weights
+
         assets = path / "vlm_assets"
         backbone = model.model.vlm_with_expert
         backbone.config.save_pretrained(assets)

@@ -10,6 +10,7 @@ from .configuration_pi0_fast import PI0FastConfig
 
 
 class PI0FastAlgorithm(PI05Algorithm):
+    requires_fast_tokenizer = True
     asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.trajectory_execution import PlanCapabilities
 
@@ -102,12 +103,14 @@ class PI0FastAlgorithm(PI05Algorithm):
             )
         ]
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         load_weights(
-            model.network, settings["pretrained_path"], prefix=model.config.base_weights_prefix
+            model.network,
+            training_weights(self, settings, model),
+            prefix=model.config.base_weights_prefix,
         )
 
     def initialize_checkpoint(self, path, model, manifest):

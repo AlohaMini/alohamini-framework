@@ -13,6 +13,7 @@ from .configuration_longwam import LongWAMConfig
 
 
 class LongWAMAlgorithm(ChunkAlgorithm):
+    tokenizer_fields = ("tokenizer_path",)
     asset_fields = ("tokenizer_path",)
     config_class = LongWAMConfig
     # Every control tick must reach the model's history, even while executing queued actions.
@@ -134,8 +135,8 @@ class LongWAMAlgorithm(ChunkAlgorithm):
 
         return LongWAMProcessor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         allowed = (
@@ -143,7 +144,7 @@ class LongWAMAlgorithm(ChunkAlgorithm):
             if model.config.reinitialize_embodiment_heads
             else ()
         )
-        missing = load_weights(model, settings["pretrained_path"], reinitialize=allowed)
+        missing = load_weights(model, training_weights(self, settings, model), reinitialize=allowed)
         if missing:
             import logging
 

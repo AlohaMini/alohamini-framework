@@ -7,6 +7,7 @@ from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 
 
 class FastWAMProcessor:
@@ -25,7 +26,7 @@ class FastWAMProcessor:
         return self.numeric.action(tensor)
 
 
-class FastWAMAlgorithm:
+class FastWAMAlgorithm(ResourceAlgorithm):
     asset_fields = ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id")
     include_task = True
     fsdp_classes = ("MoTLayer",)
@@ -154,10 +155,26 @@ class FastWAMAlgorithm:
     def processor(self, model, stats, device):
         return FastWAMProcessor(model.config, stats, device)
 
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        return {"policy": weight_check("policy", settings.get("pretrained_path"), single=True)}
+
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import json_check, tokenizer_check, weight_check
+
+        for field, folder, filename in (
+            ("vae_model_id", "vae", "diffusion_pytorch_model.safetensors"),
+            ("text_encoder_model_id", "text_encoder", "model.safetensors"),
+        ):
+            root = Path(options[field]) / folder
+            yield json_check(field + ".config", root / "config.json")
+            yield weight_check(field, root, filename=filename)
+        yield tokenizer_check("tokenizer_model_id", options["tokenizer_model_id"])
+
     def initialize(self, model, settings):
         """Load compatible core weights; only embodiment heads may be reinitialized."""
-        path = Path(settings["pretrained_path"]).expanduser()
-        state = load_file(path / "model.safetensors")
+        state = load_file(training_weights(self, settings, model).single_file())
         own = model.state_dict()
         import re
 

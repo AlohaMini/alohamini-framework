@@ -91,6 +91,23 @@ class G05Algorithm(ChunkAlgorithm):
         result["assets_path"] = str(local_assets(result["assets_path"]))
         return result
 
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import ResourceCheck, weight_check
+
+        from .tokenizer_g05 import G05Tokenizer
+
+        root = Path(options["assets_path"])
+
+        def tokenizer(path):
+            if not options.get("author_model_config"):
+                raise ValueError("G0.5 requires the base author_model_config")
+            return G05Tokenizer(path, deepcopy(options["author_model_config"]))
+
+        yield ResourceCheck("hf_processor", "tokenizer", root / "hf_processor", tokenizer)
+        codec = root / "action_tokenizer.safetensors"
+        if options.get("train_discrete_actions", False) or codec.exists():
+            yield weight_check("action_tokenizer", codec)
+
     @staticmethod
     def sample_spec(options, *, cameras=()):
         history = list(range(1 - options.get("n_obs_steps", 1), 1))
@@ -201,8 +218,8 @@ class G05Algorithm(ChunkAlgorithm):
             )
         return specs
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         heads = (
@@ -213,7 +230,7 @@ class G05Algorithm(ChunkAlgorithm):
         # Published converted bases use backend.model.* tensor names.
         load_weights(
             model.backend,
-            settings["pretrained_path"],
+            training_weights(self, settings, model),
             prefix="backend.",
             reinitialize=heads if model.config.reinitialize_robot_heads else (),
         )

@@ -14,6 +14,7 @@ from .semantic import XiaomiFields
 
 
 class XiaomiAlgorithm(ChunkAlgorithm):
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = XiaomiConfig
     supports_field_transforms = True
@@ -202,12 +203,24 @@ class XiaomiAlgorithm(ChunkAlgorithm):
 
         return XiaomiProcessor(model.config, stats, device)
 
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import file_check
+
+        if not settings.get("pretrained_path"):
+            raise ValueError("Xiaomi Robotics requires --policy.path")
+        path = Path(settings["pretrained_path"]).expanduser()
+        return {
+            "policy": file_check(
+                "policy", path if path.is_file() else path / "model_states.pt", kind="weights"
+            )
+        }
+
     def initialize(self, model, settings):
         import torch
 
-        path = Path(settings["pretrained_path"]).expanduser()
-        if path.is_dir():
-            path = path / "model_states.pt"
+        from alohamini.learning.resources import training_weights
+
+        path = training_weights(self, settings, model)
         state = torch.load(path, map_location="cpu", weights_only=True)
         state = state.get("state_dict", state.get("module", state))
         # Released runner export names the policy model; normalize only a uniform prefix.

@@ -11,6 +11,7 @@ from .preset import apply_preset
 
 
 class LeWMAlgorithm(ChunkAlgorithm):
+    allow_scratch = True
     config_class = LeWMConfig
     apply_preset = staticmethod(apply_preset)
     include_task = False
@@ -111,14 +112,30 @@ class LeWMAlgorithm(ChunkAlgorithm):
         # world-model control benchmark. Validation still reports both losses.
         return False
 
+    def training_weight_sources(self, settings, options):
+        from pathlib import Path
+
+        from alohamini.learning.resources import file_check
+
+        if not settings.get("pretrained_path"):
+            return {}
+        return {
+            "policy": file_check(
+                "policy",
+                Path(settings["pretrained_path"]).expanduser() / "weights.pt",
+                kind="weights",
+            )
+        }
+
     def initialize(self, model, settings):
         if settings.get("pretrained_path"):
-            from pathlib import Path
-
             import torch
 
-            path = Path(settings["pretrained_path"]).expanduser()
-            weights = torch.load(path / "weights.pt", map_location="cpu", weights_only=True)
+            from alohamini.learning.resources import training_weights
+
+            weights = torch.load(
+                training_weights(self, settings, model), map_location="cpu", weights_only=True
+            )
             model.world.load_state_dict(weights, strict=True)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
@@ -35,7 +36,6 @@ from accelerate import __version__ as accelerate_version
 from alohamini.learning.checkpoint import (
     initialize_policy,
     read_checkpoint,
-    resolve_pretrained,
     validate_pretrained,
 )
 from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
@@ -54,6 +54,7 @@ from alohamini.learning.metrics import MetricAccumulator, format_metrics
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
 from alohamini.learning.precision import resolve_tf32, tf32_context, validate_trainable_dtype
+from alohamini.learning.resources import prepare_training
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
 from alohamini.learning.streaming import StreamingBatchSampler
 from alohamini.learning.train_config import resolve_dataset_options
@@ -85,6 +86,7 @@ def launch_training(settings):
     paths = WorkspacePaths()
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
+    settings = prepare_training(settings).settings
     run = (
         Path(settings["output_dir"]).expanduser().resolve()
         if settings.get("output_dir")
@@ -283,7 +285,10 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
 
 
 def train(settings):
-    settings = resolve_pretrained(settings)
+    prepared = prepare_training(settings)
+    settings = {
+        key: value for key, value in prepared.settings.items() if key != "_resolved_weight_sources"
+    }
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
@@ -303,14 +308,16 @@ def train(settings):
         with training_logging(execution.main, training=True), tf32_context(settings["tf32"]):
             logger.info("%s", pformat(settings))
             logger.info("Logs will be saved locally.")
-            return _train(settings, execution)
+            return _train(settings, execution, prepared=prepared)
     finally:
         execution.close()
 
 
-def _train(settings, execution):
+def _train(settings, execution, *, prepared=None):
     """Local offline training with periodic, fully resumable checkpoints."""
-    components = algorithm(settings.get("policy", "act"))
+    components = (
+        prepared.component if prepared is not None else algorithm(settings.get("policy", "act"))
+    )
     cfg = components.apply_preset(settings)
     ema_config = validate_ema_setup(cfg)
     cfg["ema"] = asdict(ema_config)
@@ -354,7 +361,15 @@ def _train(settings, execution):
     ):
         if type(number) is not int or number < minimum:
             raise ValueError(f"{key} must be an integer >= {minimum}")
-    options = components.options(cfg, device)
+    options = deepcopy(
+        prepared.options
+        if prepared is not None and prepared.options is not None
+        else components.options(cfg, device)
+    )
+    # Resolve rank-local requests while preserving adapters that deliberately
+    # construct on CPU before strict initialization and device placement.
+    if options.get("device") == cfg.get("device", "cuda"):
+        options["device"] = device
     if cfg.get("resume"):
         # Defaults can evolve between runs. Recover the effective model/window
         # before building the dataset, while retaining explicit overrides for validation.
@@ -983,18 +998,20 @@ def _train(settings, execution):
         return checkpoint
 
 
-def main():
+def main(argv=None):
     from alohamini.environment import runtime_environment
     from alohamini.learning.train_config import parse_training_args
 
-    with runtime_environment(["train", *sys.argv[1:]]):
-        cfg, background = parse_training_args()
+    argv = sys.argv[1:] if argv is None else argv
+    with runtime_environment(["train", *argv]):
+        cfg, background = parse_training_args(argv)
         if background:
             job = launch_training(cfg)
             print(json.dumps(job, ensure_ascii=False, indent=2))
             print("tail -f", shlex.quote(job["log"]))
         else:
             train(cfg)
+    return 0
 
 
 if __name__ == "__main__":

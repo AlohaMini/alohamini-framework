@@ -16,7 +16,9 @@ alohamini train --policy.type=openwam \
   --keep_last_checkpoints=1 --background
 ```
 
-The base needs `checkpoint_step_*.safetensors` and `tokenizer/google/umt5-xxl/`; no separate Wan download is needed.
+The base needs `checkpoint_step_<number>.safetensors` and `tokenizer/google/umt5-xxl/`; no separate Wan download is needed.
+For directory input, the highest numbered step is selected. `--policy.path` also accepts a specific weight file;
+the tokenizer defaults to the same parent directory's `tokenizer/google/umt5-xxl/`. Override it with `--policy.assets_path`.
 Up to three cameras form a 384×320 canvas in order: main view above, lower-left and lower-right views, with missing positions black;
 explicitly set `--policy.camera_layout='["observation.images.head","observation.images.left",null]'`, covering all selected cameras.
 

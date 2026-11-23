@@ -70,10 +70,17 @@ def native(request, recording, tmp_path, monkeypatch, tiny_assets):
 
         monkeypatch.setattr(modeling_pi05, "PI0Pytorch", lambda config: torch.nn.Linear(18, 18))
         monkeypatch.setattr(adapter, "configure_finetuning", lambda *args: {})
-        monkeypatch.setattr(torch.nn.Linear, "gradient_checkpointing_enable", lambda self: None, raising=False)
+        monkeypatch.setattr(
+            torch.nn.Linear, "gradient_checkpointing_enable", lambda self: None, raising=False
+        )
         monkeypatch.setattr(adapter, "PI05BatchProcessor", lambda *args: SimpleNamespace())
         tokenizer = tmp_path / "original.model"
-        tokenizer.write_bytes(b"test tokenizer resource")
+        from sentencepiece import sentencepiece_model_pb2
+
+        proto = sentencepiece_model_pb2.ModelProto()
+        for token, piece_type in (("<unk>", 2), ("<s>", 3), ("</s>", 3), ("word", 1)):
+            proto.pieces.add(piece=token, score=0, type=piece_type)
+        tokenizer.write_bytes(proto.SerializeToString())
         options = dict(
             network={"action_horizon": 3}, n_action_steps=2, tokenizer_path=str(tokenizer)
         )

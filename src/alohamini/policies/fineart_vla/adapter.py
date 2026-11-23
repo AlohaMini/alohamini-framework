@@ -107,6 +107,54 @@ class FineARTVLAAlgorithm(ChunkAlgorithm):
                 raise ValueError("FineART requires --policy.path to a local converted PyTorch base")
         return result
 
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import ResourceCheck, local_tokenizer
+        from alohamini.policies.pi05.fast_tokenizer import FASTTokenizer
+
+        from .processor import _CodecVocabulary
+
+        selected = {}
+
+        def text(path):
+            tokenizer = local_tokenizer(path)
+            if not tokenizer.is_fast or tokenizer.eos_token is None:
+                raise ValueError("FineART requires a local fast tokenizer with offsets and EOS")
+            selected["tokenizer"] = tokenizer
+            return tokenizer
+
+        yield ResourceCheck("assets_path", "tokenizer", options["assets_path"], text)
+        if not options.get("fast_action_loss_weight", self.config_class.fast_action_loss_weight):
+            return
+        if not settings.get("resume") and options.get(
+            "auto_fit_fast_tokenizer", self.config_class.auto_fit_fast_tokenizer
+        ):
+            yield ResourceCheck(
+                "fast_tokenizer_path",
+                "tokenizer",
+                options.get("fast_tokenizer_cache_dir"),
+                status="deferred",
+                reason="FAST is fitted from training samples before model construction",
+            )
+            return
+
+        def codec(path):
+            if not path:
+                raise ValueError("FineART requires a local FAST tokenizer or automatic fitting")
+            return FASTTokenizer(
+                path,
+                _CodecVocabulary(selected["tokenizer"]),
+                options.get("max_action_tokens", self.config_class.max_action_tokens),
+                skip_tokens=options.get("fast_skip_tokens", self.config_class.fast_skip_tokens),
+            )
+
+        yield ResourceCheck(
+            "fast_tokenizer_path",
+            "tokenizer",
+            options.get("fast_tokenizer_path"),
+            codec,
+            depends_on=("assets_path",),
+        )
+
     @staticmethod
     def sample_spec(options, *, cameras=()):
         from alohamini.datasets.language import LANGUAGE_COLUMNS
@@ -177,12 +225,14 @@ class FineARTVLAAlgorithm(ChunkAlgorithm):
             ]
         ]
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         load_weights(
-            model.network, settings["pretrained_path"], prefix=model.config.base_weights_prefix
+            model.network,
+            training_weights(self, settings, model),
+            prefix=model.config.base_weights_prefix,
         )
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):

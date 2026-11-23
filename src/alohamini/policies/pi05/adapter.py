@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import torch
 from safetensors.torch import load_model
 
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 from alohamini.policies.configuration import PolicyConfig
 
 from .configuration_pi05 import PI05Config
@@ -304,7 +305,32 @@ class PI05TrainModel(torch.nn.Module):
         return self._actions.popleft()
 
 
-class PI05Algorithm:
+class PI05Algorithm(ResourceAlgorithm):
+    requires_fast_tokenizer = False
+
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import ResourceCheck, local_file
+
+        from .tokenizer import PaligemmaTokenizer
+
+        selected = {}
+
+        def tokenizer(path):
+            selected["tokenizer"] = PaligemmaTokenizer(local_file(path))
+            return selected["tokenizer"]
+
+        yield ResourceCheck("tokenizer_path", "tokenizer", options.get("tokenizer_path"), tokenizer)
+        if self.requires_fast_tokenizer or options.get("training_recipe", "flow") == "ki":
+            from .fast_tokenizer import FASTTokenizer
+
+            yield ResourceCheck(
+                "fast_tokenizer_path",
+                "tokenizer",
+                options.get("fast_tokenizer_path"),
+                lambda path: FASTTokenizer(path, selected["tokenizer"]._tokenizer),
+                depends_on=("tokenizer_path",),
+            )
+
     asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
@@ -483,15 +509,15 @@ class PI05Algorithm:
         return {"_loss_weight": len(batch["action"])}
 
     def initialize(self, model, settings):
-        path = Path(settings["pretrained_path"]).expanduser()
-        load_base_weights(model.network, path)
+        load_base_weights(model.network, training_weights(self, settings, model))
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
         if "camera_order" not in options:
             # Older processors always used this order, regardless of feature order.
             options["camera_order"] = tuple(
-                name for name in ("forward", "wrist_left", "wrist_right")
+                name
+                for name in ("forward", "wrist_left", "wrist_right")
                 if f"observation.images.{name}" in options["input_features"]
             )
         assets = (path / options["tokenizer_path"]).resolve()
@@ -511,6 +537,7 @@ class PI05Algorithm:
 
     def save(self, path, model, manifest, model_state=None):
         from alohamini.learning.checkpoint import save_weights
+
         shutil.copyfile(Path(model.config.tokenizer_path).expanduser(), path / "tokenizer.model")
         manifest["config"]["tokenizer_path"] = "tokenizer.model"
         if model.config.fast_tokenizer_path:

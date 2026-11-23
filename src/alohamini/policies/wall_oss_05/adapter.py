@@ -12,6 +12,7 @@ from .configuration_wall_oss_05 import WallOSS05Config
 
 
 class WallOSS05Algorithm(ChunkAlgorithm):
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = WallOSS05Config
     supports_field_transforms = True
@@ -148,11 +149,11 @@ class WallOSS05Algorithm(ChunkAlgorithm):
 
         return WallOSS05Processor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, settings["pretrained_path"])
+        load_weights(model, training_weights(self, settings, model))
         if model.config.reinitialize_robot_heads:
             model.model.action_preprocessor.w1.reset_parameters()
             model.model.action_preprocessor.action_proj_back.reset_parameters()

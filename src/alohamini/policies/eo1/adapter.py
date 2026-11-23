@@ -11,6 +11,7 @@ from .configuration_eo1 import EO1Config
 
 
 class EO1Algorithm(ChunkAlgorithm):
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = EO1Config
     fsdp_classes = ("Qwen2_5_VLDecoderLayer", "Qwen2_5_VLVisionBlock")
@@ -82,11 +83,11 @@ class EO1Algorithm(ChunkAlgorithm):
 
         return EO1Processor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, settings["pretrained_path"])
+        load_weights(model, training_weights(self, settings, model))
 
     @staticmethod
     def save(path, model, manifest, model_state=None):

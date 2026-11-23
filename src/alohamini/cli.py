@@ -56,6 +56,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:2] == ["train", "check"]:
+        from alohamini.learning.resource_cli import main as check_training
+
+        return check_training(argv[2:])
+    if argv[:1] == ["train"]:
+        from alohamini.learning.train import main as train_policy
+
+        return train_policy(argv[1:])
     if argv[:1] == ["inference"]:
         from alohamini.remote.cli import main as remote_inference
 
@@ -81,6 +89,7 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alohamini", description="AlohaMini 机器人接口")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
+    commands.add_parser("train", help="训练策略；train check --config FILE 输出资源检查 JSON")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(

@@ -11,6 +11,7 @@ from .configuration_xvla import XVLAConfig
 
 
 class XVLAAlgorithm(ChunkAlgorithm):
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = XVLAConfig
     fsdp_classes = (
@@ -114,8 +115,8 @@ class XVLAAlgorithm(ChunkAlgorithm):
 
         return XVLAProcessor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, settings["pretrained_path"])
+        load_weights(model, training_weights(self, settings, model))

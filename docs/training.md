@@ -189,6 +189,23 @@ See each policy directory for training commands, weight preparation, and policy-
 
 Policy examples reserve episode 1 for validation and train on the rest. For a single-episode dataset, omit `--dataset.eval_episodes` and `--eval_steps`.
 
+### Check training resources
+
+```bash
+alohamini train check --config /path/to/train.json > /path/to/resources.json
+```
+
+The JSON report contains `schema_version`, `policy`, `ok`, `complete`, `resources`, `errors`, and `resolved_settings`.
+Each resource includes `name`, `kind`, `requested_path`, actual `paths`, `validation`, `status`, `available`, and `error`.
+`validation` identifies the check performed, such as file availability, safetensors headers, or tokenizer loading.
+`status` is `ready`, `failed`, `blocked`, `deferred`, `unverified`, or `not_required`; `available` is `null` until verified.
+`ok` means no check failed; `complete=false` marks unresolved dependencies, generated resources, or remote IDs.
+Exit code is 0 when `ok=true`, otherwise 1. Model construction and training are not started.
+
+Python callers use `alohamini.learning.resources.check_training_resources(settings)` with the same training configuration dictionary.
+When checks pass, `resolved_settings` can be saved as a training JSON to retain the selected base files and shards across processes.
+Files are revalidated at startup; tensor compatibility remains checked during loading.
+
 ### Prepare statistics (optional)
 
 Inspect statistics for all numeric AlohaMini dataset fields without modifying data:

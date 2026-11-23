@@ -16,6 +16,8 @@ from .semantic import JOINTS, configure, relative_actions, validate_layout
 
 
 class LingBotAlgorithm(ChunkAlgorithm):
+    tokenizer_fields = ("text_tokenizer_path",)
+    single_weight_file = True
     asset_fields = ("tokenizer_path", "text_tokenizer_path", "image_processor_path", "teacher_root")
     config_class = LingBotConfig
     # Dual-stream attention directly calls decoder projections; wrapping decoder
@@ -212,9 +214,38 @@ class LingBotAlgorithm(ChunkAlgorithm):
     def initialize(self, model, settings):
         from safetensors.torch import load_model
 
-        load_model(
-            model, Path(settings["pretrained_path"]).expanduser() / "model.safetensors", strict=True
+        from alohamini.learning.resources import training_weights
+
+        load_model(model, training_weights(self, settings, model).single_file(), strict=True)
+
+    def training_asset_checks(self, settings, options):
+        from transformers import AutoConfig, AutoImageProcessor
+
+        from alohamini.learning.resources import ResourceCheck, file_check
+
+        yield from super().training_asset_checks(settings, options)
+        yield ResourceCheck(
+            "tokenizer_path",
+            "config",
+            options["tokenizer_path"],
+            lambda path: AutoConfig.from_pretrained(path, local_files_only=True),
         )
+        yield ResourceCheck(
+            "image_processor_path",
+            "processor",
+            options["image_processor_path"],
+            lambda path: AutoImageProcessor.from_pretrained(
+                path, local_files_only=True, trust_remote_code=False
+            ),
+        )
+        for section, keys in (
+            ("depth", ("moge_path", "morgbd_path")),
+            ("video", ("ckpt_path", "config_path")),
+        ):
+            configured = options.get("align_params", {}).get(section)
+            if configured:
+                for key in keys:
+                    yield file_check(f"teacher.{section}.{key}", configured.get(key))
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         result = deepcopy(options)

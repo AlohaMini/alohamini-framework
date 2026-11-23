@@ -2,12 +2,89 @@
 
 import json
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
-from safetensors import safe_open
+
+@dataclass(frozen=True)
+class ResolvedWeights:
+    """Selected local files; loading revalidates headers without rediscovering shards."""
+
+    path: Path
+    files: tuple
+
+    def single_file(self):
+        if len(self.files) != 1:
+            raise ValueError("This policy requires a single safetensors file")
+        return self.files[0][0]
+
+    def to_dict(self):
+        return {
+            "path": str(self.path),
+            "files": [
+                {"path": str(path), "keys": sorted(keys) if keys is not None else None}
+                for path, keys in self.files
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or not isinstance(value.get("files"), list):
+            raise ValueError("Invalid resolved weights")
+        files = []
+        for item in value["files"]:
+            path, keys = item["path"], item["keys"]
+            if not isinstance(path, str) or not Path(path).is_absolute():
+                raise ValueError("Resolved weight paths must be absolute")
+            if keys is not None and (
+                not isinstance(keys, list) or any(not isinstance(key, str) for key in keys)
+            ):
+                raise ValueError("Invalid resolved weight keys")
+            files.append((Path(path), frozenset(keys) if keys is not None else None))
+        if not files or not isinstance(value.get("path"), str):
+            raise ValueError("Resolved weights require a source and files")
+        return cls(Path(value["path"]).expanduser().resolve(), tuple(files))
+
+
+def resolve_weights(path, filename="model.safetensors"):
+    """Select filenames once; headers and model compatibility are checked separately."""
+    if isinstance(path, ResolvedWeights):
+        return path
+    return ResolvedWeights(
+        Path(path).expanduser().resolve(),
+        tuple(
+            (file, frozenset(keys) if keys is not None else None)
+            for file, keys in _files(path, filename)
+        ),
+    )
+
+
+def inspect_weights(path, filename="model.safetensors"):
+    """Read local indexes and headers without materializing tensors or a model."""
+    from safetensors import SafetensorError, safe_open
+
+    selected = resolve_weights(path, filename)
+    files = selected.files
+    seen = set()
+    for shard, expected in files:
+        try:
+            with safe_open(shard, framework="numpy") as stream:
+                keys = set(stream.keys())
+                if expected is not None and keys != expected:
+                    raise ValueError(f"Safetensors shard disagrees with its index: {shard.name}")
+                if seen & keys:
+                    raise ValueError("Duplicate tensors across checkpoint shards")
+                seen.update(keys)
+        except SafetensorError as error:
+            raise ValueError(f"Invalid weights {shard}: {error}") from error
+    if not seen:
+        raise ValueError("Checkpoint has no weight tensors")
+    return selected
 
 
 def _files(path, filename="model.safetensors"):
+    if isinstance(path, ResolvedWeights):
+        return list(path.files)
     if (
         not isinstance(filename, str)
         or Path(filename).name != filename
@@ -67,6 +144,7 @@ def load_weights(
     Returns those reinitialized names for logging and checkpoint provenance.
     """
     import torch
+    from safetensors import safe_open
 
     if not isinstance(reinitialize, (tuple, list)) or any(
         not isinstance(prefix, str) or not prefix for prefix in reinitialize

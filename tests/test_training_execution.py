@@ -191,7 +191,7 @@ def test_multi_node_uses_local_worker_count(monkeypatch):
 
     runtime = SimpleNamespace(world_size=4, local_world_size=2, main=True, close=lambda: None)
     monkeypatch.setattr(training, "Execution", lambda *args: runtime)
-    monkeypatch.setattr(training, "_train", lambda cfg, execution: execution.world_size)
+    monkeypatch.setattr(training, "_train", lambda cfg, execution, **_: execution.world_size)
     assert training.train({"device": "cpu", "num_processes": 2}) == 4
     with pytest.raises(ValueError, match="torchrun"):
         training.train({"device": "cpu", "num_processes": 3})

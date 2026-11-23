@@ -19,6 +19,8 @@ from .preset import apply_preset
 
 
 class GR00TN17Algorithm(ChunkAlgorithm):
+    processor_kwargs = {"use_fast": False}
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = GR00TN17Config
     apply_preset = staticmethod(apply_preset)
@@ -148,15 +150,21 @@ class GR00TN17Algorithm(ChunkAlgorithm):
             )
         ]
 
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        if not options.get("initialize_from_base", True):
+            return {}
+        root = settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
+        return {"policy": weight_check("policy", root)}
+
     def initialize(self, model, settings):
         if not model.config.initialize_from_base:
             return
-        root = Path(
-            settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
-        ).expanduser()
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
-        load_weights(model, root)
+        load_weights(model, training_weights(self, settings, model))
         if model.config.reinitialize_embodiment:
             from ._vendor.embodiment_conditioned_mlp import CategorySpecificLinear
 

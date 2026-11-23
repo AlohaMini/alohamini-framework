@@ -11,6 +11,7 @@ from .configuration_dm05 import DM05Config
 
 
 class DM05Algorithm(ChunkAlgorithm):
+    processor_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = DM05Config
     supports_field_transforms = True
@@ -102,8 +103,8 @@ class DM05Algorithm(ChunkAlgorithm):
 
         return DM05Processor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         # Raw OpenDM checkpoints carry core keys; native checkpoints use ChunkAlgorithm.load.
@@ -114,4 +115,4 @@ class DM05Algorithm(ChunkAlgorithm):
             for name in model.model.state_dict()
             if name.startswith(current)
         }
-        load_weights(model.model, settings["pretrained_path"], key_mapping=mapping)
+        load_weights(model.model, training_weights(self, settings, model), key_mapping=mapping)

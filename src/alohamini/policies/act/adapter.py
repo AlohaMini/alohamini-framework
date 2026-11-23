@@ -12,6 +12,7 @@ from alohamini.learning.checkpoint import (
 )
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import Processor, act_statistics, validate_statistics
+from alohamini.learning.resources import ResourceAlgorithm
 
 
 def loss_counts(batch):
@@ -21,7 +22,8 @@ def loss_counts(batch):
     }
 
 
-class ACTAlgorithm:
+class ACTAlgorithm(ResourceAlgorithm):
+    allow_scratch = True
     supports_remote_chunks = True
 
     @staticmethod
@@ -107,6 +109,12 @@ class ACTAlgorithm:
         from .modeling_act import ACTPolicy
 
         return ACTPolicy(self.config_class(**options))
+
+    def training_asset_checks(self, settings, options):
+        from alohamini.learning.resources import torchvision_backbone_checks
+
+        yield from super().training_asset_checks(settings, options)
+        yield from torchvision_backbone_checks(options, self.config_class)
 
     def processor(self, model, stats, device):
         return Processor.from_config(model.config, stats, device)

@@ -16,6 +16,8 @@ from .processor_acdit import ACDiTProcessor
 
 
 class ACDiTAlgorithm(ChunkAlgorithm):
+    allow_scratch = True
+    tokenizer_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     config_class = ACDiTConfig
     apply_preset = staticmethod(apply_preset)
@@ -165,6 +167,38 @@ class ACDiTAlgorithm(ChunkAlgorithm):
     def supports_action_prediction(config):
         return config.stage == "full"
 
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        if settings.get("pretrained_path"):
+            raise ValueError("AC-DiT requires a native checkpoint for --policy.path")
+        path = options.get("mobility_pretrained_path")
+        return {"mobility": weight_check("mobility", path, single=True)} if path else {}
+
+    def training_asset_checks(self, settings, options):
+        from pathlib import Path
+
+        from transformers import SiglipConfig, SiglipImageProcessor
+
+        from alohamini.learning.resources import ResourceCheck, tokenizer_check, weight_check
+
+        root = Path(options["assets_path"]).expanduser()
+        yield ResourceCheck(
+            "siglip.config",
+            "config",
+            root,
+            lambda path: SiglipConfig.from_pretrained(path, local_files_only=True),
+        )
+        yield tokenizer_check("assets_path", root)
+        yield ResourceCheck(
+            "siglip.image_processor",
+            "processor",
+            root,
+            lambda path: SiglipImageProcessor.from_pretrained(path, local_files_only=True),
+        )
+        if options.get("load_pretrained_encoders", True):
+            yield weight_check("siglip", root)
+
     def initialize(self, model, settings):
         if settings.get("pretrained_path"):
             raise ValueError(
@@ -172,7 +206,11 @@ class ACDiTAlgorithm(ChunkAlgorithm):
                 "initializer options for external weights"
             )
         if model.config.mobility_pretrained_path:
-            model.mobility.load_rdt(model.config.mobility_pretrained_path)
+            from alohamini.learning.resources import training_weights
+
+            model.mobility.load_rdt(
+                training_weights(self, settings, model, name="mobility").single_file()
+            )
 
     def initialize_checkpoint(self, path, model, manifest):
         source, target = manifest["config"], model.config

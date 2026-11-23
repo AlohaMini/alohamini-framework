@@ -418,7 +418,7 @@ def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_orde
     monkeypatch.setattr(loaded.processor.fields, "decode", decode)
     sample = data[0]
 
-    def observation(_):
+    def observation(_, *, history=True):
         return loaded.processor(
             {
                 key: [value] if key == "task" else value[None]

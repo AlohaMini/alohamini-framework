@@ -3,7 +3,6 @@
 import json
 from copy import deepcopy
 from dataclasses import fields
-from pathlib import Path
 
 import torch
 
@@ -67,6 +66,7 @@ class HyVLA05Policy(ChunkPolicy):
 
 
 class HyVLA05Algorithm(ChunkAlgorithm):
+    tokenizer_fields = ("assets_path",)
     asset_fields = ("assets_path",)
     supports_field_transforms = True
     loss_terms = ("flow_loss",)
@@ -128,8 +128,17 @@ class HyVLA05Algorithm(ChunkAlgorithm):
             if key != "action"
         }
 
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        path = settings.get("pretrained_path") or options["assets_path"]
+        return {"policy": weight_check("policy", path, single=True)}
+
     def initialize(self, model, settings):
         from safetensors.torch import load_model
 
-        path = Path(settings.get("pretrained_path") or model.config.assets_path).expanduser()
-        load_model(model.network, path / "model.safetensors", strict=True)
+        from alohamini.learning.resources import training_weights
+
+        load_model(
+            model.network, training_weights(self, settings, model).single_file(), strict=True
+        )

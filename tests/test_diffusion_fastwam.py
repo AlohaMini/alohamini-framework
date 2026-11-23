@@ -124,6 +124,11 @@ def fastwam_options():
 
 def fake_frozen_assets(monkeypatch):
     from alohamini.policies.fastwam import modeling_fastwam as module
+    from alohamini.policies.fastwam.adapter import FastWAMAlgorithm
+
+    # These tests replace the frozen encoders and tokenizer with synthetic
+    # modules; real resource validation is covered in test_training_resources.
+    monkeypatch.setattr(FastWAMAlgorithm, "training_asset_checks", lambda *args: [])
 
     class VAE(torch.nn.Module):
         temporal_downsample_factor = 4

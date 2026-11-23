@@ -1,13 +1,13 @@
 """Native Multi-Task DiT recipe, temporal contract and portable CLIP assets."""
 
 from copy import deepcopy
-from pathlib import Path
 
 import numpy as np
 from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics, validate_statistics
+from alohamini.learning.resources import ResourceAlgorithm, training_weights
 
 from .processor_multi_task_dit import MultiTaskDiTProcessor
 
@@ -16,7 +16,10 @@ CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
 
-class MultiTaskDiTAlgorithm:
+class MultiTaskDiTAlgorithm(ResourceAlgorithm):
+    single_weight_file = True
+    weights_directory_only = True
+    allow_scratch = True
     asset_fields = ("vision_encoder_name", "text_encoder_name")
     include_task = True
     fsdp_classes = ("TransformerBlock", "CLIPEncoderLayer")
@@ -178,9 +181,56 @@ class MultiTaskDiTAlgorithm:
     def processor(self, model, stats, device):
         return MultiTaskDiTProcessor(model.config, stats, model.tokenizer, device)
 
+    def training_asset_checks(self, settings, options):
+        from dataclasses import fields
+
+        from transformers import AutoConfig
+
+        from alohamini.learning.resources import ResourceCheck, tokenizer_check, weight_check
+        from alohamini.policies.multi_task_dit.modeling_multi_task_dit import _clip_assets
+
+        defaults = {item.name: item for item in fields(self.config_class)}
+        for field in ("vision_encoder_name", "text_encoder_name"):
+            if field not in options:
+                options[field] = defaults[field].default_factory()
+            try:
+                path, local = _clip_assets(options[field], tokenizer=field == "text_encoder_name")
+            except (OSError, ValueError):
+                yield ResourceCheck(
+                    field,
+                    "encoder",
+                    options[field],
+                    lambda value, text=field == "text_encoder_name": _clip_assets(
+                        value, tokenizer=text
+                    ),
+                )
+                continue
+            if local:
+                options[field] = str(path)
+                yield ResourceCheck(
+                    field + ".config",
+                    "config",
+                    path,
+                    lambda value: AutoConfig.from_pretrained(value, local_files_only=True),
+                )
+                if field == "text_encoder_name":
+                    yield tokenizer_check(field + ".tokenizer", path)
+                if options.get("load_pretrained_encoders", True):
+                    yield weight_check(field, path)
+            else:
+                yield ResourceCheck(
+                    field,
+                    "encoder",
+                    path,
+                    status="unverified",
+                    reason="Remote model ID; availability is checked at loading",
+                )
+
     def initialize(self, model, settings):
         if settings.get("pretrained_path"):
-            self.load(Path(settings["pretrained_path"]).expanduser(), model)
+            model.load_state_dict(
+                load_file(training_weights(self, settings, model).single_file()), strict=True
+            )
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         if temporal_ensemble_coeff not in ("checkpoint", None):

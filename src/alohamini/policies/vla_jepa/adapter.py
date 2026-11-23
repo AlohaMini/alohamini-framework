@@ -170,15 +170,48 @@ class VLAJEPAAlgorithm(ChunkAlgorithm):
 
         return VLAJEPAProcessor(model.config, stats, device)
 
-    @staticmethod
-    def initialize(model, settings):
+    def training_weight_sources(self, settings, options):
+        from alohamini.learning.resources import weight_check
+
+        if options.get("base_weights_mode", "backbones") == "policy":
+            return super().training_weight_sources(settings, options)
+        root = Path(options["assets_path"])
+        sources = {"qwen": weight_check("qwen", root / "qwen")}
+        if options.get("enable_world_model", True):
+            sources["vjepa2"] = weight_check("vjepa2", root / "vjepa2")
+        return sources
+
+    def training_asset_checks(self, settings, options):
+        from transformers import AutoVideoProcessor
+
+        from alohamini.learning.resources import ResourceCheck, processor_check
+
+        root = Path(options["assets_path"])
+        yield processor_check("qwen.processor", root / "qwen")
+        if options.get("enable_world_model", True):
+            yield ResourceCheck(
+                "vjepa2.processor",
+                "processor",
+                root / "vjepa2",
+                lambda path: AutoVideoProcessor.from_pretrained(
+                    path, local_files_only=True, trust_remote_code=False
+                ),
+            )
+
+    def initialize(self, model, settings):
+        from alohamini.learning.resources import training_weights
         from alohamini.learning.weights import load_weights
 
         cfg = model.config
         if cfg.base_weights_mode == "backbones":
-            load_weights(model.model.qwen.model, Path(cfg.assets_path) / "qwen")
+            load_weights(
+                model.model.qwen.model, training_weights(self, settings, model, name="qwen")
+            )
             if cfg.enable_world_model:
-                load_weights(model.model.video_encoder, Path(cfg.assets_path) / "vjepa2")
+                load_weights(
+                    model.model.video_encoder,
+                    training_weights(self, settings, model, name="vjepa2"),
+                )
         else:
             heads = (
                 (
@@ -197,7 +230,9 @@ class VLAJEPAAlgorithm(ChunkAlgorithm):
             excluded = (
                 () if cfg.enable_world_model else ("model.video_encoder.", "model.video_predictor.")
             )
-            load_weights(model, settings["pretrained_path"], reinitialize=heads, exclude=excluded)
+            load_weights(
+                model, training_weights(self, settings, model), reinitialize=heads, exclude=excluded
+            )
             if cfg.reinitialize_robot_heads:
                 model.model.action_model.action_encoder.layer1.reset_parameters()
                 model.model.action_model.action_decoder.layer2.reset_parameters()

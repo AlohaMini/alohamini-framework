@@ -189,6 +189,23 @@ TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理
 
 各策略示例保留 episode 1 做验证，其余回合训练。数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
 
+### 检查训练资源
+
+```bash
+alohamini train check --config /path/to/train.json > /path/to/resources.json
+```
+
+JSON 报告包含 `schema_version`、`policy`、`ok`、`complete`、`resources`、`errors` 和 `resolved_settings`。
+每项资源包含 `name`、`kind`、`requested_path`、实际 `paths`、`validation`、`status`、`available` 和 `error`。
+`validation` 说明实际检查内容，例如文件是否存在且非空、safetensors 文件头或分词器加载。
+`status` 可为 `ready`、`failed`、`blocked`、`deferred`、`unverified` 或 `not_required`；未验证时 `available` 为 `null`。
+`ok` 表示已执行的检查无失败；`complete=false` 表示仍有依赖未解析、资源待生成或远程资源未验证。
+`ok=true` 时退出码为 0，否则为 1。检查不构建模型、不启动训练。
+
+Python 调用 `alohamini.learning.resources.check_training_resources(settings)`，传入同一份训练配置字典。
+检查通过时，可将 `resolved_settings` 保存为训练 JSON，供其他进程沿用选定的基座文件和分片。
+启动时会重新验证文件，张量匹配仍在实际加载时检查。
+
 ### 统计准备（可选）
 
 查看 AlohaMini 数据集全部数值字段的统计，不改写数据：

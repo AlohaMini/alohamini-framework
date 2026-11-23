@@ -17,6 +17,19 @@ from dataclasses import dataclass, field
 from alohamini.policies.configuration import NormalizationMode, PolicyFeature
 
 
+def read_base_config(directory):
+    """Read the official full-checkpoint metadata before allocating the policy."""
+    import json
+    from pathlib import Path
+
+    from alohamini.learning.resources import local_file
+
+    saved = json.loads(local_file(Path(directory).expanduser() / "config.json").read_text())
+    if not isinstance(saved, dict) or saved.get("type") != "smolvla" or saved.get("use_peft", False):
+        raise ValueError("Expected a full official SmolVLA checkpoint, not a PEFT adapter")
+    return saved
+
+
 @dataclass
 class SmolVLAConfig:
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
