@@ -5,6 +5,7 @@ import errno
 import os
 import sys
 import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -47,6 +48,10 @@ def _kernel():
     library.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     library.OpenProcess.restype = wintypes.HANDLE
     library.CloseHandle.argtypes = [wintypes.HANDLE]
+    library.PeekNamedPipe.argtypes = [
+        wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+        wintypes.LPDWORD, wintypes.LPDWORD, wintypes.LPDWORD,
+    ]
     library.K32GetProcessMemoryInfo.argtypes = [
         wintypes.HANDLE, ctypes.POINTER(_ProcessMemory), wintypes.DWORD,
     ]
@@ -90,6 +95,15 @@ def watch_parent(fd, parent_pid):
 
     def watch():
         try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                handle = msvcrt.get_osfhandle(fd)
+                peek = _kernel().PeekNamedPipe
+                # 这条管道只用来检测父进程退出，避免 Windows CRT 阻塞在标准输入上。
+                while peek(handle, None, 0, None, None, None):
+                    time.sleep(0.1)
+                return
             while os.read(fd, 1):
                 pass
         finally:

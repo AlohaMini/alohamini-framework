@@ -71,7 +71,11 @@ def test_background_cpu_matches_original_with_rejected_rows_and_early_end(tmp_pa
                     writer.event({"type": "test_event"})
             process = writer._video_encoder.process if background else None
             if background:
-                wait_until(lambda: list((writer._pending / "videos").glob("*.mp4")))
+                try:
+                    wait_until(lambda: list((writer._pending / "videos").glob("*.mp4")))
+                except pytest.fail.Exception as error:
+                    log = (writer._pending / ".video/worker.log").read_text(encoding="utf-8")
+                    pytest.fail(f"{error} (worker status {process.poll()}): {log}")
                 assert process.poll() is None
                 assert not (writer._pending / ".video/result.json").exists()
             writer.save_episode()

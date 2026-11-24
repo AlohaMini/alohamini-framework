@@ -676,7 +676,7 @@ def record(
                 "Press -> to end recording; press R to discard and re-record.",
                 flush=True,
             )
-            started = time.monotonic()
+            started = time.perf_counter()
             record_loop(
                 client,
                 robot_model,
@@ -693,9 +693,10 @@ def record(
                 **({"on_progress": keyboard.countdown} if interaction is not None else {}),
                 **({"on_preview": keyboard.preview} if interaction is not None else {}),
             )
-            elapsed = time.monotonic() - started
+            elapsed = time.perf_counter() - started
+            capture_rate = dataset.submitted / elapsed if elapsed else 0.0
             print(
-                f"Episode {episode_number} capture rate: {dataset.submitted / elapsed:.2f} FPS "
+                f"Episode {episode_number} capture rate: {capture_rate:.2f} FPS "
                 f"({dataset.submitted} submitted frames in {elapsed:.2f}s; target {fps} FPS)",
                 flush=True,
             )
