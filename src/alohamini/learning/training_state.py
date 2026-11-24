@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from alohamini.learning.checkpoint import rebind_checkpoint_assets
 from alohamini.learning.ema import EMAConfig
 from alohamini.learning.policy import save_checkpoint
 from alohamini.learning.train_config import resolve_dataset_options
@@ -307,6 +308,7 @@ def save_training_checkpoint(
     (stage / "training_state").mkdir()
     torch.save(state, stage / "training_state/state.pt")
     stage.rename(checkpoint)
+    rebind_checkpoint_assets(model, checkpoint / "pretrained_model")
     _link(checkpoint, output / "checkpoints/last")
     _link(checkpoint / "pretrained_model", output / "checkpoint")
     if ema is not None:

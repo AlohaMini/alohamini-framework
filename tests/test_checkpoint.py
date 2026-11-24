@@ -164,6 +164,94 @@ def test_legacy_native_metadata_remains_readable(native, recording, tmp_path):
         torch.testing.assert_close(value, loaded.model.state_dict()[key], rtol=0, atol=0)
 
 
+def test_resumed_resource_exports_survive_checkpoint_retention(native, tmp_path):
+    from alohamini.learning.training_state import save_training_checkpoint
+
+    _, path, source, samples = native
+    stats = read_checkpoint(path)[1]["stats"]
+    output = tmp_path / "training"
+    config = {"steps": 4, "keep_last_checkpoints": 1}
+    optimizer = torch.optim.AdamW(source.parameters(), lr=1e-3)
+    previous = save_training_checkpoint(
+        output, 1, config, source, optimizer, stats, samples, {"steps": 1}
+    )
+    resumed = NativePolicy(previous, device="cpu").model
+    optimizer = torch.optim.AdamW(resumed.parameters(), lr=1e-3)
+    state = torch.load(previous / "training_state/state.pt", weights_only=True)
+    optimizer.load_state_dict(state["optimizer"])
+    parameter = next(p for p in resumed.parameters() if p.requires_grad)
+    for step in (2, 3):
+        optimizer.zero_grad()
+        parameter.grad = torch.ones_like(parameter)
+        optimizer.step()
+        current = save_training_checkpoint(
+            output, step, config, resumed, optimizer, stats, samples, {"steps": step}
+        )
+        assert not previous.exists()
+        assert (output / "checkpoints/last").resolve() == current
+        loaded = NativePolicy(current, device="cpu").model
+        for key, value in resumed.state_dict().items():
+            torch.testing.assert_close(value, loaded.state_dict()[key], rtol=0, atol=0)
+        previous = current
+
+
+@pytest.mark.parametrize("native", ["pi05"], indirect=True)
+@pytest.mark.parametrize("fast", [False, True])
+def test_failed_resumed_export_preserves_resource_paths(native, tmp_path, monkeypatch, fast):
+    from alohamini.learning.training_state import save_training_checkpoint
+
+    _, path, source, samples = native
+    stats = read_checkpoint(path)[1]["stats"]
+    if fast:
+        assets = tmp_path / "fast-codec"
+        assets.mkdir()
+        (assets / "tokenizer.json").write_text('{"codec": "test"}')
+        (assets / "processor_config.json").write_text('{"scale": 10}')
+        source.config.fast_tokenizer_path = str(assets)
+    output = tmp_path / "training"
+    config = {"steps": 4, "keep_last_checkpoints": 1}
+    optimizer = torch.optim.AdamW(source.parameters())
+    first = save_training_checkpoint(
+        output, 1, config, source, optimizer, stats, samples, {"steps": 1}
+    )
+    resumed = NativePolicy(first, device="cpu").model
+    optimizer = torch.optim.AdamW(resumed.parameters())
+    original_paths = {
+        key: getattr(resumed.config, key)
+        for key in ("tokenizer_path", "fast_tokenizer_path")
+    }
+    save = torch.save
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(torch, "save", fail)
+    with pytest.raises(OSError, match="disk full"):
+        save_training_checkpoint(
+            output, 2, config, resumed, optimizer, stats, samples, {"steps": 2}
+        )
+    assert first.is_dir()
+    assert (output / "checkpoints/last").resolve() == first
+    for key, value in original_paths.items():
+        assert getattr(resumed.config, key) == value
+        if value:
+            assert Path(value).exists()
+    monkeypatch.setattr(torch, "save", save)
+    for step in (2, 3):
+        checkpoint = save_training_checkpoint(
+            output, step, config, resumed, optimizer, stats, samples, {"steps": step}
+        )
+        assert not first.exists()
+        assert (checkpoint / "pretrained_model/tokenizer.model").read_bytes() == (
+            path / "tokenizer.model"
+        ).read_bytes()
+        if fast:
+            assert (checkpoint / "pretrained_model/fast_tokenizer/tokenizer.json").read_text() == (
+                assets / "tokenizer.json"
+            ).read_text()
+        NativePolicy(checkpoint, device="cpu")
+
+
 def test_new_metadata_is_consistent_and_corruption_is_explicit(native):
     kind, path, _, _ = native
     _, manifest = read_checkpoint(path)

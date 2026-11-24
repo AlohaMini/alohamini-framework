@@ -136,6 +136,26 @@ def write_checkpoint_metadata(path, manifest):
         )
 
 
+def rebind_checkpoint_assets(model, path):
+    """Keep exporter resources on the published checkpoint before pruning its source.
+
+    Resolve the adapter's bundled files/directories after the outer training
+    checkpoint rename. External resources retain their original configuration.
+    """
+    path = Path(path).resolve()
+    manifest = json.loads((path / "policy.json").read_text())
+    updates = {}
+    for key, asset in manifest.get("assets", {}).items():
+        if asset["storage"] != "bundled":
+            continue
+        resource = (path / asset["path"]).resolve()
+        if not resource.is_relative_to(path) or not resource.exists():
+            raise ValueError(f"Checkpoint bundled resource {key} is missing or outside {path}")
+        updates[key] = str(resource)
+    for key, resource in updates.items():
+        setattr(model.config, key, resource)
+
+
 def _merge(base, overrides):
     result = deepcopy(base)
     for key, value in overrides.items():
