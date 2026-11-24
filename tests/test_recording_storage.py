@@ -1,7 +1,6 @@
 """Complete v3 recording: fork RGB boundary, media, extra feedback and recovery."""
 
 import contextlib
-import fcntl
 import json
 import shutil
 from pathlib import Path
@@ -18,6 +17,7 @@ from alohamini.datasets.images import video_rgb
 from alohamini.datasets.lerobotv3 import export_lerobot, recover_recording
 from alohamini.datasets.record import LocalDataset, motor_feedback_frame
 from alohamini.datasets.tools import check_dataset
+from alohamini.filesystem import lock_file
 from alohamini.learning.data import AlohaMiniDataset
 
 
@@ -197,7 +197,7 @@ def test_failed_v3_discard_close_retains_pending_without_saving_and_releases_loc
             assert current[path] == digest
         for path in (root / "recording.lock", root / ".recording/recording.lock"):
             with path.open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(lock)
 
 
 @pytest.mark.parametrize("failure", ["encode", "publish", "after_commit"])
