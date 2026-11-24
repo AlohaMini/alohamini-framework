@@ -13,6 +13,9 @@ from collections import deque
 from dataclasses import dataclass
 from queue import Empty, Full
 
+_MAX_JPEG_BYTES = 8 * 1024 * 1024
+_LEGACY_IMAGE_IDLE_S = 1.0
+
 
 @dataclass(frozen=True)
 class CameraConfig:
@@ -21,6 +24,7 @@ class CameraConfig:
     height: int = 480
     fps: int = 30
     rotation: int = 0
+    mjpeg: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -34,6 +38,8 @@ class CameraConfig:
                 raise ValueError(f"{name} must be an integer in [1, {maximum}]")
         if type(self.rotation) is not int or self.rotation not in (0, 90, 180, 270):
             raise ValueError("rotation must be 0, 90, 180 or 270 degrees clockwise")
+        if type(self.mjpeg) is not bool or (self.mjpeg and self.rotation):
+            raise ValueError("MJPEG passthrough requires a boolean flag and rotation=0")
 
 
 @dataclass(frozen=True)
@@ -46,7 +52,7 @@ class JpegSnapshot:
     height: int
 
 
-def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
+def _capture(config: CameraConfig, output, stop, stream_enabled, legacy_until=None) -> None:
     """Child owns V4L2 and OpenCV; a stuck driver can be terminated on shutdown."""
     capture = None
     # Do not let an unread IPC queue keep the child alive during shutdown.
@@ -58,6 +64,10 @@ def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
         capture = cv2.VideoCapture(config.device, cv2.CAP_V4L2)
         if not capture.isOpened():
             raise OSError(f"Cannot open camera: {config.device}")
+        if config.mjpeg:
+            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            if not capture.set(cv2.CAP_PROP_FOURCC, fourcc):
+                raise OSError(f"Camera rejected MJPG capture: {config.device}")
         for prop, value in (
             (cv2.CAP_PROP_FRAME_WIDTH, config.width),
             (cv2.CAP_PROP_FRAME_HEIGHT, config.height),
@@ -68,10 +78,24 @@ def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
         actual_fps = capture.get(cv2.CAP_PROP_FPS)
         if not math.isclose(config.fps, actual_fps, rel_tol=1e-3):
             raise OSError(f"Camera failed to set fps={config.fps} (actual_fps={actual_fps})")
+        if config.mjpeg:
+            if (
+                capture.get(cv2.CAP_PROP_FOURCC) != fourcc
+                or capture.get(cv2.CAP_PROP_FRAME_WIDTH) != config.width
+                or capture.get(cv2.CAP_PROP_FRAME_HEIGHT) != config.height
+            ):
+                raise OSError(f"Camera did not negotiate the MJPG profile: {config.device}")
+            if (
+                not capture.set(cv2.CAP_PROP_CONVERT_RGB, 0)
+                or capture.get(cv2.CAP_PROP_CONVERT_RGB)
+            ):
+                raise OSError(f"Camera rejected compressed-frame reads: {config.device}")
+        preview_stride = math.ceil(config.fps / 15) if config.mjpeg else 1
         failures = 0
         timing = {
             "frames": 0,
             "capture_ms": 0.0,
+            "legacy_frames": 0,
             "encode_ms": 0.0,
             "stream_frames": 0,
             "stream_encode_ms": 0.0,
@@ -79,60 +103,77 @@ def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
         }
         while not stop.is_set():
             read_started = time.perf_counter()
-            ok, bgr = capture.read()
+            ok, captured = capture.read()
             capture_done = time.perf_counter()
             stamp = time.monotonic()
-            if not ok or bgr is None:
+            source_jpeg = None
+            if ok and captured is not None and config.mjpeg:
+                source_jpeg = captured.tobytes()
+                ok = (
+                    len(source_jpeg) <= _MAX_JPEG_BYTES
+                    and source_jpeg.startswith(b"\xff\xd8")
+                    and b"\xff\xd9" in source_jpeg[-32:]
+                )
+            if not ok or captured is None:
                 failures += 1
                 if failures > 10:
                     raise OSError("Camera exceeded ten consecutive read failures")
                 stop.wait(0.01)
                 continue
             failures = 0
-            if bgr.shape[:2] != (config.height, config.width):
-                raise OSError("Camera resolution does not match configuration")
-            frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            if config.rotation:
-                frame = cv2.rotate(
-                    frame,
-                    {
-                        90: cv2.ROTATE_90_CLOCKWISE,
-                        180: cv2.ROTATE_180,
-                        270: cv2.ROTATE_90_COUNTERCLOCKWISE,
-                    }[config.rotation],
-                )
-            # Preserve deployed 5556 image semantics: its clients use imdecode
-            # directly as an RGB array. Standard-JPEG ROS streaming is a separate
-            # protocol boundary and must not reinterpret these bytes as BGR input.
-            ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-            if not ok:
-                raise OSError("Camera JPEG encoding failed")
-            jpeg = buffer.tobytes()
-            if len(jpeg) > 8 * 1024 * 1024:
-                raise OSError("Encoded camera frame exceeds 8 MiB")
             timing["frames"] += 1
             timing["capture_ms"] += (capture_done - read_started) * 1e3
-            timing["encode_ms"] += (time.perf_counter() - capture_done) * 1e3
-            stream = None
-            if stream_enabled.value:
-                # Migrated from camera_stream.encode_camera_stream_message:
-                # encode the same RGB capture, not the already compressed 5556 JPEG.
-                started = time.perf_counter()
-                try:
-                    ok, encoded = cv2.imencode(
-                        ".jpg",
-                        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
-                        [int(cv2.IMWRITE_JPEG_QUALITY), 70],
+            jpeg = None
+            if not config.mjpeg or (legacy_until is not None and stamp < legacy_until.value):
+                bgr = cv2.imdecode(captured, cv2.IMREAD_COLOR) if config.mjpeg else captured
+                if bgr is None or bgr.shape[:2] != (config.height, config.width):
+                    raise OSError("Camera resolution does not match configuration")
+                frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                if config.rotation:
+                    frame = cv2.rotate(
+                        frame,
+                        {
+                            90: cv2.ROTATE_90_CLOCKWISE,
+                            180: cv2.ROTATE_180,
+                            270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+                        }[config.rotation],
                     )
-                    if not ok or len(encoded) > 8 * 1024 * 1024:
-                        raise OSError("Camera stream JPEG encoding failed or exceeded 8 MiB")
-                    stream = JpegSnapshot(stamp, encoded.tobytes(), frame.shape[1], frame.shape[0])
+                # Keep the deployed 5556 color convention for legacy consumers.
+                ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                if not ok:
+                    raise OSError("Camera JPEG encoding failed")
+                jpeg = buffer.tobytes()
+                if len(jpeg) > _MAX_JPEG_BYTES:
+                    raise OSError("Encoded camera frame exceeds 8 MiB")
+                timing["legacy_frames"] += 1
+                timing["encode_ms"] += (time.perf_counter() - capture_done) * 1e3
+            stream = None
+            if stream_enabled.value and (timing["frames"] - 1) % preview_stride == 0:
+                if source_jpeg is not None:
+                    stream = JpegSnapshot(stamp, source_jpeg, config.width, config.height)
                     timing["stream_frames"] += 1
-                except Exception:
-                    # Optional streaming must not invalidate camera capture.
-                    timing["stream_errors"] += 1
-                finally:
-                    timing["stream_encode_ms"] += (time.perf_counter() - started) * 1e3
+                else:
+                    # Standard JPEG uses BGR input to OpenCV's encoder.
+                    started = time.perf_counter()
+                    try:
+                        ok, encoded = cv2.imencode(
+                            ".jpg",
+                            cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+                            [int(cv2.IMWRITE_JPEG_QUALITY), 70],
+                        )
+                        if not ok or len(encoded) > _MAX_JPEG_BYTES:
+                            raise OSError("Camera stream JPEG encoding failed or exceeded 8 MiB")
+                        stream = JpegSnapshot(
+                            stamp, encoded.tobytes(), frame.shape[1], frame.shape[0]
+                        )
+                        timing["stream_frames"] += 1
+                    except Exception:
+                        # Optional streaming must not invalidate camera capture.
+                        timing["stream_errors"] += 1
+                    finally:
+                        timing["stream_encode_ms"] += (time.perf_counter() - started) * 1e3
+            if jpeg is None and stream is None and timing["frames"] % config.fps:
+                continue  # Idle cameras still report capture timing once per second.
             try:
                 output.put_nowait((stamp, jpeg, dict(timing), stream))
             except Full:
@@ -165,6 +206,7 @@ class OpenCVCamera:
         self._timing = {"frames": 0, "capture_ms": 0.0, "encode_ms": 0.0}
         self._process = self._receiver = self._queue = self._stop = None
         self._stream_enabled = None
+        self._legacy_until = None
         self._stream_requested = False
         self._stream_snapshot = None
         self._receiver_stop = threading.Event()
@@ -181,9 +223,13 @@ class OpenCVCamera:
             # The capture child only reads this flag. No process-shared lock
             # may be acquired while holding the Host's camera-cache lock.
             self._stream_enabled = context.Value("b", self._stream_requested, lock=False)
+        args = (self.config, self._queue, self._stop, self._stream_enabled)
+        if self.config.mjpeg:
+            self._legacy_until = context.Value("d", 0.0, lock=False)
+            args += (self._legacy_until,)
         self._process = context.Process(
             target=_capture,
-            args=(self.config, self._queue, self._stop, self._stream_enabled),
+            args=args,
             daemon=True,
         )
         try:
@@ -226,13 +272,20 @@ class OpenCVCamera:
                     self._history.clear()
                     self._stream_snapshot = None
                     return
-                if not self._history or stamp > self._history[-1][0]:
+                if jpeg is not None and (not self._history or stamp > self._history[-1][0]):
                     self._history.append((stamp, jpeg))
-                    self._stream_snapshot = stream if self._stream_requested else None
+                if self._stream_requested and stream is not None and (
+                    self._stream_snapshot is None
+                    or stream.capture_monotonic_s > self._stream_snapshot.capture_monotonic_s
+                ):
+                    self._stream_snapshot = stream
 
     def read_frame_history(self) -> tuple:
+        """Return cached 5556 JPEGs and request future legacy frames in MJPEG mode."""
         with self._lock:
             error, history = self._error, tuple(self._history)
+            if self._legacy_until is not None and not self._closed:
+                self._legacy_until.value = time.monotonic() + _LEGACY_IMAGE_IDLE_S
         if error:
             raise OSError(error)
         return history

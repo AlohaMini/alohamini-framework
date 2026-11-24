@@ -6,6 +6,7 @@ import logging
 import math
 import shlex
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from alohamini.calibration.procedure import ensure_calibration
@@ -40,6 +41,7 @@ def open_host(
     left_port: str = "/dev/am_arm_follower_left",
     right_port: str = "/dev/am_arm_follower_right",
     cameras: Mapping[str, CameraConfig] | None = None,
+    camera_mjpeg: bool = True,
     use_degrees: bool = False,
     bind_host: str = "0.0.0.0",
     command_port: int = 5555,
@@ -57,6 +59,8 @@ def open_host(
     file. A mismatch requires interactive confirmation before restoring EEPROM
     from that file. cameras={} explicitly selects camera-free operation.
     """
+    if type(camera_mjpeg) is not bool:
+        raise ValueError("camera_mjpeg must be a boolean")
     for _ in range(2):
         host = _open_host(
             robot_model,
@@ -64,6 +68,7 @@ def open_host(
             left_port=left_port,
             right_port=right_port,
             cameras=cameras,
+            camera_mjpeg=camera_mjpeg,
             use_degrees=use_degrees,
             bind_host=bind_host,
             command_port=command_port,
@@ -82,6 +87,7 @@ def _open_host(
     left_port,
     right_port,
     cameras,
+    camera_mjpeg,
     use_degrees,
     bind_host,
     command_port,
@@ -169,6 +175,7 @@ def _open_host(
         }
     if not all(isinstance(config, CameraConfig) for config in cameras.values()):
         raise TypeError("Expected named CameraConfig values")
+    cameras = {name: replace(config, mjpeg=camera_mjpeg) for name, config in cameras.items()}
     lift = next(m for m in model.actuators if m.name == "lift_axis")
     host = NativeHost(
         model,

@@ -134,18 +134,18 @@ class CalibrationFileTests(unittest.TestCase):
 
     def test_edu_assembles_default_cameras_before_opening_hardware(self):
         self.write({name: asdict(value) for name, value in self.values.items()})
-        with (
-            patch("alohamini.runtime.startup.NativeHost", side_effect=RuntimeError("inspected"))
-            as constructor,
-            patch("serial.Serial") as serial,
-            self.assertRaisesRegex(RuntimeError, "inspected"),
-        ):
-            open_host("alohamini2edu", calibration_file=self.path)
-        serial.assert_not_called()
-        self.assertEqual(
-            list(constructor.call_args.kwargs["cameras"]),
-            ["forward_left", "forward_right", "wrist_right"],
-        )
+        for options, mjpeg in (({}, True), ({"camera_mjpeg": False}, False)):
+            with (
+                patch("alohamini.runtime.startup.NativeHost", side_effect=RuntimeError("inspected"))
+                as constructor,
+                patch("serial.Serial") as serial,
+                self.assertRaisesRegex(RuntimeError, "inspected"),
+            ):
+                open_host("alohamini2edu", calibration_file=self.path, **options)
+            serial.assert_not_called()
+            cameras = constructor.call_args.kwargs["cameras"]
+            self.assertEqual(list(cameras), ["forward_left", "forward_right", "wrist_right"])
+            self.assertTrue(all(camera.config.mjpeg is mjpeg for camera in cameras.values()))
 
 
 @unittest.skipUnless(

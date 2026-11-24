@@ -158,11 +158,14 @@ Supported camera names are `forward`, `forward_left`, `forward_right`, `backward
 
 ROS 2 and other clients can subscribe to enabled cameras; see [ROS 2](ros2.md).
 
+By default, the Host captures MJPG at 640×480 and 30 fps. The `5557` preview forwards one out of every two original JPEG frames, up to 15 fps. Image requests on `5556` use full-rate capture and may need to wait for the first frame after an idle period.
+
 | Setting | Append to the startup command |
 | --- | --- |
 | Forward camera only | `--cameras forward` |
 | EDU dual forward cameras only | `--cameras forward_left forward_right` |
 | No cameras | `--cameras` without names |
+| Legacy capture for cameras without MJPG | `--no-camera-mjpeg` |
 | Actual rates and timings | `--profile_timing` |
 | Serial ports | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
 | Robot calibration file | `--calibration /absolute/path/AlohaMiniRobot.json` |

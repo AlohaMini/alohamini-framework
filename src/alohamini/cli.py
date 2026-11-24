@@ -374,6 +374,10 @@ def _main(argv: list[str] | None = None) -> int:
         "--use_degrees", action="store_true", help="关节使用旧角度模式，夹爪仍为 0–100"
     )
     host.add_argument(
+        "--camera-mjpeg", action=argparse.BooleanOptionalAction, default=True,
+        help="默认使用 MJPG 全速采集，5557 预览直传最高 15 fps；关闭 MJPG 可兼容旧相机",
+    )
+    host.add_argument(
         "--cameras",
         nargs="*",
         default=None,
@@ -614,6 +618,7 @@ def _main(argv: list[str] | None = None) -> int:
                 right_port=args.right_port,
                 bind_host=args.bind_host,
                 use_degrees=args.use_degrees,
+                camera_mjpeg=args.camera_mjpeg,
                 cameras=(
                     None if args.cameras is None else
                     {name: CameraConfig(f"/dev/am_camera_{name}") for name in args.cameras}

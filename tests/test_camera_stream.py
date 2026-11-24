@@ -67,7 +67,101 @@ def capture_frame(enabled=True, rotation=0, fail_stream=False):
     return output.get_nowait(), len(calls)
 
 
+def capture_mjpeg_frames(legacy_frames=(), fourcc="MJPG"):
+    stop, stream_enabled = threading.Event(), SimpleNamespace(value=True)
+    legacy_until = SimpleNamespace(value=0.0)
+    output = Queue(maxsize=8)
+    output.cancel_join_thread = lambda: None
+    bgr = np.zeros((8, 16, 3), np.uint8)
+    bgr[:, :, 2] = 255
+    ok, encoded = cv2.imencode(".jpg", bgr)
+    assert ok
+    raw = encoded.reshape(1, -1)
+    camera = Mock()
+    camera.isOpened.return_value = camera.set.return_value = True
+    props = {
+        cv2.CAP_PROP_FOURCC: cv2.VideoWriter_fourcc(*fourcc),
+        cv2.CAP_PROP_FRAME_WIDTH: 16,
+        cv2.CAP_PROP_FRAME_HEIGHT: 8,
+        cv2.CAP_PROP_FPS: 30,
+        cv2.CAP_PROP_CONVERT_RGB: 0,
+    }
+    camera.get.side_effect = props.__getitem__
+
+    def read():
+        count = camera.read.call_count
+        legacy_until.value = time.monotonic() + 1 if count in legacy_frames else 0.0
+        if count == 6:
+            stop.set()
+        return True, raw
+
+    camera.read.side_effect = read
+    with (
+        patch("cv2.VideoCapture", return_value=camera),
+        patch("cv2.imdecode", wraps=cv2.imdecode) as decode,
+        patch("cv2.imencode", wraps=cv2.imencode) as encode,
+    ):
+        _capture(
+            CameraConfig("/dev/test-only", width=16, height=8, mjpeg=True),
+            output, stop, stream_enabled, legacy_until,
+        )
+    packets = []
+    while not output.empty():
+        packets.append(output.get_nowait())
+    return packets, encoded.tobytes(), decode.call_count, encode.call_count, camera
+
+
 class StreamCaptureTests(unittest.TestCase):
+    def test_mjpeg_preview_forwards_every_other_capture_without_transcoding(self):
+        packets, source, decodes, encodes, camera = capture_mjpeg_frames()
+        self.assertEqual(camera.read.call_count, 6)
+        camera.set.assert_any_call(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        camera.set.assert_any_call(cv2.CAP_PROP_CONVERT_RGB, 0)
+        self.assertEqual([timing["frames"] for _, _, timing, _ in packets], [1, 3, 5])
+        self.assertEqual((decodes, encodes), (0, 0))
+        for stamp, legacy, _, preview in packets:
+            self.assertIsNone(legacy)
+            self.assertEqual(preview, JpegSnapshot(stamp, source, 16, 8))
+
+    def test_mjpeg_legacy_demand_preserves_every_capture_and_the_old_color_contract(self):
+        packets, source, decodes, encodes, _ = capture_mjpeg_frames({2, 3, 4})
+        self.assertEqual((decodes, encodes), (3, 3))
+        legacy = {timing["frames"]: jpeg for _, jpeg, timing, _ in packets if jpeg is not None}
+        self.assertEqual(set(legacy), {2, 3, 4})
+        for jpeg in legacy.values():
+            decoded = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            self.assertGreater(decoded[0, 0, 0], 240)  # 5556 decodes directly to RGB arrays.
+        self.assertEqual([stream.jpeg for _, _, _, stream in packets if stream], [source] * 3)
+
+    def test_mjpeg_rejects_silent_fourcc_fallback(self):
+        packets, _, decodes, encodes, camera = capture_mjpeg_frames(fourcc="YUYV")
+        self.assertIn("did not negotiate the MJPG profile", packets[0][2])
+        self.assertEqual((decodes, encodes), (0, 0))
+        camera.read.assert_not_called()
+
+    def test_preview_and_legacy_cache_are_independent_in_mjpeg_mode(self):
+        camera = OpenCVCamera(CameraConfig("/dev/test-only", mjpeg=True))
+        self.addCleanup(camera.close)
+        camera._legacy_until = SimpleNamespace(value=0.0)
+        camera.set_stream_enabled(True)
+        preview = JpegSnapshot(1, b"standard", 16, 8)
+        packets = [(1, None, {}, preview), (2, b"legacy", {}, None)]
+
+        def get(**_kwargs):
+            packet = packets.pop(0)
+            if not packets:
+                camera._receiver_stop.set()
+            return packet
+
+        camera._queue = Mock()
+        camera._queue.get.side_effect = get
+        camera._receive()
+        self.assertEqual(camera._legacy_until.value, 0.0)
+        self.assertEqual(camera.read_stream_snapshot(), preview)
+        now = time.monotonic()
+        self.assertEqual(camera.read_frame_history(), ((2, b"legacy"),))
+        self.assertGreater(camera._legacy_until.value, now)
+
     def test_spawned_capture_receives_subscription_demand_and_returns_paired_bytes(self):
         camera = OpenCVCamera(CameraConfig("/dev/test-only"))
         self.addCleanup(camera.close)

@@ -120,6 +120,14 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["host", "--robot_model", "alohamini2edu", *options]), 0)
                 self.assertEqual(open_host.call_args.kwargs["cameras"], expected)
 
+    def test_host_mjpeg_is_enabled_by_default_and_can_be_disabled(self):
+        for options, expected in (
+            ([], True), (["--camera-mjpeg"], True), (["--no-camera-mjpeg"], False),
+        ):
+            with patch("alohamini.runtime.startup.open_host") as open_host:
+                self.assertEqual(main(["host", "--robot_model", "alohamini2pro", *options]), 0)
+                self.assertIs(open_host.call_args.kwargs["camera_mjpeg"], expected)
+
     def test_teleoperation_accepts_existing_cli_names_with_optional_profile(self):
         for profile in ([], ["--teleop.arm_profile", "am-leader-6dof"]):
             with patch("alohamini.apps.teleoperation.teleoperate") as teleoperate:

@@ -158,11 +158,14 @@ Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
 
 ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
+Host 默认以 640×480、30 fps 采集 MJPG。`5557` 预览每两帧转发一帧原始 JPEG，最高 15 fps。`5556` 图像请求使用全帧率采集，空闲后首次请求可能需要等待新帧。
+
 | 需要调整的内容 | 启动命令后追加 |
 | --- | --- |
 | 仅开启前视相机 | `--cameras forward` |
 | 仅开启 EDU 双前视相机 | `--cameras forward_left forward_right` |
 | 不开启相机 | `--cameras`，后面不填名称 |
+| 旧相机兼容模式 | `--no-camera-mjpeg` |
 | 查看实际 Hz 与耗时 | `--profile_timing` |
 | 指定串口 | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
 | 指定整机标定文件 | `--calibration /绝对路径/AlohaMiniRobot.json` |
