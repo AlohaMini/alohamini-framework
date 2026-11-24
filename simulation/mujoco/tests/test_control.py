@@ -4,7 +4,7 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.control import (
+from alohamini_mujoco.runtime.control import (
     DynamicFollower,
     FollowerSettings,
     JointTrajectory,

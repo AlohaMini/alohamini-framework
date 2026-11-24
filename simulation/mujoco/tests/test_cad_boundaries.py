@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-from alohamini_mujoco._cad_mesh import mesh_solid
-from alohamini_mujoco.collision import topology
-from alohamini_mujoco.meshes import ray_x_intersections
+
+from alohamini.simulation.assets.cad._mesh import mesh_solid
+from alohamini.simulation.assets.collision_geometry import topology
+from alohamini.simulation.assets.meshes import ray_x_intersections
 
 pytest.importorskip("OCP")
 

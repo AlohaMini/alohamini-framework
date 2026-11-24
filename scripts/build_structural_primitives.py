@@ -8,22 +8,22 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
-from alohamini_mujoco.collision import components, manifold_parts
-from alohamini_mujoco.functional_geometry import (
-    _outside_box,
-    certify_cylinder_box_cover,
-    cylinder_distance,
-    prepare_shared_convex,
-)
-from alohamini_mujoco.interop import obj_bytes
-from alohamini_mujoco.meshes import Mesh, read_mesh, surface_distances
-from alohamini_mujoco.shapes import Primitive
-from alohamini_mujoco.solid_geometry import convex_boundary
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
 from scipy.spatial import ConvexHull
 
 from alohamini.model import get_robot_model
 from alohamini.model.loader import load_robot_model
+from alohamini.simulation.assets.collision_geometry import components, manifold_parts
+from alohamini.simulation.assets.functional_geometry import (
+    _outside_box,
+    certify_cylinder_box_cover,
+    cylinder_distance,
+)
+from alohamini.simulation.assets.meshes import Mesh, obj_bytes, read_mesh, surface_distances
+from alohamini.simulation.assets.shapes import Primitive
+from alohamini.simulation.assets.solid_geometry import convex_boundary
 from alohamini.simulation.description import Description, origin
+from alohamini.simulation.sapien_geometry import prepare_shared_convex
 
 
 def digest(path):
@@ -284,7 +284,7 @@ def rebuild(root):
             "scale": [0.001] * 3,
             "vertices": len(shape.vertices),
             "triangles": len(shape.faces),
-            "msh_sha256": hashlib.sha256(shape.msh_bytes()).hexdigest(),
+            "msh_sha256": hashlib.sha256(msh_bytes(shape)).hexdigest(),
             "geometry_changed": False,
             "qualification": "config/structural_collision.json",
         }

@@ -3,16 +3,17 @@ import json
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.collision import load_bundle, merge_bundles, visual_sources
-from alohamini_mujoco.description import Description, origin
+from alohamini_mujoco.assets.collision import load_bundle, merge_bundles
+from alohamini_mujoco.assets.interop import export_collision_urdf
 from alohamini_mujoco.frames import points_in_frame, transform
-from alohamini_mujoco.interop import export_collision_urdf
-from alohamini_mujoco.meshes import read_mesh
-from alohamini_mujoco.model import ModelProfile, build_model
-from alohamini_mujoco.primitives import fit_primitives
-from alohamini_mujoco.shapes import Primitive
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
 
 from alohamini.model import get_robot_model
+from alohamini.simulation.assets.collision_geometry import visual_sources
+from alohamini.simulation.assets.meshes import read_mesh
+from alohamini.simulation.assets.primitives import fit_primitives
+from alohamini.simulation.assets.shapes import Primitive
+from alohamini.simulation.description import Description, origin
 
 LINKS = ["chest_camera", "front_camera", "back_camera", "wheel1", "wheel2", "wheel3"]
 

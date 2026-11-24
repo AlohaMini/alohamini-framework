@@ -5,15 +5,15 @@ from types import SimpleNamespace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.actuators import ActuatorProfile, JointActuator, ServoReference
-from alohamini_mujoco.control import (
+from alohamini_mujoco.runtime.actuators import ActuatorProfile, JointActuator, ServoReference
+from alohamini_mujoco.runtime.control import (
     DynamicFollower,
     FollowerSettings,
     gravity_generalized_force,
     gravity_load_report,
     gravity_position_targets,
 )
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
 
 from alohamini.simulation.actuators import ServoIntegral
 
@@ -116,7 +116,7 @@ def test_sampled_integral_deadband_cap_and_saturation_recovery():
 
 
 def test_integral_removes_static_error_and_snapshot_retains_accumulation():
-    from alohamini_mujoco.collection import physics_state, restore_state
+    from alohamini_mujoco.datasets.collection import physics_state, restore_state
 
     robot = pendulum(
         delay_s=0,
@@ -252,7 +252,7 @@ def test_gravity_position_compensation_improves_static_hold_without_bypassing_dr
 
 
 def test_snapshot_restores_pending_profile_commands_and_physics():
-    from alohamini_mujoco.collection import physics_state, restore_state
+    from alohamini_mujoco.datasets.collection import physics_state, restore_state
 
     robot = pendulum()
     follower = DynamicFollower(robot)
@@ -274,7 +274,7 @@ def test_snapshot_restores_pending_profile_commands_and_physics():
 
 
 def test_viewer_reset_restores_delayed_controller_history():
-    from alohamini_mujoco.viewer import DynamicPlayback
+    from alohamini_mujoco.runtime.viewer import DynamicPlayback
 
     robot = pendulum()
     playback = DynamicPlayback(robot)
@@ -316,8 +316,8 @@ def test_compiled_profile_keeps_geometry_inertia_and_continuous_effort(robot, tm
 @pytest.mark.parametrize("integral", [False, True])
 def test_identified_episode_replay_restores_nontrivial_controller_state(tmp_path, integral):
     h5py = pytest.importorskip("h5py")
-    from alohamini_mujoco.collection import EpisodeReplay, physics_state
-    from alohamini_mujoco.libero import sha256
+    from alohamini_mujoco.datasets.collection import EpisodeReplay, physics_state
+    from alohamini_mujoco.scenes.libero.adapter import sha256
 
     options = (
         {"ki_Nm_per_rad_s": 8, "integral_effort_limit_Nm": 3, "integral_period_s": 0.02}
@@ -381,7 +381,8 @@ def test_identified_episode_replay_restores_nontrivial_controller_state(tmp_path
 def test_cli_loads_actuator_profile_and_selects_gravity_without_opening_window(
     robot, tmp_path, monkeypatch
 ):
-    from alohamini_mujoco import cli, viewer
+    from alohamini_mujoco import cli
+    from alohamini_mujoco.runtime import viewer
 
     path = tmp_path / "actuators.json"
     path.write_text(

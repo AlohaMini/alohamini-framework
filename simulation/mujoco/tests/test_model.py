@@ -7,12 +7,14 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import contacts, validate_model
-from alohamini_mujoco.compilation import compile_xml, load_xml
-from alohamini_mujoco.export import export_robot
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
 from alohamini_mujoco.frames import points_in_frame, rigid_transform, rotation_rpy, transform
-from alohamini_mujoco.meshes import binary_stl, ray_x_intersections
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.audit import contacts, validate_model
+from alohamini_mujoco.runtime.compilation import compile_xml, load_xml
+from alohamini_mujoco.runtime.export import export_robot
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
+
+from alohamini.simulation.assets.meshes import binary_stl, ray_x_intersections
 
 
 def test_urdf_rpy_and_frame_direction():
@@ -145,7 +147,7 @@ def test_large_stl_conversion_preserves_triangles_winding_and_coordinates():
     )
     triangles = np.tile(tetrahedron, (100001, 1, 1))
     mesh = binary_stl(stl_bytes(triangles))
-    data = mesh.msh_bytes()
+    data = msh_bytes(mesh)
     nvertices, nnormals, ntexture, nfaces = struct.unpack_from("<4i", data)
     assert nfaces == 200002 and nnormals == ntexture == 0
     vertices = np.frombuffer(data, dtype="<f4", count=3 * nvertices, offset=16).reshape(-1, 3)

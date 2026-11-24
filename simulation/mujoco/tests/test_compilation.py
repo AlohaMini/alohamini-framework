@@ -1,8 +1,15 @@
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.compilation import COMPILER_CACHE_BYTES, compile_xml, compiler_cache, load_xml
-from alohamini_mujoco.meshes import Mesh
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
+from alohamini_mujoco.runtime.compilation import (
+    COMPILER_CACHE_BYTES,
+    compile_xml,
+    compiler_cache,
+    load_xml,
+)
+
+from alohamini.simulation.assets.meshes import Mesh
 
 
 def test_compiler_cache_budget_restores_caller_capacity_on_success_and_error():
@@ -27,7 +34,7 @@ def test_budgeted_compilation_keeps_native_model_fields_and_relative_asset_loadi
         np.array([[0, 0, 0], [0.02, 0, 0], [0, 0.03, 0], [0, 0, 0.04]]),
         np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]),
     )
-    assets = {"part.msh": mesh.msh_bytes()}
+    assets = {"part.msh": msh_bytes(mesh)}
     (tmp_path / "part.msh").write_bytes(assets["part.msh"])
     xml = (
         '<mujoco><asset><mesh name="part" file="part.msh"/></asset>'

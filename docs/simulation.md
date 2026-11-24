@@ -104,6 +104,52 @@ alohamini-robotwin view --source /path/to/RoboTwin \
 
 Add `--headless --steps 1000` to disable rendering and advance 1000 physics steps; the default step is 1 ms. Both currently support one CPU physics environment.
 
+## Custom tabletop scene
+
+The example defines a scene, a task, and a matching joint trajectory in separate JSON files.
+
+```bash
+SCENE=examples/simulation/pick_place
+EPISODE="$HOME/Alohamini_workspace/simulation/collections/tabletop_01"
+alohamini-mujoco view --scene-config "$SCENE/tabletop.json" \
+  --task-config "$SCENE/task.json" --trajectory "$SCENE/motion.json" --paused
+MUJOCO_GL=egl alohamini-mujoco collect "$SCENE/motion.json" \
+  --scene-config "$SCENE/tabletop.json" --task-config "$SCENE/task.json" --output "$EPISODE"
+alohamini-mujoco replay "$EPISODE" --view --paused
+```
+
+Use a new episode directory. The collector saves RGB frames, joint states and commands, and the model for replay. To try the raised table and alternate object positions, use `tabletop_raised.json` with `motion_raised.json` and a new output directory.
+
+Set object poses with `T_world_object` and the chassis pose with `T_world_base`. Use metres for positions and object dimensions, and kilograms for mass. The `pick_place` task uses a movable `source` and an upright fixed box `target`, with a fixed robot base and 20 Hz control. Update the matching trajectory when moving the objects or the robot. The supplied workspace and wrist cameras are virtual views. Custom scene cameras and `mujoco_contact_time_constant_s` use the MuJoCo backend.
+
+### Place objects and capture a camera
+
+```bash
+alohamini-mujoco edit --scene-config examples/simulation/pick_place/tabletop.json \
+  --task-config examples/simulation/pick_place/task.json \
+  --output "$HOME/Alohamini_workspace/simulation/tabletop_custom.json"
+```
+
+- Double-click a scene object. Ctrl + right-drag moves it, with Shift for the horizontal plane. Ctrl + left-drag rotates it. F12 cycles between free movement and the world X, Y, and Z axes.
+- Frame the scene in `Rendering → Camera → Free` and press F11 to capture `workspace`. Use `--camera-name` for a different name.
+- Press F10 to validate and save to a new JSON file. With `--task-config`, validation includes the task reset. Pass the new JSON to `view` or `collect`. Use a trajectory that matches the layout when collecting.
+
+### Asset references and headless preview
+
+Scene objects can reference an [asset catalog](../examples/simulation/pick_place/assets/catalog.json) entry with `"asset": {"id": "blue_cube", "version": 1}`. Set the instance pose with `T_world_object`. The catalog declares triangulated OBJ visuals, optional UV-mapped PNG textures, explicit colliders, and file SHA-256 hashes. Colliders can be boxes, spheres, cylinders, or convex OBJ meshes. For dynamic assets, supply mass, centre of mass, and central inertia in kg, m, and kg·m². Omitting mass properties defines a fixed asset.
+
+Resource paths are relative to the catalog JSON. OBJ coordinates default to metres; use `"scale": 0.001` for millimetres. To pin the asset definition, set the optional instance field `asset.sha256` to the corresponding `object_assets` entry's `sha256` from inspection.
+
+```bash
+SCENE=examples/simulation/pick_place
+MUJOCO_GL=egl alohamini-mujoco inspect-scene \
+  --scene-config "$SCENE/tabletop_asset.json" --asset-catalog "$SCENE/assets/catalog.json" \
+  --task-config "$SCENE/task.json" --camera workspace \
+  --preview "$HOME/Alohamini_workspace/simulation/workspace.png"
+```
+
+The command prints JSON and returns exit status 1 on validation failure. Omit `--preview` to validate alone or add `--collisions` to render collision geometry. Use the same `--scene-config` and `--asset-catalog` with `view`, `edit`, or `collect`. Replay reads the model and resources from the episode directory. Catalog object instances use the MuJoCo backend.
+
 ## LIBERO scenes and replay
 
 After extracting the asset archive according to [Installation](install.md#libero-scenes-and-reference-data), set its path in the current terminal:

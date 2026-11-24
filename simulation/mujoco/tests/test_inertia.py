@@ -3,8 +3,10 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 import pytest
+from alohamini_mujoco.assets.inertia import mjcf_attributes
 from alohamini_mujoco.frames import transform
-from alohamini_mujoco.inertia import (
+
+from alohamini.simulation.assets.inertia import (
     MassProperties,
     combine,
     parse_solidworks_reports,
@@ -51,7 +53,7 @@ def test_report_units_sign_and_transformed_inertias_survive_native_compilation()
     ET.SubElement(root, "compiler", inertiafromgeom="false", balanceinertia="false")
     body = ET.SubElement(ET.SubElement(root, "worldbody"), "body", name=bound.frame)
     ET.SubElement(body, "freejoint")
-    ET.SubElement(body, "inertial", **bound.mjcf_attributes())
+    ET.SubElement(body, "inertial", **mjcf_attributes(bound))
     model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)

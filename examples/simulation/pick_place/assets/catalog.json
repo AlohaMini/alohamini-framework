@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "id": "blue_cube",
+      "version": 1,
+      "visual": {
+        "file": "cube.obj",
+        "sha256": "adf96021898e0ee645754317f8354c69ce70bfbe80f694b596a4721f09ce615e"
+      },
+      "collision": [
+        {
+          "type": "box",
+          "parameters": {
+            "size": [
+              0.04,
+              0.04,
+              0.04
+            ]
+          }
+        }
+      ],
+      "mass_properties": {
+        "mass_kg": 0.05,
+        "com_m": [
+          0,
+          0,
+          0
+        ],
+        "central_inertia_kg_m2": [
+          [
+            1.3333333333333335e-05,
+            0,
+            0
+          ],
+          [
+            0,
+            1.3333333333333335e-05,
+            0
+          ],
+          [
+            0,
+            0,
+            1.3333333333333335e-05
+          ]
+        ]
+      },
+      "color": [
+        0.1,
+        0.4,
+        0.8,
+        1
+      ]
+    }
+  ]
+}

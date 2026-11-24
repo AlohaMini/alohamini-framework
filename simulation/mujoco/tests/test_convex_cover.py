@@ -3,13 +3,13 @@ import pytest
 
 pytest.importorskip("manifold3d")
 
-from alohamini_mujoco.collision import quantized_convex
-from alohamini_mujoco.convex_cover import (
+from alohamini.simulation.assets.collision_geometry import quantized_convex
+from alohamini.simulation.assets.convex_cover import (
     bounded_convex_mesh,
     certify_rotating_clearance,
     select_convex_cover,
 )
-from alohamini_mujoco.solid_geometry import _solid, convex_boundary, union_boundary
+from alohamini.simulation.assets.solid_geometry import _solid, convex_boundary, union_boundary
 
 
 def box(lower, upper):

@@ -1,5 +1,5 @@
 import pytest
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
 
 
 @pytest.fixture(scope="session")

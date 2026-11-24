@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.control import FollowerSettings
-from alohamini_mujoco.libero import settle_scene
+from alohamini_mujoco.runtime.control import FollowerSettings
+from alohamini_mujoco.scenes.libero.adapter import settle_scene
 
 
 def falling_object(*, x, z):

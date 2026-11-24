@@ -3,9 +3,11 @@ from types import SimpleNamespace
 
 import mujoco
 import numpy as np
-from alohamini_mujoco.export import export_robot
-from alohamini_mujoco.meshes import Mesh
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
+from alohamini_mujoco.runtime.export import export_robot
 from PIL import Image
+
+from alohamini.simulation.assets.meshes import Mesh
 
 
 def test_textured_mesh_export_remains_loadable_after_relocation(tmp_path):
@@ -23,7 +25,7 @@ def test_textured_mesh_export_remains_loadable_after_relocation(tmp_path):
       </asset>
       <worldbody><geom type="mesh" mesh="part" material="paint"/></worldbody>
     </mujoco>"""
-    assets = {"part.msh": mesh.msh_bytes(), "color.png": texture.getvalue()}
+    assets = {"part.msh": msh_bytes(mesh), "color.png": texture.getvalue()}
     model = mujoco.MjModel.from_xml_string(xml, assets=assets)
     robot = SimpleNamespace(xml=xml, assets=assets, model=model, manifest={})
     exported = export_robot(robot, {}, tmp_path / "before")

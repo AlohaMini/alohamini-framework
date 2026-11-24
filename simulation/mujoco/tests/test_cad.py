@@ -3,8 +3,9 @@ import math
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256, inspect_step, tessellate_definition
-from alohamini_mujoco.meshes import ray_x_intersections, surface_distances
+
+from alohamini.simulation.assets.cad.step import file_sha256, inspect_step, tessellate_definition
+from alohamini.simulation.assets.meshes import ray_x_intersections, surface_distances
 
 pytest.importorskip("OCP")
 

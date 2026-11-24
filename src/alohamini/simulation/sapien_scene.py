@@ -2,8 +2,16 @@
 
 import numpy as np
 
+from .assets.inertia import primitive_inertia
+
 
 def add_objects(scene, configuration, *, render=True):
+    if any("asset" in obj for obj in configuration["objects"]):
+        raise ValueError("Catalog object instances currently require the MuJoCo backend")
+    if configuration.get("cameras"):
+        raise ValueError("Configured scene cameras are currently supported by MuJoCo")
+    if any("mujoco_contact_time_constant_s" in obj for obj in configuration["objects"]):
+        raise ValueError("mujoco_contact_time_constant_s requires the MuJoCo backend")
     import sapien
 
     actors = {}
@@ -33,17 +41,7 @@ def add_objects(scene, configuration, *, render=True):
         builder.initial_pose = sapien.Pose(obj.get("T_world_object", np.eye(4)))
         mass = obj.get("mass_kg", 0)
         if mass > 0:
-            if shape == "box":
-                x, y, z = size
-                inertia = mass / 12 * np.array([y * y + z * z, x * x + z * z, x * x + y * y])
-            elif shape == "sphere":
-                inertia = np.full(3, 0.4 * mass * size[0] ** 2)
-            else:
-                r, length = size
-                inertia = np.array(
-                    [mass * (3 * r * r + length * length) / 12] * 2 + [mass * r * r / 2]
-                )
-            builder.set_mass_and_inertia(mass, sapien.Pose(), inertia)
+            builder.set_mass_and_inertia(mass, sapien.Pose(), primitive_inertia(shape, size, mass))
             actor = builder.build(name=obj["name"])
         else:
             actor = builder.build_static(name=obj["name"])

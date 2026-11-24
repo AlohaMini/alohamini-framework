@@ -4,13 +4,14 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import validate_model
-from alohamini_mujoco.control import DynamicFollower
 from alohamini_mujoco.frames import transform
-from alohamini_mujoco.inertia import MassProperties, combine
-from alohamini_mujoco.inertial_binding import load_inertial_bundle
-from alohamini_mujoco.model import build_model
-from alohamini_mujoco.organization import description_hashes
+from alohamini_mujoco.runtime.audit import validate_model
+from alohamini_mujoco.runtime.control import DynamicFollower
+from alohamini_mujoco.runtime.model import build_model
+
+from alohamini.simulation.assets.inertia import MassProperties, combine
+from alohamini.simulation.assets.inertial_binding import load_inertial_bundle
+from alohamini.simulation.assets.provenance import description_hashes
 
 
 def specification(robot):

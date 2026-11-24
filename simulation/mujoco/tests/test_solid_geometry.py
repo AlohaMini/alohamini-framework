@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
-from alohamini_mujoco.meshes import Mesh
-from alohamini_mujoco.solid_geometry import (
+
+from alohamini.simulation.assets.meshes import Mesh
+from alohamini.simulation.assets.solid_geometry import (
     certify_solid_distance,
     clip_convex_halfspace,
     compare_solid_union,
@@ -111,7 +112,7 @@ def test_metric_kernel_rejects_invalid_radii(radius):
 
 
 def test_verified_merging_reduces_flat_partitions_without_filling_a_notch():
-    from alohamini_mujoco.collision import quantized_convex
+    from alohamini.simulation.assets.collision_geometry import quantized_convex
 
     halves = [box([0.01, 0.02, 0.02], [x, 0, 0]) for x in (-0.005, 0.005)]
     parts = [quantized_convex(p)[0] for p in halves]
@@ -127,7 +128,7 @@ def test_verified_merging_reduces_flat_partitions_without_filling_a_notch():
 
 
 def test_verified_merging_reports_an_exhausted_work_budget():
-    from alohamini_mujoco.collision import quantized_convex
+    from alohamini.simulation.assets.collision_geometry import quantized_convex
 
     parts = [quantized_convex(box([0.01, 0.02, 0.02], [x, 0, 0]))[0] for x in (-0.01, 0, 0.01)]
     merged, _, report = merge_verified_convex(
@@ -139,8 +140,8 @@ def test_verified_merging_reports_an_exhausted_work_budget():
 
 
 def test_merging_reverts_a_candidate_that_cannot_export_a_valid_final_union(monkeypatch):
-    from alohamini_mujoco import solid_geometry
-    from alohamini_mujoco.collision import quantized_convex
+    from alohamini.simulation.assets import solid_geometry
+    from alohamini.simulation.assets.collision_geometry import quantized_convex
 
     original = solid_geometry.certify_solid_distance
 

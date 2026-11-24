@@ -4,7 +4,8 @@ from xml.etree import ElementTree as ET
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.cameras import (
+from alohamini_mujoco.datasets.collection import CollectionSettings
+from alohamini_mujoco.scenes.cameras import (
     OPTICAL_TO_OPENGL,
     CameraCapture,
     Lens,
@@ -12,10 +13,9 @@ from alohamini_mujoco.cameras import (
     model_matrix,
     resize_matrix,
 )
-from alohamini_mujoco.collection import CollectionSettings
-from alohamini_mujoco.description import Description
 
 from alohamini.model import get_robot_model
+from alohamini.simulation.description import Description
 
 
 def definition(kind="plumb_bob", D=None):

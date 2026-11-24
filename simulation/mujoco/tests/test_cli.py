@@ -97,7 +97,7 @@ def test_egl_window_relaunches_before_model_loading(monkeypatch, tmp_path, argum
 
 
 def test_active_egl_window_does_not_relaunch_and_replays_normally(monkeypatch):
-    from alohamini_mujoco import collection
+    from alohamini_mujoco.datasets import collection
 
     monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setenv("DISPLAY", ":test")
@@ -182,7 +182,7 @@ def test_viewer_launch_failure_restores_caller_directory(monkeypatch):
 
 
 def test_headless_replay_does_not_route_native_exports(monkeypatch):
-    from alohamini_mujoco import collection
+    from alohamini_mujoco.datasets import collection
 
     original = Path.cwd()
     calls = []

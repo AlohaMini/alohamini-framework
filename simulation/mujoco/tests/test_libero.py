@@ -6,17 +6,17 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import validate_model
-from alohamini_mujoco.collection import (
+from alohamini_mujoco.datasets.collection import (
     EpisodeReplay,
     collect_episode,
     physics_state,
     replay_episode,
     restore_state,
 )
-from alohamini_mujoco.control import FollowerSettings, JointTrajectory, solve_ik
-from alohamini_mujoco.libero import LIBERO_COMMIT, LiberoScene, sha256
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.audit import validate_model
+from alohamini_mujoco.runtime.control import FollowerSettings, JointTrajectory, solve_ik
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
+from alohamini_mujoco.scenes.libero.adapter import LIBERO_COMMIT, LiberoScene, sha256
 
 
 @pytest.mark.parametrize(
@@ -30,7 +30,7 @@ from alohamini_mujoco.model import ModelProfile, build_model
 def test_import_pins_exporter_independently_of_runtime(tmp_path, monkeypatch, packages, accepted):
     import sys
 
-    from alohamini_mujoco import libero
+    from alohamini_mujoco.scenes.libero import adapter as libero
 
     monkeypatch.setattr(libero, "_source_revision", lambda source: None)
     monkeypatch.setattr(mujoco, "__version__", "3.12.0")
@@ -217,9 +217,9 @@ def test_object_layout_rejects_invalid_or_vertical_translation(scene_robot, offs
 def test_scene_view_starts_and_resets_after_physical_settling(scene_robot, with_trajectory):
     import copy
 
-    from alohamini_mujoco.control import DynamicFollower
-    from alohamini_mujoco.libero import RESET_SETTLE_S
-    from alohamini_mujoco.viewer import DynamicPlayback
+    from alohamini_mujoco.runtime.control import DynamicFollower
+    from alohamini_mujoco.runtime.viewer import DynamicPlayback
+    from alohamini_mujoco.scenes.libero.adapter import RESET_SETTLE_S
 
     scene = copy.copy(scene_robot.scene)
     scene.task = copy.deepcopy(scene.task)
@@ -256,7 +256,7 @@ def test_scene_view_starts_and_resets_after_physical_settling(scene_robot, with_
 def test_view_and_collection_reject_robot_contact_during_reset(scene_robot, tmp_path):
     import copy
 
-    from alohamini_mujoco.viewer import DynamicPlayback
+    from alohamini_mujoco.runtime.viewer import DynamicPlayback
 
     scene = copy.copy(scene_robot.scene)
     scene.task = copy.deepcopy(scene.task)
@@ -282,10 +282,10 @@ def reference_scene(scene_robot, tmp_path):
     import hashlib
 
     import h5py
-    from alohamini_mujoco.collection import STATE_SPEC
-    from alohamini_mujoco.control import DynamicFollower
-    from alohamini_mujoco.export import model_xml
-    from alohamini_mujoco.retarget import MotionRecipe
+    from alohamini_mujoco.datasets.collection import STATE_SPEC
+    from alohamini_mujoco.runtime.control import DynamicFollower
+    from alohamini_mujoco.runtime.export import model_xml
+    from alohamini_mujoco.scenes.libero.retarget import MotionRecipe
 
     scene = copy.copy(scene_robot.scene)
     scene.task = copy.deepcopy(scene.task)
@@ -350,7 +350,7 @@ def reference_scene(scene_robot, tmp_path):
 
 
 def test_reference_contact_preview_accounts_for_servo_tracking(reference_scene):
-    from alohamini_mujoco.retarget import ReferenceMotion
+    from alohamini_mujoco.scenes.libero.retarget import ReferenceMotion
 
     robot, directory, recipe = reference_scene
     reference = ReferenceMotion(robot, directory, recipe)
@@ -369,7 +369,7 @@ def test_reference_contact_preview_accounts_for_servo_tracking(reference_scene):
 
 
 def test_reference_can_hold_lift_through_placement_and_retreat(reference_scene, monkeypatch):
-    from alohamini_mujoco import retarget
+    from alohamini_mujoco.scenes.libero import retarget
 
     robot, directory, recipe = reference_scene
     reference = retarget.ReferenceMotion(robot, directory, replace(recipe, allow_lift_motion=False))
@@ -397,7 +397,7 @@ def test_reference_can_hold_lift_through_placement_and_retreat(reference_scene, 
 
 
 def test_fixed_lift_failure_does_not_fall_back_to_moving_lift(reference_scene, monkeypatch):
-    from alohamini_mujoco import retarget
+    from alohamini_mujoco.scenes.libero import retarget
 
     robot, directory, recipe = reference_scene
     reference = retarget.ReferenceMotion(robot, directory, replace(recipe, allow_lift_motion=False))
@@ -414,7 +414,7 @@ def test_fixed_lift_failure_does_not_fall_back_to_moving_lift(reference_scene, m
 
 
 def test_motion_recipe_reads_optional_lift_constraint(tmp_path):
-    from alohamini_mujoco.retarget import MotionRecipe
+    from alohamini_mujoco.scenes.libero.retarget import MotionRecipe
 
     specification = {"schema_version": 1, "side": "left", "pregrasp_end_frame": 20,
                      "approach_end_frame": 25, "grasp_start_frame": 30, "source_end_frame": 40,
@@ -434,7 +434,7 @@ def test_motion_recipe_reads_optional_lift_constraint(tmp_path):
 def test_reference_targets_follow_the_object_frame_in_world_coordinates(reference_scene):
     import copy
 
-    from alohamini_mujoco.retarget import ReferenceMotion
+    from alohamini_mujoco.scenes.libero.retarget import ReferenceMotion
 
     robot, directory, recipe = reference_scene
     reference = ReferenceMotion(robot, directory, recipe)
@@ -458,7 +458,7 @@ def test_reference_targets_follow_the_object_frame_in_world_coordinates(referenc
 
 
 def test_reference_rejects_changed_physics_or_corrupted_episode(reference_scene):
-    from alohamini_mujoco.retarget import ReferenceMotion
+    from alohamini_mujoco.scenes.libero.retarget import ReferenceMotion
 
     robot, directory, recipe = reference_scene
     changed = ET.fromstring(robot.xml)
@@ -476,8 +476,8 @@ def test_reference_rejects_changed_physics_or_corrupted_episode(reference_scene)
 def test_reference_batch_records_failures_and_resumes_completed_cases(
     reference_scene, tmp_path, monkeypatch
 ):
-    from alohamini_mujoco import collection
-    from alohamini_mujoco.retarget import ReferenceMotion
+    from alohamini_mujoco.datasets import collection
+    from alohamini_mujoco.scenes.libero.retarget import ReferenceMotion
 
     robot, directory, recipe = reference_scene
     calls = []
@@ -526,8 +526,8 @@ def test_reference_batch_records_failures_and_resumes_completed_cases(
 def test_policy_playback_records_projected_targets_and_exact_failure_replay(
     reference_scene, tmp_path
 ):
-    from alohamini_mujoco.control import DynamicFollower
-    from alohamini_mujoco.evaluation import PolicyPlayback, _save_trial
+    from alohamini_mujoco.datasets.evaluation import PolicyPlayback, _save_trial
+    from alohamini_mujoco.runtime.control import DynamicFollower
 
     robot, _, _ = reference_scene
     follower = DynamicFollower(robot)
@@ -552,7 +552,7 @@ def test_policy_playback_records_projected_targets_and_exact_failure_replay(
 
 
 def test_policy_playback_does_not_apply_nonfinite_actions(reference_scene):
-    from alohamini_mujoco.evaluation import PolicyPlayback
+    from alohamini_mujoco.datasets.evaluation import PolicyPlayback
 
     robot, _, _ = reference_scene
     playback = PolicyPlayback(
@@ -579,10 +579,10 @@ def test_evaluation_uses_si_observations_and_reports_task_failure(
     from types import SimpleNamespace
 
     import torch
-    from alohamini_mujoco.collection import CollectionSettings
-    from alohamini_mujoco.control import DynamicFollower
-    from alohamini_mujoco.evaluation import evaluate_policy
-    from alohamini_mujoco.export import model_xml
+    from alohamini_mujoco.datasets.collection import CollectionSettings
+    from alohamini_mujoco.datasets.evaluation import evaluate_policy
+    from alohamini_mujoco.runtime.control import DynamicFollower
+    from alohamini_mujoco.runtime.export import model_xml
 
     from alohamini.learning import policy as native_policy
     from alohamini.learning.state import RecordedStateSelection
@@ -637,7 +637,7 @@ def test_evaluation_uses_si_observations_and_reports_task_failure(
     (policy.checkpoint_path / "model.safetensors").write_bytes(b"unit-weights")
     monkeypatch.setattr(native_policy, "NativePolicy", lambda *args, **kwargs: policy)
     if interactive:
-        from alohamini_mujoco import evaluation
+        from alohamini_mujoco.datasets import evaluation
 
         # Closing between 20 Hz boundaries still produces a replayable trace.
         monkeypatch.setattr(
@@ -761,8 +761,8 @@ def test_static_geometry_intersections_are_not_hidden_by_mujoco_weld_filter(scen
 
 
 def test_static_scene_rejects_invalid_distance_queries(scene_robot, monkeypatch):
-    from alohamini_mujoco import libero
-    from alohamini_mujoco.native_distance import InvalidNativeDistance
+    from alohamini_mujoco.runtime.native_distance import InvalidNativeDistance
+    from alohamini_mujoco.scenes.libero import adapter as libero
 
     query = libero.checked_geom_distance
     base = scene_robot.model.geom("base_cad_link__collision_0").id
@@ -783,7 +783,7 @@ def test_collection_rejects_failure_preserves_alignment_and_replays(
 ):
     pytest.importorskip("h5py")
     import h5py
-    from alohamini_mujoco import export as model_export
+    from alohamini_mujoco.runtime import export as model_export
 
     # Export the same compiled XML/assets without another expensive robot reload;
     # actual CLI integration separately exercises the production exporter.
@@ -842,7 +842,7 @@ def test_collection_rejects_failure_preserves_alignment_and_replays(
         assert group["obs/agentview_rgb"].dtype == np.uint8
         assert group["obs/agentview_rgb"].shape[1:] == (128, 128, 3)
         # Verify actual pixels: disabling the markers must not just be metadata.
-        from alohamini_mujoco.viewer import set_geometry
+        from alohamini_mujoco.runtime.viewer import set_geometry
 
         initial = scene_robot.data()
         restore_state(scene_robot.model, initial, group["states"][0])

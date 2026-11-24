@@ -4,12 +4,13 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
-from alohamini_mujoco.collision import visual_sources
-from alohamini_mujoco.description import Description
-from alohamini_mujoco.interop import export_collision_urdf, obj_bytes
-from alohamini_mujoco.meshes import Mesh
+from alohamini_mujoco.assets.interop import export_collision_urdf
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
 
 from alohamini.model import get_robot_model
+from alohamini.simulation.assets.collision_geometry import visual_sources
+from alohamini.simulation.assets.meshes import Mesh, obj_bytes
+from alohamini.simulation.description import Description
 
 
 @pytest.mark.parametrize("mesh_unit", ["m", "mm"])
@@ -30,7 +31,7 @@ def test_obj_and_urdf_export_preserve_each_convex_piece_and_robot_frames(tmp_pat
     np.testing.assert_array_equal(vertices[faces], mesh.triangles)
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    (bundle / "tetra.msh").write_bytes(mesh.msh_bytes())
+    (bundle / "tetra.msh").write_bytes(msh_bytes(mesh))
     contract = {
         "schema_version": 1,
         "units": "m",
@@ -42,7 +43,7 @@ def test_obj_and_urdf_export_preserve_each_convex_piece_and_robot_frames(tmp_pat
                 "pieces": [
                     {
                         "path": "tetra.msh",
-                        "sha256": hashlib.sha256(mesh.msh_bytes()).hexdigest(),
+                        "sha256": hashlib.sha256(msh_bytes(mesh)).hexdigest(),
                         "triangles": 4,
                     }
                 ],

@@ -13,25 +13,26 @@ from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
-from alohamini_mujoco.convex_cover import _prism, certify_rotating_clearance, select_convex_cover
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
 from alohamini_mujoco.frames import rotation_axis
-from alohamini_mujoco.functional_geometry import (
-    axis_aligned_box,
-    certify_material_coverage,
-    merge_support_envelopes,
-    prepare_shared_convex,
-)
-from alohamini_mujoco.interop import obj_bytes
-from alohamini_mujoco.meshes import Mesh
-from alohamini_mujoco.shapes import Primitive
-from alohamini_mujoco.solid_geometry import (
-    _solid,
-    _spatial_union,
-)
 
 from alohamini.model import get_robot_model
 from alohamini.model.loader import load_robot_model
+from alohamini.simulation.assets.convex_cover import (
+    _prism,
+    certify_rotating_clearance,
+    select_convex_cover,
+)
+from alohamini.simulation.assets.functional_geometry import (
+    axis_aligned_box,
+    certify_material_coverage,
+    merge_support_envelopes,
+)
+from alohamini.simulation.assets.meshes import Mesh, obj_bytes
+from alohamini.simulation.assets.shapes import Primitive
+from alohamini.simulation.assets.solid_geometry import _solid, _spatial_union
 from alohamini.simulation.description import Description
+from alohamini.simulation.sapien_geometry import prepare_shared_convex
 
 
 def digest(path):
@@ -214,7 +215,7 @@ def rebuild(root):
                     "vertices": len(piece.vertices),
                     "triangles": len(piece.faces),
                     "scale": [0.001] * 3,
-                    "msh_sha256": hashlib.sha256(piece.msh_bytes()).hexdigest(),
+                    "msh_sha256": hashlib.sha256(msh_bytes(piece)).hexdigest(),
                 }
             )
         for name in record["links"]:

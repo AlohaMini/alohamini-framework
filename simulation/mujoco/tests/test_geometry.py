@@ -5,14 +5,15 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.geometry import (
+
+from alohamini.simulation.assets.cad.step import file_sha256
+from alohamini.simulation.assets.geometry import (
     SurfaceIndex,
     directed_surface_bounds,
     measure_surface_distance,
 )
-from alohamini_mujoco.meshes import surface_distances
-from alohamini_mujoco.registration import register_part
+from alohamini.simulation.assets.meshes import surface_distances
+from alohamini.simulation.assets.registration import register_part
 
 
 def test_surface_index_matches_all_triangles_at_mixed_scales_and_degenerate_faces():

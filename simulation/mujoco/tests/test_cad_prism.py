@@ -3,8 +3,10 @@ import json
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.cad_prism import export_hollow_prism, hollow_prism
+from alohamini_mujoco.assets.cad.prism import export_hollow_prism
+
+from alohamini.simulation.assets.cad.prism import hollow_prism
+from alohamini.simulation.assets.cad.step import file_sha256
 
 pytest.importorskip("OCP")
 

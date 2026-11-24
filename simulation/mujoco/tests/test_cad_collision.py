@@ -6,10 +6,15 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.cad_collision import _parameters, build_cad_collision, load_cad_components
-from alohamini_mujoco.collision import load_bundle, merge_bundles
-from alohamini_mujoco.registration import register_part
+from alohamini_mujoco.assets.cad.collision import (
+    _parameters,
+    build_cad_collision,
+    load_cad_components,
+)
+from alohamini_mujoco.assets.collision import load_bundle, merge_bundles
+
+from alohamini.simulation.assets.cad.step import file_sha256
+from alohamini.simulation.assets.registration import register_part
 
 pytest.importorskip("manifold3d")
 pytest.importorskip("coacd")

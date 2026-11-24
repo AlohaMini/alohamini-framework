@@ -6,6 +6,7 @@ import numpy as np
 
 from alohamini.model import get_robot_model
 
+from .assets.inertia import MassProperties, combine, principal_inertia
 from .base import BaseKinematics, BaseMotion
 from .control import PositionControl
 from .description import Description
@@ -25,19 +26,13 @@ def rigid_groups(description):
     groups = {}
     for name, (mass, com, tensor) in description.inertials.items():
         owner, pose = frames[name]
-        com = pose @ com
         groups.setdefault(owner, []).append(
-            (mass, com[:3, 3], com[:3, :3] @ tensor @ com[:3, :3].T)
+            MassProperties(name, mass, np.zeros(3), tensor).in_frame(pose @ com, owner)
         )
     inertias = {}
     for owner, parts in groups.items():
-        mass = sum(p[0] for p in parts)
-        com = sum(m * c for m, c, _ in parts) / mass
-        tensor = sum(
-            i + m * (np.dot(c - com, c - com) * np.eye(3) - np.outer(c - com, c - com))
-            for m, c, i in parts
-        )
-        inertias[owner] = mass, com, tensor
+        properties = combine(parts)
+        inertias[owner] = properties.mass_kg, properties.com_m, properties.central_inertia_kg_m2
     if set(owners.values()) != set(inertias):
         raise ValueError("Every independent rigid body needs positive declared mass")
     return frames, inertias
@@ -79,9 +74,7 @@ def fuse_fixed_links(builder, description):
                 sapien.Pose(frames[parent_name][1]) * body.joint_record.pose_in_parent
             )
         mass, com, tensor = inertias[body.name]
-        moments, axes = np.linalg.eigh(tensor)
-        if np.linalg.det(axes) < 0:
-            axes[:, -1] *= -1
+        moments, axes = principal_inertia(tensor)
         pose = np.eye(4)
         pose[:3, :3], pose[:3, 3] = axes, com
         body.set_mass_and_inertia(mass, sapien.Pose(pose), moments)

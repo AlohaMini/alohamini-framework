@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "kind": "pick_place",
+  "source": "cube",
+  "target": "tray",
+  "language": "Pick up the blue cube and place it on the orange pad."
+}

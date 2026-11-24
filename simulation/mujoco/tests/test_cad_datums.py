@@ -5,8 +5,13 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.cad_datums import fit_translation, place_from_datums, planar_faces
+
+from alohamini.simulation.assets.cad.datums import (
+    fit_translation,
+    place_from_datums,
+    planar_faces,
+)
+from alohamini.simulation.assets.cad.step import file_sha256
 
 pytest.importorskip("OCP")
 

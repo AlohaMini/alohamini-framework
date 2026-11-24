@@ -1,7 +1,7 @@
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.native_distance import InvalidNativeDistance, checked_geom_distance
+from alohamini_mujoco.runtime.native_distance import InvalidNativeDistance, checked_geom_distance
 
 
 def fixture_model(shape):

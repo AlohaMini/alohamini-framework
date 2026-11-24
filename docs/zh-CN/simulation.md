@@ -104,6 +104,52 @@ alohamini-robotwin view --source /path/to/RoboTwin \
 
 添加 `--headless --steps 1000` 可关闭渲染并推进 1000 个物理步；默认步长为 1 ms。两者当前支持单个 CPU 物理环境。
 
+## 自定义桌面场景
+
+示例使用独立的 JSON 文件定义场景、任务和配套关节轨迹。
+
+```bash
+SCENE=examples/simulation/pick_place
+EPISODE="$HOME/Alohamini_workspace/simulation/collections/tabletop_01"
+alohamini-mujoco view --scene-config "$SCENE/tabletop.json" \
+  --task-config "$SCENE/task.json" --trajectory "$SCENE/motion.json" --paused
+MUJOCO_GL=egl alohamini-mujoco collect "$SCENE/motion.json" \
+  --scene-config "$SCENE/tabletop.json" --task-config "$SCENE/task.json" --output "$EPISODE"
+alohamini-mujoco replay "$EPISODE" --view --paused
+```
+
+输出目录须为新目录，采集保存 RGB 帧、关节状态与命令，以及供回放使用的模型。要试用加高桌面和另一组物体位置，使用 `tabletop_raised.json` 和 `motion_raised.json`，并换一个输出目录。
+
+用 `T_world_object` 设置物体位姿，用 `T_world_base` 设置底盘位姿。位置和尺寸用 m，质量用 kg。`pick_place` 任务指定可移动的 `source` 和水平放置的固定方盒 `target`，底盘固定，控制频率为 20 Hz。更换物体或机器人位置后，使用与新布局匹配的轨迹。示例使用虚拟工作区相机和腕部相机。自定义场景相机与 `mujoco_contact_time_constant_s` 由 MuJoCo 后端支持。
+
+### 在窗口摆放物体与取景
+
+```bash
+alohamini-mujoco edit --scene-config examples/simulation/pick_place/tabletop.json \
+  --task-config examples/simulation/pick_place/task.json \
+  --output "$HOME/Alohamini_workspace/simulation/tabletop_custom.json"
+```
+
+- 双击场景物体。Ctrl + 右键拖动平移，加 Shift 沿水平面移动。Ctrl + 左键拖动旋转。F12 在自由移动和世界 X、Y、Z 单轴移动间切换。
+- 在 `Rendering → Camera → Free` 调整视角，按 F11 记录为 `workspace`。用 `--camera-name` 指定另一个相机名。
+- 按 F10 校验并保存到新 JSON。添加 `--task-config` 同时检查任务初态。随后将新 JSON 传给 `view` 或 `collect`；采集使用与该布局匹配的轨迹。
+
+### 素材引用与无窗口预览
+
+场景物体可用 `"asset": {"id": "blue_cube", "version": 1}` 引用[目录中的素材](../../examples/simulation/pick_place/assets/catalog.json)，实例位姿仍用 `T_world_object`。目录文件记录三角面 OBJ、可选 UV 对应的 PNG 贴图、显式碰撞体和文件 SHA-256。碰撞体支持盒子、球体、圆柱和凸 OBJ。可移动资产声明质量、质心和中心惯性张量，单位为 kg、m、kg·m²；省略物性表示固定物体。
+
+资源路径相对于目录 JSON；OBJ 默认用 m，毫米网格用 `"scale": 0.001`。实例的 `asset.sha256` 可选，取校验结果中对应 `object_assets` 条目的 `sha256`，用于固定定义内容。
+
+```bash
+SCENE=examples/simulation/pick_place
+MUJOCO_GL=egl alohamini-mujoco inspect-scene \
+  --scene-config "$SCENE/tabletop_asset.json" --asset-catalog "$SCENE/assets/catalog.json" \
+  --task-config "$SCENE/task.json" --camera workspace \
+  --preview "$HOME/Alohamini_workspace/simulation/workspace.png"
+```
+
+命令输出 JSON，并在校验失败时返回退出码 1。省略 `--preview` 只校验；用 `--collisions` 预览碰撞几何。`view`、`edit`、`collect` 使用相同的 `--scene-config` 和 `--asset-catalog`。回放从回合目录读取模型和资源。当前素材实例由 MuJoCo 后端加载。
+
 ## LIBERO 场景与回放
 
 按[安装文档](install.md#libero-场景与参考数据)解压配套资产包后，在当前终端设置路径：

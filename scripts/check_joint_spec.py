@@ -64,7 +64,7 @@ def check(robot_model, *, mujoco=False):
     report["standard_coordinate_sha256"] = space.signature
     if mujoco:
         import mujoco as mj
-        from alohamini_mujoco.model import build_model
+        from alohamini_mujoco.runtime.model import build_model
 
         robot = build_model(robot_model=geometry)
         for name, row in spec.joints.items():

@@ -3,8 +3,8 @@ from contextlib import contextmanager, nullcontext
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco import viewer as inspection
-from alohamini_mujoco.control import DynamicFollower, FollowerSettings, JointTrajectory
+from alohamini_mujoco.runtime import viewer as inspection
+from alohamini_mujoco.runtime.control import DynamicFollower, FollowerSettings, JointTrajectory
 
 
 @pytest.mark.parametrize("override_gains", [False, True])

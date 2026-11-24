@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.cad_library import tessellate_assembly
 from alohamini_mujoco.frames import transform
+
+from alohamini.simulation.assets.cad.library import tessellate_assembly
+from alohamini.simulation.assets.cad.step import file_sha256
 
 pytest.importorskip("OCP")
 
@@ -109,7 +110,7 @@ def test_identical_brep_cache_reuses_bytes_across_derived_assembly_manifests(
     def unexpected(*args, **kwargs):
         raise AssertionError("Exact BRep cache should avoid another native process")
 
-    monkeypatch.setattr("alohamini_mujoco.cad_library.subprocess.run", unexpected)
+    monkeypatch.setattr("alohamini.simulation.assets.cad.library.subprocess.run", unexpected)
     target = tmp_path / "reused"
     report = tessellate_assembly(derived, target, reuse_library=output)
     first = report["parts"]["0:1:1:1"]
@@ -149,7 +150,7 @@ def test_native_worker_failure_is_recorded_without_omitting_remaining_parts(
 ):
     source, _, _ = library
     monkeypatch.setattr(
-        "alohamini_mujoco.cad_library.subprocess.run",
+        "alohamini.simulation.assets.cad.library.subprocess.run",
         lambda *a, **k: SimpleNamespace(returncode=-9, stderr="worker killed", stdout=""),
     )
     report = tessellate_assembly(source, tmp_path / "failure")

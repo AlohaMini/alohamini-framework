@@ -5,11 +5,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from alohamini_mujoco.cad_collision import _source, build_cad_collision
-from alohamini_mujoco.mesh_source import extract_mesh_source
-from alohamini_mujoco.meshes import binary_stl
-from alohamini_mujoco.registration import register_part
-from alohamini_mujoco.solid_geometry import convex_boundary
+from alohamini_mujoco.assets.cad.collision import _source, build_cad_collision
+
+from alohamini.simulation.assets.mesh_source import extract_mesh_source
+from alohamini.simulation.assets.meshes import binary_stl
+from alohamini.simulation.assets.registration import register_part
+from alohamini.simulation.assets.solid_geometry import convex_boundary
 
 pytest.importorskip("manifold3d")
 

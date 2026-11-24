@@ -5,21 +5,21 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import convexification_report, gripper_sections, validate_model
-from alohamini_mujoco.collision import (
+from alohamini_mujoco.assets.collision import generate_bundle, load_bundle, merge_bundles
+from alohamini_mujoco.assets.mesh_codec import binary_msh, msh_bytes
+from alohamini_mujoco.runtime.audit import convexification_report, gripper_sections, validate_model
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
+
+from alohamini.simulation.assets.collision_geometry import (
     cad_components,
     components,
-    generate_bundle,
-    load_bundle,
-    merge_bundles,
     quantized_convex,
     topology,
     validate_convex,
     visual_sources,
     weld_precision_seams,
 )
-from alohamini_mujoco.meshes import Mesh, binary_msh
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini.simulation.assets.meshes import Mesh
 
 
 def tetrahedron():
@@ -32,7 +32,7 @@ def tetrahedron():
 def fixture_bundle(description, directory):
     directory.mkdir()
     mesh = tetrahedron()
-    data = mesh.msh_bytes()
+    data = msh_bytes(mesh)
     (directory / "piece.msh").write_bytes(data)
     record = {
         "frame": "URDF link-local",
@@ -158,13 +158,13 @@ def test_touching_closed_solids_are_separated_without_changing_source_triangles(
 
 def test_msh_rejects_corruption_and_preserves_indexed_geometry():
     mesh = tetrahedron()
-    loaded = binary_msh(mesh.msh_bytes())
+    loaded = binary_msh(msh_bytes(mesh))
     np.testing.assert_array_equal(loaded.triangles, mesh.triangles)
     with pytest.raises(ValueError, match="MSH sizes"):
-        binary_msh(mesh.msh_bytes()[:-1])
+        binary_msh(msh_bytes(mesh)[:-1])
     invalid = replace(mesh, faces=mesh.faces + 4)
     with pytest.raises(ValueError, match="indices"):
-        binary_msh(invalid.msh_bytes())
+        binary_msh(msh_bytes(invalid))
 
 
 def test_float32_transport_retriangulates_thin_convex_pieces_without_dropping_them():
@@ -203,7 +203,7 @@ def test_float32_transport_retriangulates_thin_convex_pieces_without_dropping_th
         validate_convex(Mesh(vertices.astype(np.float32), faces))
     mesh, transport = quantized_convex(Mesh(vertices, faces))
     assert transport["maximum_vertex_quantization_m"] < 2e-9
-    validate_convex(binary_msh(mesh.msh_bytes()))
+    validate_convex(binary_msh(msh_bytes(mesh)))
     # All support extrema of the transported points remain identical.
     directions = np.random.default_rng(0).normal(size=(128, 3))
     np.testing.assert_allclose(

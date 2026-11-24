@@ -4,8 +4,8 @@ import hashlib
 import json
 
 import pytest
-from alohamini_mujoco.embedded import embedded_source
-from alohamini_mujoco.model import PARKED_JOINTS, ModelProfile, build_model
+from alohamini_mujoco.assets.embedded import embedded_source
+from alohamini_mujoco.runtime.model import PARKED_JOINTS, ModelProfile, build_model
 
 from alohamini.model import get_robot_model
 

@@ -5,10 +5,10 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.compilation import load_xml
-from alohamini_mujoco.model import ModelProfile, build_model
-from alohamini_mujoco.scene import ResearchScene
-from alohamini_mujoco.viewer import DynamicPlayback, JointControls
+from alohamini_mujoco.runtime.compilation import load_xml
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.viewer import DynamicPlayback, JointControls
+from alohamini_mujoco.scenes.research import ResearchScene
 
 from alohamini.model import get_robot_model
 from alohamini.schema import BodyVelocity

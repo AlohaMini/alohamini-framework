@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from alohamini_mujoco.model import ModelProfile, build_model
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
 
 from alohamini.simulation.frames import transform
 from alohamini.simulation.gravity import GravityModel

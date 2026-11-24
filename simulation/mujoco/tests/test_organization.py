@@ -5,20 +5,17 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import validate_model
-from alohamini_mujoco.collision import (
-    load_bundle,
-    merge_bundles,
-    ordered_convex_parts,
-    visual_sources,
-)
-from alohamini_mujoco.description import Description
-from alohamini_mujoco.interop import export_collision_urdf
-from alohamini_mujoco.meshes import Mesh
-from alohamini_mujoco.model import ModelProfile, build_model
-from alohamini_mujoco.organization import organize_collisions
+from alohamini_mujoco.assets.collision import load_bundle, merge_bundles
+from alohamini_mujoco.assets.interop import export_collision_urdf
+from alohamini_mujoco.assets.mesh_codec import msh_bytes
+from alohamini_mujoco.assets.organization import organize_collisions
+from alohamini_mujoco.runtime.audit import validate_model
+from alohamini_mujoco.runtime.model import ModelProfile, build_model
 
 from alohamini.model import get_robot_model
+from alohamini.simulation.assets.collision_geometry import ordered_convex_parts, visual_sources
+from alohamini.simulation.assets.meshes import Mesh
+from alohamini.simulation.description import Description
 
 
 def tetrahedron():
@@ -124,7 +121,7 @@ def test_composition_keeps_whole_robot_source_checks(organized, tmp_path):
     description, source, _ = organized
     extra = tmp_path / "extra"
     extra.mkdir()
-    data = tetrahedron().msh_bytes()
+    data = msh_bytes(tetrahedron())
     (extra / "piece.msh").write_bytes(data)
     (extra / "collision.json").write_text(
         json.dumps(

@@ -1,4 +1,4 @@
-"""Interactive simulation, LIBERO scene import, collection and replay."""
+"""Interactive simulation, scene collection, replay and LIBERO import."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ import mujoco
 
 from alohamini.paths import WorkspacePaths
 
-from .control import FollowerSettings, JointTrajectory
-from .model import ModelProfile, build_model
+from .runtime.control import FollowerSettings, JointTrajectory
+from .runtime.model import ModelProfile, build_model
 
 _LAUNCH_DIRECTORY = "_ALOHAMINI_MUJOCO_LAUNCH_DIRECTORY"
 
@@ -141,14 +141,28 @@ def _egl_window(device: int, argv: list[str]):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="AlohaMini MuJoCo simulation and LIBERO collection"
-    )
+    parser = argparse.ArgumentParser(description="AlohaMini MuJoCo simulation and collection")
     commands = parser.add_subparsers(dest="operation", required=True)
     view = commands.add_parser("view", help="open an interactive simulation")
     view.add_argument("--trajectory", type=_path_argument, help="play a named joint trajectory")
     view.add_argument("--collisions", action="store_true", help="show collision geometry")
     view.add_argument("--paused", action="store_true", help="start paused")
+    edit = commands.add_parser("edit", help="place objects and capture a research scene camera")
+    edit.add_argument("--scene-config", required=True, type=_path_argument)
+    edit.add_argument("--output", required=True, type=_path_argument, help="new scene JSON file")
+    edit.add_argument("--camera-name", default="workspace", help="world camera captured by F11")
+    edit.add_argument("--collision-bundle", type=_path_argument)
+    edit.add_argument("--inertial-bundle", type=_path_argument)
+    inspect = commands.add_parser("inspect-scene", help="validate a scene without a window")
+    inspect.add_argument("--scene-config", required=True, type=_path_argument)
+    inspect.add_argument("--preview", type=_path_argument, help="optional PNG image")
+    inspect.add_argument("--camera", help="named preview camera")
+    inspect.add_argument("--image-size", type=int, nargs=2, default=(480, 640), metavar=("H", "W"))
+    inspect.add_argument("--collisions", action="store_true", help="render collision geometry")
+    inspect.add_argument("--collision-bundle", type=_path_argument)
+    inspect.add_argument("--inertial-bundle", type=_path_argument)
+    inspect.add_argument("--actuator-profile", type=_path_argument)
+    inspect.set_defaults(initial_positions={})
     collect = commands.add_parser("collect", help="collect and replay-validate a task episode")
     collect.add_argument("trajectory", type=_path_argument, nargs="?")
     collect.add_argument(
@@ -158,7 +172,10 @@ def main(argv=None):
     collect.add_argument(
         "--resume", action="store_true", help="resume an unchanged reference batch"
     )
-    collect.add_argument("--cameras", nargs="+", default=["agentview", "left_wrist", "right_wrist"])
+    collect.add_argument("--cameras", nargs="+", help="named observation cameras")
+    for command in (view, collect, edit, inspect):
+        command.add_argument("--task-config", type=_path_argument, help="task for a research scene")
+        command.add_argument("--asset-catalog", type=_path_argument, help="versioned object assets")
     collect.add_argument(
         "--image-size", type=int, nargs="+", default=[128], help="square size or HEIGHT WIDTH"
     )
@@ -183,7 +200,7 @@ def main(argv=None):
     )
     importer.add_argument("--tasks", type=int, nargs="+", default=list(range(10)))
     importer.add_argument("--output", type=_path_argument, required=True)
-    for command in (view, replay, evaluate):
+    for command in (view, edit, replay, evaluate):
         command.add_argument(
             "--window-egl-device",
             type=int,
@@ -208,6 +225,12 @@ def main(argv=None):
         command.add_argument("--actuator-profile", type=_path_argument)
     view.add_argument("--feedforward", choices=("auto", "none", "gravity", "bias"))
     args = parser.parse_args(argv)
+    task_config = getattr(args, "task_config", None)
+    asset_catalog = getattr(args, "asset_catalog", None)
+    if task_config and (not args.scene_config or getattr(args, "libero_bundle", None)):
+        parser.error("--task-config requires a research --scene-config without --libero-bundle")
+    if asset_catalog and (not args.scene_config or getattr(args, "libero_bundle", None)):
+        parser.error("--asset-catalog requires a research --scene-config without --libero-bundle")
     if args.operation == "evaluate" and not (args.libero_bundle and args.scene_config):
         parser.error("evaluate requires --libero-bundle and --scene-config")
     if args.operation == "collect":
@@ -219,16 +242,30 @@ def main(argv=None):
             parser.error("--reset-indices requires a reference motion")
         if args.resume and args.reset_indices is None:
             parser.error("--resume requires --reset-indices")
+        if args.reference and not args.libero_bundle:
+            parser.error("reference motion requires a LIBERO bundle")
     try:
         arguments = list(sys.argv[1:] if argv is None else argv)
+        opens_window = args.operation in ("view", "edit") or getattr(args, "view", False)
         if getattr(args, "window_egl_device", None) is not None:
-            if args.operation != "view" and not args.view:
+            if not opens_window:
                 raise ValueError("--window-egl-device requires --view")
             _egl_window(args.window_egl_device, arguments)
-        if args.operation == "view" or getattr(args, "view", False):
+        if opens_window:
             _route_viewer_files(arguments)
+        if args.operation == "edit":
+            from .scenes.editor import SceneEditor, run_editor
+
+            editor = SceneEditor(
+                args.scene_config, args.output, task_config=task_config,
+                camera_name=args.camera_name, collision_bundle=args.collision_bundle,
+                inertial_bundle=args.inertial_bundle,
+                asset_catalog=asset_catalog,
+            )
+            run_editor(editor)
+            return 0
         if args.operation == "replay":
-            from .collection import replay_episode
+            from .datasets.collection import replay_episode
 
             report = replay_episode(
                 args.dataset, view=args.view, paused=args.paused, collisions=args.collisions
@@ -236,7 +273,7 @@ def main(argv=None):
             print(json.dumps(report, ensure_ascii=False))
             return 0 if report["passed"] else 1
         if args.operation == "libero-import":
-            from .libero import import_libero
+            from .scenes.libero.adapter import import_libero
 
             output = import_libero(args.source, args.python, args.output, tasks=args.tasks)
             print(json.dumps({"output": str(output), "tasks": args.tasks}))
@@ -244,21 +281,26 @@ def main(argv=None):
         if not isinstance(args.initial_positions, dict):
             raise ValueError("Initial positions must be an object keyed by URDF joint name")
         scene, configuration = None, {}
-        if args.libero_bundle:
+        if getattr(args, "libero_bundle", None):
             if not args.scene_config:
                 raise ValueError("Use --libero-bundle together with --scene-config")
-            from .libero import LiberoScene
+            from .scenes.libero.adapter import LiberoScene
 
             configuration = json.loads(args.scene_config.expanduser().read_text())
             scene = LiberoScene(
                 args.libero_bundle, args.task_index, configuration, args.reset_index
             )
         elif args.scene_config:
-            if args.operation != "view":
-                raise ValueError("Research scenes use view; collection requires a task adapter")
-            from .scene import ResearchScene
+            if task_config:
+                from .scenes.pick_place import PickPlaceScene
 
-            scene = ResearchScene(args.scene_config)
+                scene = PickPlaceScene(args.scene_config, task_config, asset_catalog=asset_catalog)
+            else:
+                if args.operation not in ("view", "inspect-scene"):
+                    raise ValueError("Research scene collection requires --task-config")
+                from .scenes.research import ResearchScene
+
+                scene = ResearchScene(args.scene_config, asset_catalog=asset_catalog)
             configuration = scene.configuration
         world_pose = configuration.get("T_world_root", configuration.get("T_world_base"))
         robot = build_model(
@@ -280,8 +322,17 @@ def main(argv=None):
             ),
             scene=scene,
         )
+        if args.operation == "inspect-scene":
+            from .scenes.inspection import inspect_scene
+
+            report = inspect_scene(
+                robot, preview=args.preview, camera=args.camera,
+                image_size=tuple(args.image_size), collisions=args.collisions,
+            )
+            print(json.dumps(report, ensure_ascii=False))
+            return 0 if report["passed"] else 1
         if args.operation == "evaluate":
-            from .evaluation import evaluate_policy
+            from .datasets.evaluation import evaluate_policy
 
             report = evaluate_policy(
                 robot,
@@ -314,7 +365,7 @@ def main(argv=None):
             follower_settings = FollowerSettings(**controller)
             generation = specification.get("generation")
         if args.operation == "view":
-            from .viewer import run_viewer
+            from .runtime.viewer import run_viewer
 
             if args.feedforward is not None:
                 follower_settings = replace(
@@ -328,12 +379,21 @@ def main(argv=None):
                 follower_settings=follower_settings,
             )
             return 0
-        from .collection import CollectionSettings, collect_episode, collect_reference_batch
+        from .datasets.collection import (
+            CollectionSettings,
+            collect_episode,
+            collect_reference_batch,
+        )
 
         image_size = args.image_size[0] if len(args.image_size) == 1 else tuple(args.image_size)
         settings = CollectionSettings(image_size=image_size)
+        cameras = args.cameras or (
+            [camera["name"] for camera in configuration["cameras"]]
+            if task_config
+            else ["agentview", "left_wrist", "right_wrist"]
+        )
         if args.reference is not None:
-            from .retarget import MotionRecipe, ReferenceMotion
+            from .scenes.libero.retarget import MotionRecipe, ReferenceMotion
 
             recipe = MotionRecipe.read(args.recipe)
 
@@ -348,7 +408,7 @@ def main(argv=None):
                     args.reset_indices,
                     args.output,
                     settings=settings,
-                    cameras=args.cameras,
+                    cameras=cameras,
                     resume=args.resume,
                     progress=progress,
                 )
@@ -364,7 +424,7 @@ def main(argv=None):
             args.output,
             settings=settings,
             follower_settings=follower_settings,
-            cameras=args.cameras,
+            cameras=cameras,
             generation=generation,
         )
         print(json.dumps(report, ensure_ascii=False))
@@ -373,12 +433,16 @@ def main(argv=None):
         return 130
     except (
         OSError,
+        TypeError,
         ValueError,
         KeyError,
         RuntimeError,
         mujoco.FatalError,
         subprocess.SubprocessError,
     ) as exc:
+        if args.operation == "inspect-scene":
+            print(json.dumps({"schema_version": 1, "passed": False, "error": str(exc)}))
+            return 1
         print(f"alohamini-mujoco: {exc}", file=sys.stderr)
         return 1
 

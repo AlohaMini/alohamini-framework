@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .assets.catalog import asset_key
 from .frames import rigid_transform
 
 
@@ -17,6 +18,7 @@ def load_scene(path=None):
         "T_world_base",
         "initial_positions",
         "objects",
+        "cameras",
         "timestep_s",
         "control_frequency_hz",
         "base_mode",
@@ -29,6 +31,7 @@ def load_scene(path=None):
         "T_world_base": np.eye(4).tolist(),
         "initial_positions": {},
         "objects": [],
+        "cameras": [],
         "timestep_s": 0.001,
         "control_frequency_hz": 20,
         "base_mode": "fixed",
@@ -54,37 +57,86 @@ def load_scene(path=None):
         raise ValueError("initial_positions must map URDF joint names to rad/m values")
     if not isinstance(result["objects"], list):
         raise ValueError("objects must be a list")
+    cameras = result["cameras"]
+    if not isinstance(cameras, list):
+        raise ValueError("cameras must be a list")
+    camera_names = set()
+    for camera in cameras:
+        if not isinstance(camera, dict) or not {"name", "body"} <= camera.keys() or (
+            camera.keys() - {"name", "body", "role", "fovy_deg", "T_body_camera",
+                             "intrinsics", "T_body_camera_optical"}
+        ):
+            raise ValueError("Invalid scene camera fields")
+        name, body = camera["name"], camera["body"]
+        if (
+            not isinstance(name, str) or not name.isidentifier() or name in camera_names
+            or not isinstance(body, str) or not body.isidentifier()
+        ):
+            raise ValueError("Scene cameras need unique identifier names and a named parent body")
+        camera_names.add(name)
+        if camera.get("role") not in (None, "workspace", "wrist", "overview"):
+            raise ValueError("Camera role must be workspace, wrist or overview")
+        if "intrinsics" in camera:
+            if "fovy_deg" in camera or "T_body_camera" in camera:
+                raise ValueError("Calibrated cameras use their optical frame and intrinsics")
+            if not isinstance(camera["intrinsics"], dict) or "T_body_camera_optical" not in camera:
+                raise ValueError("Calibrated cameras require intrinsics and T_body_camera_optical")
+            rigid_transform(camera["T_body_camera_optical"])
+        else:
+            fovy = camera.get("fovy_deg")
+            if (
+                type(fovy) not in (int, float) or not 0 < fovy < 180
+                or "T_body_camera" not in camera or "T_body_camera_optical" in camera
+            ):
+                raise ValueError("Perspective cameras require fovy_deg and T_body_camera")
+            rigid_transform(camera["T_body_camera"])
     names = set()
     for obj in result["objects"]:
         if not isinstance(obj, dict) or set(obj) - {
             "name",
+            "asset",
             "shape",
             "size",
             "T_world_object",
             "mass_kg",
             "color",
             "friction",
+            "mujoco_contact_time_constant_s",
         }:
             raise ValueError("Invalid scene object fields")
         name = obj.get("name")
         if not isinstance(name, str) or not name.isidentifier() or name in names:
             raise ValueError("Scene objects need distinct identifier names")
         names.add(name)
-        shape, size = obj.get("shape"), np.asarray(obj.get("size"), dtype=float)
-        count = {"box": 3, "sphere": 1, "cylinder": 2}.get(shape)
-        if (
-            count is None
-            or size.shape != (count,)
-            or not np.isfinite(size).all()
-            or (size <= 0).any()
-        ):
-            raise ValueError(
-                "Use box full XYZ dimensions, sphere radius, or cylinder radius/length"
-            )
+        if "asset" in obj:
+            asset_key(obj["asset"])
+            if {"shape", "size", "mass_kg"} & obj.keys():
+                raise ValueError("An asset instance gets its geometry and mass from the catalog")
+        else:
+            shape = obj.get("shape")
+            size = np.asarray(obj.get("size"), dtype=float)
+            count = {"box": 3, "sphere": 1, "cylinder": 2}.get(shape)
+            if (
+                count is None
+                or size.shape != (count,)
+                or not np.isfinite(size).all()
+                or (size <= 0).any()
+            ):
+                raise ValueError(
+                    "Use box full XYZ dimensions, sphere radius, or cylinder radius/length"
+                )
         rigid_transform(obj.get("T_world_object", np.eye(4)))
         mass, friction = obj.get("mass_kg", 0), obj.get("friction", 1)
         if not np.isfinite([mass, friction]).all() or mass < 0 or friction < 0:
             raise ValueError("Use nonnegative mass and friction; mass zero denotes a fixed fixture")
+        if "mujoco_contact_time_constant_s" in obj:
+            contact_time = obj["mujoco_contact_time_constant_s"]
+            if (
+                type(contact_time) not in (int, float)
+                or not np.isfinite(contact_time)
+                or contact_time < 2 * dt
+            ):
+                raise ValueError("MuJoCo contact time constant must be at least two physics steps")
         color = np.asarray(obj.get("color", [0.7, 0.7, 0.7, 1]), dtype=float)
         if (
             color.shape != (4,)

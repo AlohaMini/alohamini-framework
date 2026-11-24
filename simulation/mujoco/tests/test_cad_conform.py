@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-from alohamini_mujoco._cad_conform import conform_face_mesh
-from alohamini_mujoco.collision import signed_volume, topology
-from alohamini_mujoco.meshes import Mesh
+
+from alohamini.simulation.assets.cad._conform import conform_face_mesh
+from alohamini.simulation.assets.collision_geometry import signed_volume, topology
+from alohamini.simulation.assets.meshes import Mesh
 
 
 def face_fixture(*, two_chains=False, offset=0.0, hole=False):

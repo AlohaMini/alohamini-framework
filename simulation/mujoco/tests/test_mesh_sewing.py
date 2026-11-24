@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-from alohamini_mujoco.collision import topology
-from alohamini_mujoco.mesh_sewing import sew_boundary_edges
-from alohamini_mujoco.meshes import Mesh
+
+from alohamini.simulation.assets.collision_geometry import topology
+from alohamini.simulation.assets.mesh_sewing import sew_boundary_edges
+from alohamini.simulation.assets.meshes import Mesh
 
 
 def ring_with_cap_seam(gap=2e-8):
@@ -32,8 +33,8 @@ def ring_with_cap_seam(gap=2e-8):
 
 def test_sewing_retains_through_bore_all_faces_and_certifies_continuous_error():
     pytest.importorskip("manifold3d")
-    from alohamini_mujoco.geometry import winding_number
-    from alohamini_mujoco.solid_geometry import _solid
+    from alohamini.simulation.assets.geometry import winding_number
+    from alohamini.simulation.assets.solid_geometry import _solid
 
     original = ring_with_cap_seam()
     assert topology(original)["boundary_edges"] == 64

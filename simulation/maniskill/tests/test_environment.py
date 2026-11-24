@@ -133,7 +133,7 @@ def test_viewer_observes_each_physics_step_without_changing_control_or_dynamics(
 
 
 def test_cooked_gripper_hulls_preserve_the_shared_asset_geometry(env):
-    from simulation.asset_assertions import (
+    from simulation.testing.asset_assertions import (
         assert_cooked_gripper_shapes,
         assert_structural_primitives,
     )

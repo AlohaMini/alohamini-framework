@@ -10,8 +10,8 @@ requires-python = ">=3.10"
 dependencies = ["alohamini-platform", "mujoco==3.12.0", "numpy>=2,<3", "scipy>=1.14,<2", "pillow>=11"]
 
 [project.optional-dependencies]
-cad = ["cadquery-ocp-novtk==7.9.3.1.1"]
-geometry = ["coacd==1.0.14", "manifold3d==3.5.4"]
+cad = ["alohamini-platform[simulation-cad]"]
+geometry = ["alohamini-platform[simulation-geometry]"]
 collection = ["h5py>=3.11,<4", "opencv-python-headless==4.13.0.92"]
 
 [project.scripts]
