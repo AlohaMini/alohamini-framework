@@ -204,6 +204,11 @@ def test_detached_training_logs_and_raw_metrics(
             save_freq=4,
             image_size=[32, 32],
             model=model_options(state=False),
+            diagnostics=(
+                {"update_every": 2, "modules": ["model.action_head"], "train_eval_samples": 3}
+                if eval_workers == 0
+                else {}
+            ),
         )
     )
     process = processes[0]
@@ -285,6 +290,26 @@ def test_detached_training_logs_and_raw_metrics(
     schema = json.loads((tmp_path / "run/metrics-schema.json").read_text())
     assert schema["console_log"] == Path(job["log"]).name
     assert schema["components"][0]["denominator"] == "valid_action_elements"
+    runtime = schema["runtime"]
+    assert runtime["trainability"]["trainable"] == runtime["trainable_parameters"]
+    preflight = json.loads((tmp_path / "run/metrics-resources.json").read_text())
+    assert preflight["ok"] and preflight["policy"] == "act"
+    assert len(runtime["optimizer_groups"][0]["betas"]) == 2
+    for row in records:
+        measured = eval_workers == 0 and row["step"] % 2 == 0
+        key = "module/model.action_head/"
+        assert (key + "relative_update" in row) == measured
+        if measured:
+            assert row[key + "update_norm"] > 0
+            assert row[key + "relative_update"] == pytest.approx(
+                row[key + "update_norm"] / row[key + "weight_norm"]
+            )
+    for ev in evaluations:
+        if eval_workers == 0:
+            assert ev["train_eval_samples"] == 3
+            assert ev["generalization_gap"] == pytest.approx(ev["loss"] - ev["train_eval_loss"])
+        else:
+            assert "train_eval_loss" not in ev
     summaries = [line for line in log.splitlines() if " step:" in line]
     if log_freq:
         assert len(summaries) == 1 and "step:3 " in summaries[0]
@@ -299,3 +324,29 @@ def test_detached_training_logs_and_raw_metrics(
         assert not summaries
     assert (tmp_path / "run/offline-evaluation.json").is_file()
     assert Path(job["pid_file"]).read_text().strip() == str(process.pid)
+
+
+def test_trainability_and_probe_use_actual_weight_changes():
+    from alohamini.learning.diagnostics import ModuleUpdates, trainability
+
+    net = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.Linear(2, 1, bias=False))
+    net[0].requires_grad_(False)
+    flags = trainability(net)
+    assert flags == {
+        "frozen": 6,
+        "trainable": 2,
+        "modules": [
+            {"name": "0", "frozen": 6, "trainable": 0},
+            {"name": "1", "frozen": 0, "trainable": 2},
+        ],
+    }
+    probe = ModuleUpdates(net, ["1"])
+    weight = net[1].weight
+    with torch.no_grad():
+        weight.fill_(3)
+        weight.grad = torch.full_like(weight, 4)
+        snapshot = probe.capture(2)
+        weight.add_(0.5)
+    actual = probe.measure(snapshot)
+    assert actual["module/1/grad_norm"] == pytest.approx(2 * 2**0.5)
+    assert actual["module/1/relative_update"] == pytest.approx(1 / 6)

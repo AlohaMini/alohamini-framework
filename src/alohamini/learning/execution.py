@@ -275,7 +275,17 @@ class Execution:
         return self.accelerator.autocast()
 
     def update(
-        self, model, batches, optimizer, clip, processor, *, reduction, metric_specs=(), ema=None
+        self,
+        model,
+        batches,
+        optimizer,
+        clip,
+        processor,
+        *,
+        reduction,
+        metric_specs=(),
+        ema=None,
+        module_probe=None,
     ):
         """Execute algorithm-declared loss means over one global update window.
 
@@ -321,6 +331,8 @@ class Execution:
                     raise RuntimeError("Non-finite loss; no optimizer step performed")
                 metrics += loss.detach().double()
                 self.accelerator.backward(loss)
+        if module_probe is not None:
+            snapshots = module_probe.capture(self.scaler.get_scale() if self.scaler else 1.0)
         norm = self.accelerator.clip_grad_norm_(
             model.parameters(),
             clip if clip > 0 else float("inf"),
@@ -329,6 +341,9 @@ class Execution:
             raise RuntimeError("Non-finite gradients; no optimizer step performed")
         optimizer.step()
         applied = not optimizer.step_was_skipped
+        measurements = (
+            module_probe.measure(snapshots) if module_probe is not None and applied else {}
+        )
         optimizer.zero_grad(set_to_none=True)
         metrics = self.accelerator.reduce(metrics, reduction="sum")
         raw_model = self.accelerator.unwrap_model(model)
@@ -341,6 +356,7 @@ class Execution:
             grad_norm=norm.item() if torch.isfinite(norm) else None,
             lr=optimizer.param_groups[0]["lr"],
             optimizer_step=applied,
+            **measurements,
             **diagnostics.result(self.accelerator.reduce),
         )
 

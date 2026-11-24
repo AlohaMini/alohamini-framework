@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
+from .diagnostics import analyze
 from .evaluation import EvaluationLibrary
 from .files import directories, document, identifier, stamp
 from .history import History
@@ -24,6 +25,7 @@ class Attempt:
     suffix: str = ""
     logs: dict = field(default_factory=dict)
     launch_config: Path | None = None
+    launch_report: Path | None = None
     ordinal: int = 0
 
     @property
@@ -45,15 +47,26 @@ class Attempt:
     def schema_path(self):
         return self.root / (self.metric_path("train").stem + "-schema.json")
 
+    @property
+    def resources_path(self):
+        recorded = self.root / (self.metric_path("train").stem + "-resources.json")
+        return recorded if self.suffix or stamp(recorded) else self.root / "resources.json"
+
     def config(self):
         return document(self.config_path) or (
             document(self.launch_config) if self.launch_config else {}
         )
 
     def item(self, previous=None):
-        configuration = [stamp(self.config_path), stamp(self.schema_path)]
+        configuration = [
+            stamp(self.config_path),
+            stamp(self.schema_path),
+            stamp(self.resources_path),
+        ]
         if self.launch_config:
             configuration.append(stamp(self.launch_config))
+        if self.launch_report:
+            configuration.append(stamp(self.launch_report))
         phases = [stamp(self.metric_path(p)) for p in ("train", "validation")]
         # The final offline report is shared by every attempt in the directory.
         # Use attempt-specific files to order runs and display their update time.
@@ -162,7 +175,31 @@ class Catalog:
                 if stamp(log):
                     launches.setdefault(root, {})[log.name] = log
             for run in attempts.values():
-                run.logs = launches.get(run.root, {})
+                run.logs = launches.get(run.root, {}).copy()
+                if run.suffix:
+                    continue
+                # Historical launch bundles use an exact run name under a sibling logs/.
+                folders = [self.logs]
+                if run.root.parent.name == "runs":
+                    folders.append(run.root.parent.parent / "logs")
+                for folder in dict.fromkeys(folders):
+                    path = folder / f"{run.root.name}.preflight.json"
+                    report = document(path)
+                    if type(report.get("passed")) is not bool:
+                        continue
+                    cfg = run.config()
+                    if (
+                        report.get("dataset")
+                        and cfg.get("dataset")
+                        and report["dataset"] != cfg["dataset"]
+                    ):
+                        continue
+                    run.launch_report = path
+                    for suffix in (".log", ".preflight.log"):
+                        log = folder / (run.root.name + suffix)
+                        if stamp(log):
+                            run.logs.setdefault(log.name, log)
+                    break
             self.attempts = {a.id: a for a in attempts.values()}
             previous = {item["id"]: item for item in self.items}
             self.items = sorted(
@@ -219,25 +256,77 @@ class Monitor:
             result.update(
                 config=run.config(),
                 schema=document(run.schema_path),
+                preflight=document(run.resources_path) or None,
+                launch_preflight=document(run.launch_report) if run.launch_report else None,
+                console_parameters=console_parameters(run),
                 logs=list(run.logs),
                 offline=document(run.root / "offline-evaluation.json") or None,
             )
         return result
 
-    def chart(self, run, keys, axis, low, high, budget, cursors):
+    def chart(self, run, keys, axis, low, high, budget, cursors, mean_window=0):
         index = self.index(run)
         with index.lock:
             result = {}
             for phase, history in index.phases.items():
                 history.refresh()
-                result[phase] = history.chart(keys, axis, low, high, budget, cursors[phase])
+                result[phase] = history.chart(
+                    keys,
+                    axis,
+                    low,
+                    high,
+                    budget,
+                    cursors[phase],
+                    mean_window if phase == "train" else 0,
+                )
             return result
+
+    def diagnostics(self, run, window, metric, target):
+        index = self.index(run)
+        with index.lock:
+            for history in index.phases.values():
+                history.refresh()
+            return analyze(
+                index.phases["train"],
+                index.phases["validation"],
+                run.config(),
+                window,
+                metric,
+                target,
+            )
 
     def records(self, run, phase, cursor, limit, tail):
         index = self.index(run)
         with index.lock:
             history = index.phases[phase]
             return history.records(cursor, limit, tail)
+
+
+@lru_cache(maxsize=128)
+def _parameter_header(path, identity, length, modified):
+    with path.open("rb") as stream:
+        header = stream.read(length)
+    counts = {}
+    for key in ("num_learnable_params", "num_total_params"):
+        match = re.search(rb"\b" + key.encode() + rb"=(\d+)\b", header)
+        if not match:
+            return None
+        counts[key] = int(match[1])
+    return counts if counts["num_total_params"] >= counts["num_learnable_params"] else None
+
+
+def console_parameters(run):
+    if document(run.schema_path).get("runtime"):
+        return None
+    name = document(run.schema_path).get("console_log") or (
+        run.root.name + ".log" if not run.suffix else ""
+    )
+    path = run.logs.get(name)
+    sig = stamp(path) if path else None
+    if not sig:
+        return None
+    limit = 256 * 1024
+    return _parameter_header(path, sig[:2], min(sig[2], limit), sig[3] if sig[2] <= limit else 0)
 
 
 def console_tail(run, name, cursor):

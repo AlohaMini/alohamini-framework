@@ -1,15 +1,16 @@
 // Shared display strings, metric definitions and DOM helpers.
 const words = {
+  importShort: ["Import data", "导入评估"],
+  configuredScope: ["Configured training scope", "配置中声明的训练范围"],
+  setting: ["Value", "配置值"],
+  toggleSeries: ["Show or hide series", "显示或隐藏此曲线"],
   compareHint: ["Select a run to inspect. Tick others to compare.", "点击查看任务，勾选叠加对比。"],
   compareLimit: ["Compare up to six attempts at a time.", "可同时对比六次训练。"],
   lastEvent: ["Last record", "最近记录"],
   fileUpdated: ["Files updated", "文件更新"],
   runs: ["Training runs", "训练任务"],
   searchRuns: ["Find a run", "搜索训练任务"],
-  localWorkspace: ["Local workspace", "本地工作区"],
-  workspace: ["Workspace", "工作区"],
   monitor: ["Training", "训练监控"],
-  overview: ["Training overview", "训练总览"],
   addEval: ["Add evaluation data", "导入评估数据"],
   noRuns: ["Waiting for a training run", "等待训练任务"],
   noRunsHint: [
@@ -21,7 +22,6 @@ const words = {
   evaluation: ["Evaluation", "评估"],
   config: ["Configuration", "配置"],
   logs: ["Logs", "日志"],
-  curves: ["Metric curves", "指标曲线"],
   axis: ["X axis", "横轴"],
   range: ["Range", "区间"],
   chooseMetrics: ["Metrics", "选择指标"],
@@ -60,9 +60,7 @@ const words = {
   loss_kl_weighted: ["Weighted KL loss", "加权 KL 损失"],
   loss_action: ["Action loss", "动作损失"],
   loss_video: ["Video loss", "视频损失"],
-  latestStep: ["Latest step", "最新步数"],
   stepAt: ["Step", "步数"],
-  budget: ["Budget", "训练预算"],
   unavailable: ["No record", "暂无记录"],
   noData: ["No points in this range", "当前区间没有记录点"],
   sampled: ["Extrema retained", "保留极值"],
@@ -126,15 +124,110 @@ const words = {
   imported: ["Imported report", "导入报告"],
   records: ["Records", "记录数"],
   loading: ["Loading…", "读取中…"],
-  params: ["Parameters", "参数"],
   scale: ["Scale", "倍率"],
   denominator: ["Denominator", "分母"],
   reduction: ["Reduction", "聚合"],
   maxMetrics: ["Select 1–32 metrics.", "请选择 1 至 32 项指标。"],
-  scope: ["Current attempt", "本次训练"],
   weights: ["Weights", "权重"],
   unnamed: ["Run", "任务"],
   source: ["Source", "来源"],
+  diagnostics: ["Diagnostics", "诊断"],
+  trend: ["Loss trend", "损失趋势"],
+  off: ["Off", "关闭"],
+  window: ["Window", "统计窗口"],
+  mean: ["Mean", "均值"],
+  prevMean: ["Previous mean", "前一窗口均值"],
+  sd: ["Std. dev.", "标准差"],
+  min: ["Min", "最小值"],
+  max: ["Max", "最大值"],
+  slope: ["Slope / step", "每步斜率"],
+  peak: ["Peak step", "峰值步数"],
+  distribution: ["Window distribution", "窗口分布"],
+  metric: ["Metric", "指标"],
+  recordsUnit: ["records", "条记录"],
+  byPolicy: ["Policy defaults", "恢复策略默认"],
+  expand: ["Expand chart", "放大曲线"],
+  showRuns: ["Show run list", "展开任务列表"],
+  hideRuns: ["Hide run list", "收起任务列表"],
+  previous: ["Earlier", "前移"],
+  next: ["Later", "后移"],
+  zoomIn: ["Zoom in", "放大"],
+  zoomOut: ["Zoom out", "缩小"],
+  undo: ["Undo zoom", "撤销缩放"],
+  yScale: ["Y axis", "纵轴"],
+  autoScale: ["Fit data", "适应数据"],
+  zeroScale: ["Include zero", "包含零点"],
+  interval: ["View", "当前范围"],
+  rawLine: ["Raw", "单步"],
+  target: ["Validation loss ≤", "验证损失 ≤"],
+  best: ["Best observed", "已观察到的最低值"],
+  firstHit: ["First at target", "首次达到目标"],
+  noHit: ["Target not reached", "尚未达到目标"],
+  latestVal: ["Validation checkpoints", "验证记录数"],
+  efficiency: ["Training performance", "训练性能"],
+  clipping: ["Clipped updates", "裁剪更新"],
+  estimatedClip: ["inferred from norm", "按梯度范数推算"],
+  samplesPerS: ["Samples/s", "样本/秒"],
+  components: ["Policy components", "策略分项"],
+  weight_norm: ["Weight norm", "参数范数"],
+  update_norm: ["Update norm", "更新范数"],
+  relative_update: ["Update / weight", "更新／参数比"],
+  gradients: ["Connected tensors", "有梯度张量"],
+  module: ["Module", "模块"],
+  probe: ["Sampled parameter updates", "抽样参数更新"],
+  rates: ["Optimizer groups", "优化器参数组"],
+  first: ["First", "起点"],
+  last: ["Latest", "最近值"],
+  train_eval_loss: ["Fixed train-subset loss", "固定训练子集误差"],
+  generalization_gap: ["Validation − train subset", "验证减训练子集"],
+  train_eval_samples: ["Train subset size", "训练子集样本数"],
+  paired: ["Matched evaluation", "同口径评估"],
+  rawTotals: ["Latest component totals", "最近分项累计量"],
+  numerator: ["Numerator", "分子"],
+  count: ["Count", "计数"],
+  phase: ["Phase", "阶段"],
+  launchCheck: ["Launch preflight", "启动预检"],
+  cpuOnly: ["CPU-only check", "仅 CPU 预检"],
+  yes: ["Yes", "是"],
+  gpuTest: ["GPU test", "GPU 测试"],
+  console: ["Training console", "训练控制台"],
+  stage: ["Stage", "阶段"],
+  train_episodes: ["Training episodes", "训练回合"],
+  val_episodes: ["Validation episodes", "验证回合"],
+  resources: ["Resource preflight", "资源预检"],
+  importCheck: ["Open preflight JSON", "导入预检 JSON"],
+  recorded: ["Trainer report", "训练器报告"],
+  supplied: ["Imported report", "导入的报告"],
+  noCheck: ["No recorded preflight", "暂无预检记录"],
+  successfulCheck: ["Checks passed", "检查通过"],
+  incompleteCheck: ["Incomplete checks", "检查未齐"],
+  failedCheck: ["Checks failed", "检查失败"],
+  badCheck: [
+    "Choose a resource or launch preflight JSON for this run (up to 4 MiB).",
+    "请选择当前任务的资源或启动预检 JSON（最大 4 MiB）。",
+  ],
+  kind: ["Kind", "类型"],
+  status: ["Status", "状态"],
+  paths: ["Paths and details", "路径与详情"],
+  checkMode: ["Check", "检查方法"],
+  rawReport: ["Full report JSON", "完整报告 JSON"],
+  runtime: ["Training setup", "训练设置"],
+  flags: ["Parameter trainability at startup", "启动时参数冻结状态"],
+  frozen: ["Frozen", "已冻结"],
+  trainable: ["Trainable", "可训练"],
+  flagMissing: ["Module freeze snapshot was not recorded.", "此任务未记录逐模块冻结快照。"],
+  training_samples: ["Training samples", "训练样本"],
+  validation_samples: ["Validation samples", "验证样本"],
+  effective_batch_size: ["Effective batch", "有效批大小"],
+  excluded_samples: ["Excluded samples", "已排除样本"],
+  optimizer: ["Optimizer", "优化器"],
+  precision: ["Precision", "精度"],
+  reportMetric: ["Error measure", "误差指标"],
+  bias_by_action: ["Signed bias", "有符号偏差"],
+  rmse_by_action: ["RMSE", "均方根误差"],
+  mae_by_action: ["MAE", "平均绝对误差"],
+  horizon: ["Prediction offset", "预测偏移"],
+  all: ["All", "全部"],
   noConfig: ["No saved parameters match.", "没有匹配的已保存参数。"],
 };
 const help = {
@@ -260,7 +353,7 @@ const help = {
 };
 export const $ = (id) => document.getElementById(id);
 const requested =
-  new URL(location.href).searchParams.get("lang") || localStorage.getItem("am:lang") || navigator.language;
+  new URL(location.href).searchParams.get("lang") || localStorage.getItem("am:lang") || "en";
 export let lang = requested.startsWith("zh") ? "zh" : "en";
 export function toggleLang() {
   lang = lang === "zh" ? "en" : "zh";
@@ -271,13 +364,54 @@ export function t(key) {
 }
 export function fmt(v, compact = false) {
   if (!Number.isFinite(v)) return "—";
+  if (!compact && Number.isSafeInteger(v)) return v.toLocaleString(lang);
   const a = Math.abs(v);
   if (a && (a < 0.001 || a >= 1e8)) return v.toExponential(2);
   return v.toLocaleString(lang, { maximumSignificantDigits: compact ? 4 : 6 });
 }
-export function explain(key, spec, config = false) {
+export function explain(key, spec, run) {
   const i = lang === "zh" ? 1 : 0;
   let text = help[key]?.[i] || "";
+  if (key === "loss" && run?.policy === "openwam") {
+    text = [
+      "OpenWAM objective = weighted video loss + weighted action loss.",
+      "OpenWAM 目标损失等于加权视频损失与加权动作损失之和。",
+    ][i];
+    const model = run.config?.model;
+    if (Number.isFinite(model?.lambda_video) && Number.isFinite(model?.lambda_action)) {
+      text +=
+        [" Video / action weights ", " 视频／动作权重 "][i] +
+        fmt(model.lambda_video) +
+        " / " +
+        fmt(model.lambda_action);
+    }
+  } else if (key === "loss" && run?.policy === "act") {
+    text = [
+      "ACT uses action L1 and adds weighted KL during VAE training. Validation reports action L1.",
+      "ACT 使用动作 L1，启用 VAE 的训练另加加权 KL。验证记录动作 L1。",
+    ][i];
+  } else if (key.startsWith("module/")) {
+    const quantity = key.split("/")[2];
+    text =
+      {
+        relative_update: [
+          "L2 norm of the actual optimizer update divided by the pre-update weight norm.",
+          "实际优化器更新的 L2 范数除以更新前的参数范数。",
+        ],
+        update_norm: [
+          "L2 norm of the sampled post-step minus pre-step parameters.",
+          "抽样更新前后参数差的 L2 范数。",
+        ],
+        weight_norm: [
+          "Pre-update L2 norm of the sampled trainable parameters.",
+          "抽样模块可训练参数在更新前的 L2 范数。",
+        ],
+        grad_norm: [
+          "Unscaled module gradient L2 norm before clipping.",
+          "抽样模块解除缩放后、裁剪前的梯度 L2 范数。",
+        ],
+      }[quantity]?.[i] || "";
+  }
   if (key.startsWith("lr/"))
     text = [
       `Learning rate used by parameter group ${key.slice(3)} for this update.`,
@@ -285,22 +419,14 @@ export function explain(key, spec, config = false) {
     ][i];
   if (spec) {
     const parts = [
-      spec.source,
+      spec.source !== key && spec.source,
       spec.reduction && t("reduction") + " " + spec.reduction,
       spec.denominator && t("denominator") + " " + spec.denominator,
       spec.scale != null && t("scale") + " " + spec.scale,
     ];
     return [text, parts.filter(Boolean).join(" · ")].filter(Boolean).join("\n");
   }
-  return (
-    text ||
-    (config
-      ? ["", ""]
-      : [
-          "Scalar from the original metric record. The producing policy defines its scale.",
-          "原始指标记录中的标量，数值尺度由输出它的策略定义。",
-        ])[i]
-  );
+  return text;
 }
 export function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -317,11 +443,62 @@ export function btn(text, action, cls = "secondary") {
   node.onclick = action;
   return node;
 }
-export function hint(text) {
-  const node = el("button", "hint", "?");
-  node.type = "button";
-  node.dataset.help = text;
-  node.setAttribute("aria-label", text);
+export function describe(node, description) {
+  if (description) {
+    node.dataset.help = description;
+    node.tabIndex = 0;
+    node.setAttribute("aria-description", description);
+  } else {
+    delete node.dataset.help;
+    node.removeAttribute("tabindex");
+    node.removeAttribute("aria-description");
+  }
+}
+export function iconButton(id, label, action) {
+  const button = btn("", action, "icon-button");
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const use = document.createElementNS(svg.namespaceURI, "use");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  use.setAttribute("href", "#icon-" + id);
+  svg.append(use);
+  button.append(svg);
+  return button;
+}
+export function facts(parent, entries) {
+  const row = el("div", "small-facts");
+  for (const [label, value] of entries) {
+    if (value == null) continue;
+    const item = el("span", null, t(label));
+    item.append(el("strong", null, value));
+    row.append(item);
+  }
+  if (row.childElementCount) parent.append(row);
+}
+export function table(parent, headings, rows) {
+  if (!rows.length) return;
+  const wrap = el("div", "table-wrap"),
+    grid = el("table"),
+    header = grid.createTHead().insertRow();
+  for (const key of headings) header.append(el("th", null, t(key)));
+  const body = grid.createTBody();
+  for (const values of rows) {
+    const tr = body.insertRow();
+    values.forEach((v) => {
+      const td = tr.insertCell();
+      if (v instanceof Node) td.append(v);
+      else td.textContent = v ?? "—";
+    });
+  }
+  wrap.append(grid);
+  parent.append(wrap);
+}
+export function disclosure(parent, label) {
+  const node = el("details", "compact");
+  node.append(el("summary", null, label));
+  parent.append(node);
   return node;
 }
 export function translate() {
@@ -342,6 +519,7 @@ export async function api(path, params = new URLSearchParams(), signal) {
   return value;
 }
 export function modal(title) {
+  $("dialog").classList.remove("inspector");
   $("dialog-title").textContent = title;
   $("dialog-body").replaceChildren();
   if (!$("dialog").open) $("dialog").showModal();
@@ -357,6 +535,7 @@ function showHelp(event) {
   if (!target) return;
   const box = $("help"),
     rect = target.getBoundingClientRect();
+  (target.closest("dialog") || document.body).append(box);
   box.textContent = target.dataset.help;
   box.hidden = false;
   box.style.left = Math.max(8, Math.min(rect.left, innerWidth - box.offsetWidth - 8)) + "px";

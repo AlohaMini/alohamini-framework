@@ -41,6 +41,12 @@ from alohamini.learning.checkpoint import (
 from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
 from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.data_index import batches_per_epoch
+from alohamini.learning.diagnostics import (
+    FixedTrainSubset,
+    ModuleUpdates,
+    diagnostic_options,
+    trainability,
+)
 from alohamini.learning.ema import EMAManager, validate_ema_setup
 from alohamini.learning.execution import Execution, RankBatchSampler, validate_local_workers
 from alohamini.learning.loading import loader_options, make_loader, resolve_data_pipeline
@@ -82,6 +88,7 @@ logger = logging.getLogger("alohamini.learning.train")
 def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
     validate_training_budget(settings)
+    diagnostic_options(settings)
     validate_ema_setup(settings)
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     resolve_tf32(settings)
@@ -222,9 +229,9 @@ def _offline_evaluate_chunks(
     log_freq=50,
     reduce=None,
 ):
-    """Accumulate physical-unit MAE for normal or collectively sharded predictions."""
-    total = torch.zeros(len(names), dtype=torch.float64)
-    count = 0
+    """Aggregate physical-unit residuals over valid action targets and horizons."""
+    total = None
+    offsets = samples.delta_indices.get("action")
     if loader is None:
         loader = make_loader(samples, device=device, batch_size=batch_size)
     batches = timed_batches(
@@ -232,30 +239,56 @@ def _offline_evaluate_chunks(
         device=device,
         label="Offline MAE",
         log_freq=log_freq,
-        action_offsets=samples.delta_indices.get("action"),
+        action_offsets=offsets,
     )
     for number, batch in enumerate(batches):
         mask = ~batch["action_is_pad"]
-        offsets = samples.delta_indices.get("action")
         if offsets is not None:
             mask = mask & (torch.tensor(offsets) >= 0)[None]
         predicted = predict(batch)
         targets = batch.get("_recorded_action", batch["action"])
         if predicted.shape != targets.shape:
             raise ValueError("Evaluation chunk_size must match checkpoint")
+        if total is None:
+            # Horizon x (absolute, signed, squared residuals by channel, valid count).
+            total = torch.zeros((mask.shape[1], 3 * len(names) + 1), dtype=torch.float64)
         if is_padding_batch(loader, number):
             continue
-        total += ((predicted - targets).abs() * mask[..., None]).sum((0, 1))
-        count += int(mask.sum())
+        residual = (predicted.double() - targets.double()).masked_fill(~mask[..., None], 0)
+        absolute, signed, squared = total[:, :-1].split(len(names), dim=1)
+        absolute.add_(residual.abs().sum(0))
+        signed.add_(residual.sum(0))
+        squared.add_(residual.square().sum(0))
+        total[:, -1].add_(mask.sum(0))
+    if total is None:
+        raise ValueError("Evaluation requires at least one batch")
     if reduce is not None:
-        packed = torch.cat((total, total.new_tensor([count]))).to(device)
-        packed = reduce(packed, reduction="sum").cpu()
-        total, count = packed[:-1], int(packed[-1])
+        total = reduce(total.to(device), reduction="sum").cpu()
+    if not torch.isfinite(total).all():
+        raise ValueError("Non-finite residual on a valid action")
+    count = int(total[:, -1].sum())
     if not count:
         raise ValueError("Evaluation requires at least one valid action step")
+
+    def channels(values):
+        return dict(zip(names, values.tolist(), strict=True))
+
+    absolute, signed, squared = (total[:, :-1].sum(0) / count).split(len(names))
     return {
         "valid_action_steps": count,
-        "mae_by_action": dict(zip(names, (total / count).tolist(), strict=True)),
+        "mae_by_action": channels(absolute),
+        "bias_by_action": channels(signed),
+        "rmse_by_action": channels(squared.sqrt()),
+        "by_horizon": [
+            {
+                "index": i,
+                "offset": int(offsets[i]) if offsets is not None else None,
+                "valid_action_steps": int(row[-1]),
+                "mae_by_action": channels(row[: len(names)] / row[-1]),
+            }
+            for i, row in enumerate(total)
+            if row[-1] > 0
+        ],
     }
 
 
@@ -328,6 +361,7 @@ def _train(settings, execution, *, prepared=None):
     )
     cfg = components.apply_preset(settings)
     ema_config = validate_ema_setup(cfg)
+    probe_every, modules, ref_count = diagnostic_options(cfg)
     cfg["ema"] = asdict(ema_config)
     cfg.setdefault("distributed_backend", "ddp")
     trainable_dtype = validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
@@ -420,7 +454,10 @@ def _train(settings, execution, *, prepared=None):
         cfg["steps"] = steps
         logger.info(
             "%d epochs, %d batches per rank per epoch, %d optimizer updates (accumulation %d)",
-            epochs, batch_count, steps, accumulation,
+            epochs,
+            batch_count,
+            steps,
+            accumulation,
         )
     pretrained_manifest = validate_pretrained(cfg, samples)
     options["input_features"] = samples.input_features
@@ -576,6 +613,11 @@ def _train(settings, execution, *, prepared=None):
         if execution.main:
             with (output / config_name).open("x") as stream:
                 json.dump(cfg, stream, ensure_ascii=False, indent=2)
+            if prepared is not None:
+                suffix = "" if resume_state is None else f"-from-{resume_state['step']}-{attempt}"
+                (output / f"metrics{suffix}-resources.json").write_text(
+                    json.dumps(prepared.report, ensure_ascii=False, indent=2) + "\n"
+                )
         logger.info("Creating optimizer and scheduler")
         logger.info(
             "Trainable weight storage: %s; compute mixed_precision: %s", trainable_dtype, precision
@@ -601,10 +643,12 @@ def _train(settings, execution, *, prepared=None):
                 accumulation,
                 effective_batch_size,
             )
-        learnable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total = sum(p.numel() for p in model.parameters())
-        logger.info("num_learnable_params=%d (%s)", learnable, format_big_number(learnable))
-        logger.info("num_total_params=%d (%s)", total, format_big_number(total))
+        if execution.main:
+            flags = trainability(model)
+            learnable = flags["trainable"]
+            total = learnable + flags["frozen"]
+            logger.info("num_learnable_params=%d (%s)", learnable, format_big_number(learnable))
+            logger.info("num_total_params=%d (%s)", total, format_big_number(total))
         start_step = 0
         consumed = 0
         if resume_state:
@@ -670,7 +714,7 @@ def _train(settings, execution, *, prepared=None):
             **loader_options(cfg),
             generator=loader_generator,
         )
-        eval_loader = eval_totals = None
+        eval_loader = eval_totals = ref_loader = ref_totals = None
         if validation is not None and (execution.main or execution.sharded):
             logger.debug(
                 "Creating reusable evaluation loader: batch_size=%d settings=%s",
@@ -692,8 +736,24 @@ def _train(settings, execution, *, prepared=None):
             if eval_steps:
                 eval_totals = loss_denominators(validation, loss_counts)
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
+            if ref_count:
+                reference = FixedTrainSubset(samples, ref_count)
+                ref_totals = loss_denominators(reference, loss_counts)
+                ref_loader = make_loader(
+                    reference,
+                    device=device,
+                    num_workers=0,
+                    batch_sampler=EvaluationBatchSampler(
+                        len(reference),
+                        eval_batch_size,
+                        rank=execution.rank if execution.sharded else 0,
+                        world_size=execution.world_size if execution.sharded else 1,
+                    ),
+                    generator=torch.Generator().manual_seed(seed),
+                )
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
+        module_probe = ModuleUpdates(model, modules) if modules else None
         ema = (
             EMAManager(model, ema_config)
             if ema_config.enable and (execution.main or execution.sharded)
@@ -765,6 +825,26 @@ def _train(settings, execution, *, prepared=None):
                 "validation": "dataset means using each declared denominator",
                 "loss": "original differentiable objective; separately weighted terms",
                 "components": [spec.schema() for spec in metric_specs],
+                "runtime": {
+                    "trainable_parameters": learnable,
+                    "total_parameters": total,
+                    "trainability": flags,
+                    "training_samples": len(samples),
+                    "excluded_samples": samples.excluded,
+                    "validation_samples": len(validation) if validation is not None else 0,
+                    "effective_batch_size": effective_batch_size,
+                    "torch": str(torch.__version__),
+                    "accelerate": accelerate_version,
+                    "optimizer_groups": [
+                        {
+                            k: v
+                            for k, v in group.items()
+                            if k != "params"
+                            and isinstance(v, (int, float, bool, str, tuple, type(None)))
+                        }
+                        for group in optimizer.param_groups
+                    ],
+                },
             }
             if console := os.environ.get("ALOHAMINI_TRAIN_CONSOLE"):
                 schema["console_log"] = console
@@ -816,6 +896,11 @@ def _train(settings, execution, *, prepared=None):
                         reduction=loss_counts,
                         metric_specs=metric_specs,
                         ema=ema,
+                        module_probe=(
+                            module_probe
+                            if execution.main and probe_every and (step + 1) % probe_every == 0
+                            else None
+                        ),
                     )
                     if not update["optimizer_step"]:
                         skipped += 1
@@ -909,6 +994,23 @@ def _train(settings, execution, *, prepared=None):
                                 metrics=eval_metrics,
                                 reduce=eval_reduce,
                             )
+                            paired = {}
+                            if ref_loader is not None:
+                                train_eval = evaluate_loss(
+                                    model,
+                                    processor,
+                                    ref_loader,
+                                    loss_counts,
+                                    ref_totals,
+                                    device=device,
+                                    log_freq=eval_log_freq,
+                                    reduce=eval_reduce,
+                                )
+                                paired = {
+                                    "train_eval_loss": train_eval,
+                                    "generalization_gap": eval_loss - train_eval,
+                                    "train_eval_samples": len(reference),
+                                }
                         metric_result = eval_metrics.result(reduce=eval_reduce)
                         if execution.main:
                             evaluation = {
@@ -918,6 +1020,7 @@ def _train(settings, execution, *, prepared=None):
                                 "event_time_s": time.time(),
                                 "loss": eval_loss,
                                 "weights": "ema" if use_ema else "online",
+                                **paired,
                                 **metric_result,
                             }
                             validation_stream.write(json.dumps(evaluation, allow_nan=False) + "\n")

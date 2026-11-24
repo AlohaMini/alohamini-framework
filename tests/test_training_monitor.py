@@ -238,3 +238,84 @@ def test_evaluation_projection_and_provenance(tmp_path, layout):
     assert m.datasets.details(key, m.catalog.get(entry["id"]))["manifest_match"] == "different"
     with pytest.raises(ValueError):
         m.datasets.trajectory(key, 2, "unknown", 32)
+
+
+def test_raw_trends_and_diagnostics_across_appends(tmp_path):
+    run = tmp_path / "runs/test"
+    write_json(run / "train.json", {"optimizer": {"grad_clip_norm": 4}})
+    metrics = run / "metrics.jsonl"
+    records = [
+        {
+            "step": i,
+            "loss": i,
+            "grad_norm": i,
+            "samples": i * 4,
+            "elapsed_s": i * 2,
+            "lr": 1 / i,
+            "metrics": {"loss_action": i / 2, "flow_loss": i / 4},
+        }
+        for i in range(1, 102)
+    ]
+    metrics.write_text("".join(json.dumps(r) + "\n" for r in records[:99]))
+    (run / "validation-metrics.jsonl").write_text(
+        '{"step":50,"loss":3,"samples":200,"elapsed_s":100}\n'
+        '{"step":90,"loss":2,"samples":360,"elapsed_s":180,"train_eval_loss":1.5,"generalization_gap":0.5}\n'
+    )
+    monitor = Monitor(run.parent, tmp_path / "logs", [])
+    attempt = monitor.catalog.get(monitor.catalog.discover()[0]["id"])
+    h = monitor.index(attempt).phases["train"]
+    h.refresh()
+    initial = h.chart(["loss", "lr", "flow_loss"], "step", None, None, 16, None, 20)
+    assert len(initial["series"]["loss"]["points"]) <= 16
+    assert initial["means"]["loss"]["points"] == [[20, 10.5], [40, 30.5], [60, 50.5], [80, 70.5]]
+    assert "lr" not in initial["means"]
+    assert initial["means"]["flow_loss"]["points"][0] == [20, 10.5 / 4]
+    with metrics.open("a") as f:
+        f.writelines(json.dumps(r) + "\n" for r in records[99:])
+    h.refresh()
+    inc = h.chart(["loss"], "step", None, None, 16, initial["cursor"], 20)
+    assert inc["mode"] == "append" and inc["means"]["loss"]["points"] == [[100, 90.5]]
+    chart = h.chart(["loss"], "step", 96, 101, 16, None, 20)
+    assert chart["means"]["loss"]["points"] == [[100, 90.5]]
+    d = monitor.diagnostics(attempt, 20, "loss", 3.1)
+    assert (d["from_step"], d["to_step"]) == (82, 101)
+    assert d["distribution"]["mean"] == 91.5
+    assert d["distribution"]["slope_per_step"] == 1 and sum(d["distribution"]["bins"]) == 20
+    assert d["components"]["loss_action"]["previous_mean"] == 71.5 / 2
+    assert d["clipping"]["fraction"] == 1 and d["clipping"]["source"] == "from_norm"
+    assert d["validation"]["first_hit"] == {"step": 50, "samples": 200, "elapsed_s": 100, "loss": 3}
+    assert d["validation"]["best"]["step"] == 90 and d["samples_per_s"] == 2
+    assert d["paired"]["generalization_gap"] == 0.5
+
+    metrics.write_text('{"step":1,"loss":1}\n{"step":2,"loss":null}\n')
+    h.refresh()
+    assert h.chart(["loss"], "step", None, None, 16, inc["cursor"], 2)["means"]["loss"][
+        "points"
+    ] == [[2, None]]
+
+
+def test_archived_and_native_preflight_are_attempt_specific(tmp_path):
+    run, logs = tmp_path / "runs/archived", tmp_path / "logs"
+    write_json(run / "train.json", {"policy": "act", "dataset": "/data/test"})
+    write_json(run / "resume-1-10.json", {"policy": "act", "dataset": "/data/test"})
+    write_json(run / "resources.json", {"policy": "act", "ok": True})
+    write_json(run / "metrics-from-1-10-resources.json", {"policy": "act", "ok": False})
+    write_json(
+        logs / "archived.preflight.json", {"passed": True, "dataset": "/data/test", "frames": 48}
+    )
+    (logs / "archived.log").write_text("INFO num_learnable_params=10\nINFO num_total_params=20\n")
+    monitor = Monitor(run.parent, tmp_path / "other", [])
+    for item in monitor.catalog.discover():
+        attempt = monitor.catalog.get(item["id"])
+        detail = monitor.summary(attempt)
+        if item["attempt"]:
+            assert detail["preflight"]["ok"] is False and detail["launch_preflight"] is None
+            assert not detail["logs"] and detail["console_parameters"] is None
+        else:
+            assert detail["preflight"]["ok"] and detail["launch_preflight"]["frames"] == 48
+            assert detail["console_parameters"] == {
+                "num_learnable_params": 10,
+                "num_total_params": 20,
+            }
+            assert "archived.log" in detail["logs"]
+        assert "preflight" not in monitor.summary(attempt, brief=True)

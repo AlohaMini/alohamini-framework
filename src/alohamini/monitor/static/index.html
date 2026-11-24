@@ -12,6 +12,7 @@
   <body>
     <svg aria-hidden="true" class="symbols" xmlns="http://www.w3.org/2000/svg">
       <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M2 13h5l3-8 4 14 3-9 2 3h3" /></symbol>
+      <symbol id="icon-expand" viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5" /></symbol>
       <symbol id="icon-grid" viewBox="0 0 24 24">
         <rect x="3" y="3" width="7" height="7" rx="2" />
         <rect x="14" y="3" width="7" height="7" rx="2" />
@@ -63,6 +64,9 @@
           ><svg class="icon"><use href="#icon-activity" /></svg
         ></span>
         <div><b>AlohaMini</b><small>Training Monitor</small></div>
+        <button class="icon-button mobile-toggle" id="close-sidebar" data-label="hideRuns">
+          <svg class="icon"><use href="#icon-close" /></svg>
+        </button>
       </div>
       <div class="run-header">
         <h2 data-t="runs"></h2>
@@ -74,21 +78,23 @@
       /></label>
       <p class="compare-hint" data-t="compareHint"></p>
       <div id="run-list"></div>
-      <div class="sidebar-foot">
-        <svg class="icon"><use href="#icon-terminal" /></svg><span data-t="localWorkspace"></span>
-      </div>
     </aside>
     <div id="shade" hidden></div>
     <main>
       <header class="topbar">
-        <button class="icon-button mobile-toggle" id="menu" data-label="runs">
+        <button class="icon-button" id="menu" aria-controls="sidebar">
           <svg class="icon"><use href="#icon-panel" /></svg>
         </button>
-        <div class="breadcrumb">
-          <svg class="icon"><use href="#icon-grid" /></svg><span data-t="workspace"></span><i>/</i
-          ><strong data-t="monitor"></strong>
+        <div class="run-heading">
+          <h1 id="primary-name" data-t="monitor"></h1>
+          <div class="run-caption"><span id="policy-badge" hidden></span><span id="last-event"></span></div>
         </div>
         <div class="top-actions">
+          <button class="secondary" id="import" data-label="addEval">
+            <svg class="icon"><use href="#icon-import" /></svg
+            ><span class="wide-label" data-t="addEval"></span
+            ><span class="narrow-label" data-t="importShort"></span>
+          </button>
           <button id="live" class="live-control">
             <span class="status-dot"></span><span id="live-label"></span
             ><svg class="icon"><use id="live-icon" href="#icon-pause" /></svg>
@@ -99,18 +105,6 @@
         </div>
       </header>
       <div class="content">
-        <div class="page-heading">
-          <div>
-            <h1 data-t="overview"></h1>
-            <div class="run-caption">
-              <span id="policy-badge" hidden></span><span id="primary-name"></span
-              ><span id="last-event"></span>
-            </div>
-          </div>
-          <button class="primary" id="import">
-            <svg class="icon"><use href="#icon-import" /></svg><span data-t="addEval"></span>
-          </button>
-        </div>
         <div id="feedback" role="status" hidden></div>
         <section id="empty" class="empty-state" hidden>
           <span class="empty-mark"
@@ -121,10 +115,14 @@
           <code>alohamini train monitor --runs-dir /path/to/runs</code>
         </section>
         <div id="run-view" hidden>
-          <div class="kpis" id="kpis"></div>
+          <dl class="readouts" id="kpis"></dl>
+          <div id="run-resources"></div>
           <nav class="tabs" data-label="views">
             <button data-tab="metrics">
               <svg class="icon"><use href="#icon-chart" /></svg><span data-t="metrics"></span>
+            </button>
+            <button data-tab="diagnostics">
+              <svg class="icon"><use href="#icon-activity" /></svg><span data-t="diagnostics"></span>
             </button>
             <button data-tab="evaluation">
               <svg class="icon"><use href="#icon-layers" /></svg><span data-t="evaluation"></span>
@@ -138,14 +136,14 @@
           </nav>
           <section id="metrics-view">
             <div class="toolbar">
-              <div class="toolbar-title">
-                <h2 data-t="curves"></h2>
-                <span class="count light" id="chart-count"></span>
-              </div>
               <div class="controls">
                 <label class="axis"
                   ><span data-t="axis"></span
                   ><select id="axis"></select
+                ></label>
+                <label class="axis"
+                  ><span data-t="trend"></span
+                  ><select id="trend"></select
                 ></label>
                 <button class="secondary" id="range-btn" data-t="range"></button>
                 <button class="secondary" id="metrics-btn">
@@ -157,6 +155,25 @@
               <span></span><button class="quiet" id="reset-range" data-t="resetRange"></button>
             </div>
             <div class="chart-grid" id="charts"></div>
+          </section>
+          <section id="diagnostics-view" hidden>
+            <div class="toolbar">
+              <div class="controls">
+                <label class="axis"
+                  ><span data-t="metric"></span
+                  ><select id="stat-metric"></select
+                ></label>
+                <label class="axis"
+                  ><span data-t="window"></span
+                  ><select id="stat-window"></select
+                ></label>
+                <label class="axis"
+                  ><span data-t="target"></span
+                  ><input type="number" step="any" class="input" id="stat-target" placeholder="≤"
+                /></label>
+              </div>
+            </div>
+            <div id="stat-results"></div>
           </section>
           <section id="evaluation-view" hidden></section>
           <section id="config-view" hidden>

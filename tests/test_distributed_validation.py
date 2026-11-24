@@ -201,6 +201,11 @@ def distributed_check(device):
             expected_mae = sum((i + 1) * n for i, n in enumerate(valid)) / sum(valid)
             assert mae["valid_action_steps"] == sum(valid)
             assert mae["mae_by_action"]["joint"] == pytest.approx(expected_mae, rel=1e-6)
+            assert abs(mae["bias_by_action"]["joint"]) == pytest.approx(expected_mae)
+            assert mae["rmse_by_action"]["joint"] == pytest.approx(
+                math.sqrt(sum((i + 1) ** 2 * n for i, n in enumerate(valid)) / sum(valid))
+            )
+            assert sum(h["valid_action_steps"] for h in mae["by_horizon"]) == sum(valid)
             assert policy.calls == 2 * math.ceil(size / 4)
             dist.barrier()
 

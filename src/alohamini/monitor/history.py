@@ -8,6 +8,7 @@ import os
 import uuid
 from array import array
 from bisect import bisect_left, bisect_right
+from collections import OrderedDict
 from contextlib import nullcontext
 from itertools import pairwise
 from pathlib import Path
@@ -85,12 +86,15 @@ class Series:
             max(highs, key=self.values.__getitem__, default=None),
         )
 
-    def plot(self, axis, first_row, stop_row, budget):
-        rows = (
+    def row_indices(self):
+        return (
             self.rows
             if self.rows is not None
             else range(self.first_row, self.first_row + len(self.values))
         )
+
+    def plot(self, axis, first_row, stop_row, budget):
+        rows = self.row_indices()
         start, stop = bisect_left(rows, first_row), bisect_left(rows, stop_row)
         count = stop - start
         if count <= budget:
@@ -117,6 +121,10 @@ class Series:
 AXES = ("step", "samples", "elapsed_s")
 
 
+def loss_metric(key):
+    return key == "loss" or key.startswith("loss_") or key.endswith("_loss")
+
+
 class History:
     """Index a single attempt and phase. The caller serializes access.
 
@@ -131,6 +139,7 @@ class History:
     def _clear(self):
         self.axes = {key: array("d") for key in AXES}
         self.series = {}
+        self.means = OrderedDict()
         self.offsets = array("Q")
         self.latest = {}
         self.invalid_lines = 0
@@ -246,7 +255,25 @@ class History:
             "latest": json_safe(self.latest),
         }
 
-    def chart(self, keys, axis, low, high, budget, cursor):
+    def window_means(self, key, width):
+        """Completed non-overlapping windows from raw records, located at the last row."""
+        cache_key = (key, width)
+        if cache_key not in self.means:
+            if len(self.means) >= 64:
+                self.means.popitem(last=False)
+            self.means[cache_key] = Series()
+        self.means.move_to_end(cache_key)
+        result = self.means[cache_key]
+        series = self.series[key]
+        rows = series.row_indices()
+        for start in range(len(result.values) * width, len(self.offsets) - width + 1, width):
+            stop = start + width
+            left, right = bisect_left(rows, start), bisect_left(rows, stop)
+            value = math.fsum(series.values[left:right]) / width if right - left == width else None
+            result.append(stop - 1, value)
+        return result
+
+    def chart(self, keys, axis, low, high, budget, cursor, mean_window=0):
         values = self.axes.get(axis)
         first = self.position(cursor)
         append = first is not None and len(self.offsets) - first <= min(budget // 2, 256)
@@ -256,6 +283,8 @@ class History:
             "extent": [values[0], values[-1]] if values else None,
             "series": {},
         }
+        if mean_window:
+            result["means"] = {}
         if values:
             start = bisect_left(values, low) if low is not None else 0
             stop = bisect_right(values, high) if high is not None else len(values)
@@ -266,6 +295,14 @@ class History:
                     result["series"][key] = self.series[key].plot(
                         values, min(start, stop), stop, budget
                     )
+                    if mean_window and loss_metric(key):
+                        result["means"][key] = (
+                            result["series"][key]
+                            if mean_window == 1
+                            else self.window_means(key, mean_window).plot(
+                                values, min(start, stop), stop, budget
+                            )
+                        )
         return result
 
     def records(self, cursor, limit, tail):

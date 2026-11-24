@@ -1,4 +1,4 @@
-import { el, fmt, hint, t } from "./ui.js";
+import { describe, el, fmt, iconButton, t } from "./ui.js";
 
 export const colors = ["#4d61ee", "#e15128", "#0a9c83", "#bd3d8f", "#9371ce", "#147fad"];
 export const accents = ["#4d61ee", "#e06f39", "#00a58c", "#bd4595", "#3879d7"];
@@ -31,14 +31,18 @@ function ticks(low, high, intervals, integer = false) {
 
 // Canvas resolution follows devicePixelRatio; DOM overlays keep hover independent of repaint.
 export class Plot {
-  constructor(container, onZoom) {
+  constructor(container, onZoom, onExpand) {
     this.onZoom = onZoom;
     this.card = el("article", "card chart-card");
     this.heading = el("div", "chart-heading");
     this.title = el("h3");
-    this.help = hint("");
     this.meta = el("span", "chart-meta");
-    this.heading.append(this.title, this.help, this.meta);
+    this.heading.append(this.title, this.meta);
+    if (onExpand) {
+      this.expand = iconButton("expand", t("expand"), onExpand);
+      this.expand.classList.add("expand-plot");
+      this.heading.append(this.expand);
+    }
     this.area = el("div", "plot");
     this.canvas = el("canvas");
     this.canvas.tabIndex = 0;
@@ -52,6 +56,7 @@ export class Plot {
     this.card.append(this.heading, this.area, this.legend);
     container.append(this.card);
     this.lines = [];
+    this.hiddenLines = new Set();
     this.hide();
     this.observer = new ResizeObserver(() => this.draw());
     this.observer.observe(this.area);
@@ -101,15 +106,31 @@ export class Plot {
       this.inspect(pts[i][0]);
     };
   }
-  update({ title, description, axis, lines, featured = false, accent = colors[0], range, unit }) {
+  update({
+    title,
+    description,
+    axis,
+    lines,
+    featured = false,
+    accent = colors[0],
+    range,
+    unit,
+    zeroY = false,
+  }) {
     this.axis = axis;
-    this.lines = lines;
+    this.zeroY = zeroY;
+    const visibleLines = () =>
+      lines.length < 2 ? lines : lines.filter((line) => !this.hiddenLines.has(line.id));
+    this.lines = visibleLines();
     this.range = range;
     this.title.textContent = title;
     this.card.classList.toggle("featured", featured);
     this.card.style.setProperty("--accent", accent);
-    this.help.dataset.help = description;
-    this.help.setAttribute("aria-label", description);
+    describe(this.title, description);
+    if (this.expand) {
+      this.expand.title = t("expand") + " · " + title;
+      this.expand.setAttribute("aria-label", this.expand.title);
+    }
     this.canvas.setAttribute(
       "aria-label",
       title + " · " + t(axis) + (this.onZoom ? " · " + t("selectHint") : ""),
@@ -118,9 +139,24 @@ export class Plot {
       visible = 0;
     this.legend.replaceChildren();
     for (const line of lines) {
-      count += line.count;
-      visible += line.points.length;
-      const item = el("span", "legend-item");
+      if (!line.trend) {
+        count += line.count;
+        visible += line.points.length;
+      }
+      const item = el(lines.length > 1 ? "button" : "span", "legend-item");
+      if (lines.length > 1) {
+        item.type = "button";
+        item.setAttribute("aria-pressed", String(!this.hiddenLines.has(line.id)));
+        item.title = t("toggleSeries") + " · " + line.label;
+        item.onclick = () => {
+          if (this.hiddenLines.has(line.id)) this.hiddenLines.delete(line.id);
+          else this.hiddenLines.add(line.id);
+          item.setAttribute("aria-pressed", String(!this.hiddenLines.has(line.id)));
+          this.lines = visibleLines();
+          this.hide();
+          this.draw();
+        };
+      }
       const swatch = el("i", "swatch" + (line.dash ? " dash" : ""));
       swatch.style.setProperty("--ink", line.color);
       item.append(swatch, document.createTextNode(line.label));
@@ -181,6 +217,10 @@ export class Plot {
       xmin -= 0.5;
       xmax += 0.5;
     }
+    if (this.zeroY) {
+      ymin = Math.min(0, ymin);
+      ymax = Math.max(0, ymax);
+    }
     const margin = ymin === ymax ? Math.abs(ymin) * 0.08 || 0.5 : (ymax - ymin) * 0.07;
     const floor = ymin >= 0 ? 0 : -Infinity;
     ymin = Math.max(floor, ymin - margin);
@@ -217,7 +257,7 @@ export class Plot {
       ctx.beginPath();
       ctx.strokeStyle = line.color;
       ctx.fillStyle = line.color;
-      ctx.lineWidth = line.dash ? 2.2 : 1.7;
+      ctx.lineWidth = line.trend ? 2.6 : line.dash ? 2.2 : line.faint ? 1 : 1.7;
       ctx.lineJoin = "round";
       ctx.setLineDash(line.dash ? [6, 4] : []);
       let move = true;

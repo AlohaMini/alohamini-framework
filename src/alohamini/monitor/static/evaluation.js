@@ -20,18 +20,32 @@ function fact(parent, label, value) {
 }
 function readReport(data, name) {
   const values = data?.mae_by_action;
+  const valid = (map, signed = false) =>
+    map &&
+    typeof map === "object" &&
+    !Array.isArray(map) &&
+    Object.keys(map).length &&
+    Object.values(map).every((v) => Number.isFinite(v) && (signed || v >= 0));
   if (
-    !values ||
-    typeof values !== "object" ||
-    Array.isArray(values) ||
-    !Object.keys(values).length ||
-    !Object.values(values).every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0)
-  ) {
+    !valid(values) ||
+    (data.bias_by_action != null && !valid(data.bias_by_action, true)) ||
+    (data.rmse_by_action != null && !valid(data.rmse_by_action)) ||
+    (data.by_horizon != null &&
+      (!Array.isArray(data.by_horizon) ||
+        !data.by_horizon.every(
+          (h) =>
+            Number.isInteger(h?.index) &&
+            (h.offset == null || Number.isFinite(h.offset)) &&
+            valid(h.mae_by_action),
+        )))
+  )
     throw Error(t("reportBad"));
-  }
   return {
     name,
     mae_by_action: values,
+    bias_by_action: data.bias_by_action,
+    rmse_by_action: data.rmse_by_action,
+    by_horizon: data.by_horizon,
     valid_action_steps: data.valid_action_steps,
     checkpoint: typeof data.checkpoint === "string" ? data.checkpoint : null,
     dataset: typeof data.dataset === "string" ? data.dataset : null,
@@ -114,17 +128,15 @@ export class Evaluation {
     const signal = this.controller.signal;
     const view = $("evaluation-view");
     view.replaceChildren();
-    const h = el("div", "toolbar");
-    h.append(el("h2", null, t("datasets")));
-    view.append(h);
     const saved = stored(run.id);
-    if (!saved.datasets.length) {
+    if (saved.datasets.length) {
+      const h = el("div", "toolbar");
+      h.append(el("h2", null, t("datasets")));
+      view.append(h);
+    }
+    if (!saved.datasets.length && !saved.reports.length && !run.offline?.mae_by_action) {
       const empty = el("div", "card evaluation-block");
-      empty.append(
-        el("h3", null, t("evalEmpty")),
-        el("p", "detail", t("evalHint")),
-        btn(t("addEval"), () => this.picker(run)),
-      );
+      empty.append(el("h3", null, t("evalEmpty")), el("p", "detail", t("evalHint")));
       view.append(empty);
     }
     const recordings = saved.datasets.map((id) => {
@@ -140,7 +152,38 @@ export class Evaluation {
     reports.push(...saved.reports);
     if (reports.length) {
       const title = el("div", "toolbar");
-      title.append(el("h2", null, t("offline") + " · MAE"));
+      title.append(el("h2", null, t("offline")));
+      const controls = el("div", "controls"),
+        measure = el("select"),
+        horizon = el("select");
+      const available = ["mae_by_action", "bias_by_action", "rmse_by_action"].filter((k) =>
+        reports.some((r) => r[k]),
+      );
+      measure.replaceChildren(...available.map((k) => opt(k, t(k))));
+      measure.setAttribute("aria-label", t("reportMetric"));
+      horizon.setAttribute("aria-label", t("horizon"));
+      const offsets = [
+        ...new Set(
+          reports.flatMap((r) => (r.by_horizon || []).filter((h) => h.offset != null).map((h) => h.offset)),
+        ),
+      ].sort((a, b) => a - b);
+      // Index-based horizons with undeclared offsets are kept distinct from physical frame offsets.
+      const indices = [
+        ...new Set(
+          reports.flatMap((r) => (r.by_horizon || []).filter((h) => h.offset == null).map((h) => h.index)),
+        ),
+      ].sort((a, b) => a - b);
+      horizon.replaceChildren(
+        opt("all", t("all")),
+        ...offsets.map((v) => opt("offset:" + v, v)),
+        ...indices.map((v) => opt("index:" + v, "#" + v)),
+      );
+      const hl = el("label", "axis", t("horizon"));
+      hl.append(horizon);
+      if (available.length > 1) controls.append(measure);
+      else controls.append(el("span", "detail", t(available[0])));
+      if (offsets.length + indices.length) controls.append(hl);
+      title.append(controls);
       const wrap = el("div", "table-wrap"),
         table = el("table"),
         head = table.createTHead().insertRow();
@@ -173,12 +216,27 @@ export class Evaluation {
         head.append(th);
       }
       const rows = table.createTBody();
-      const names = new Set(reports.flatMap((report) => Object.keys(report.mae_by_action)));
-      for (const name of names) {
-        const row = rows.insertRow();
-        row.append(el("td", null, name));
-        for (const report of reports) row.append(el("td", "number", fmt(report.mae_by_action[name])));
+      function fill() {
+        hl.hidden = measure.value !== "mae_by_action";
+        const perHorizon = !hl.hidden && horizon.value !== "all";
+        const [axis, value] = horizon.value.split(":");
+        const maps = reports.map((r) =>
+          perHorizon
+            ? r.by_horizon?.find(
+                (h) => (axis === "offset" || h.offset == null) && h[axis] === Number(value),
+              )?.mae_by_action
+            : r[measure.value],
+        );
+        rows.replaceChildren();
+        const names = new Set(maps.flatMap((m) => Object.keys(m || {})));
+        for (const name of names) {
+          const row = rows.insertRow();
+          row.append(el("td", null, name));
+          for (const m of maps) row.append(el("td", "number", fmt(m?.[name])));
+        }
       }
+      measure.onchange = horizon.onchange = fill;
+      fill();
       wrap.append(table);
       view.append(title, wrap);
     }
@@ -262,6 +320,7 @@ export class Evaluation {
         if (signal.aborted || seq !== revision) return;
         const lines = Object.entries(data.series).map(([k, s], i) => ({
           ...s,
+          id: k,
           color: colors[i],
           dash: i > 0,
           label: t(k),

@@ -211,6 +211,9 @@ def parse_training_args(argv=None):
         parser.add_argument(f"--scheduler.{name}", type=value, default=argparse.SUPPRESS)
     for field in fields(EMAConfig):
         parser.add_argument(f"--ema.{field.name}", type=value, default=argparse.SUPPRESS)
+    parser.add_argument("--diagnostics.modules", type=json.loads, default=argparse.SUPPRESS)
+    for name in ("update_every", "train_eval_samples"):
+        parser.add_argument(f"--diagnostics.{name}", type=int, default=argparse.SUPPRESS)
     for name in ("resume", "cudnn_deterministic", "persistent_workers", "deterministic_algorithms"):
         parser.add_argument(f"--{name}", type=boolean)
     parser.add_argument("--eval_persistent_workers", type=boolean)
@@ -264,7 +267,7 @@ def parse_training_args(argv=None):
             for part in parts[:-1]:
                 section = section.setdefault(part, {})
             section[parts[-1]] = setting
-        elif name.startswith(("optimizer.", "scheduler.", "ema.")):
+        elif name.startswith(("optimizer.", "scheduler.", "ema.", "diagnostics.")):
             section, key = name.split(".", 1)
             cfg[section] = {**(cfg.get(section) or {}), key: setting}
         elif setting is not None:

@@ -2,57 +2,54 @@
 
 [简体中文](zh-CN/training-monitor.md)
 
+Start in an environment with AlohaMini installed. The default address is `http://127.0.0.1:7860/`. Metrics and logs use the platform package. Evaluation trajectories also use PyArrow, included in the training environment.
+
 ```bash
+conda activate alohamini
 alohamini train monitor --open
+alohamini train monitor --runs-dir /path/to/runs --datasets-dir /path/to/datasets
 ```
 
-The monitor opens at `http://127.0.0.1:7860/`. Start it before, during or after training. It reads the framework's existing output files. Closing the monitor leaves the trainer running.
+The workspace defaults to `~/Alohamini_workspace`. Set `ALOHAMINI_WORKSPACE` to change it.
 
-| Option | Source |
+| Option | Use |
 | --- | --- |
-| `--runs-dir PATH` | A single output directory or its parent. Default is `$ALOHAMINI_WORKSPACE/runs`. |
-| `--datasets-dir PATH` | An evaluation dataset or a directory of datasets. Repeat for multiple locations. Default is the workspace's `datasets/`. |
-| `--logs-dir PATH` | Detached launcher JSON and matching console logs. Default is the workspace's `logs/training/`. |
-| `--port N` | Loopback port. Use `0` to choose a free port and print the URL. |
-| `--allow-origin ORIGIN` | Enable browser reads for an exact Studio origin, e.g. `http://localhost:5173`. Repeat for multiple origins. |
+| `--runs-dir PATH` | One training output or its parent. Defaults to the workspace's `runs/`. Each resume is a separate attempt. |
+| `--datasets-dir PATH` | A native AlohaMini or LeRobot v3 evaluation dataset or its parent. Repeat for multiple locations. Defaults to the workspace's `datasets/`. |
+| `--logs-dir PATH` | Launcher configurations and console logs. Defaults to the workspace's `logs/training/`. |
+| `--port N`, `--open` | Set the loopback port. Use `0` for a free port and `--open` to open a browser. |
+| `--allow-origin ORIGIN` | Permit browser API reads from an exact Studio origin. Repeat for multiple origins. |
 
-The default workspace is `~/Alohamini_workspace`. Metrics and console viewing need only the platform package. Evaluation trajectories also use PyArrow, included in the learning and PC environments.
+## Inspect a run
 
-## Inspect and compare
+- The first visit opens in English. Switch languages in the header or use `?lang=en` or `?lang=zh`. Collapse the desktop sidebar to widen the plots. Tick additional runs to compare them.
+- **Metrics** selects recorded components and optimizer groups for the policy. Hover or focus a metric name for its definition. Faint lines show individual updates, trend lines show arithmetic means of complete record windows, and dashed lines show validation. Click a legend entry to toggle it. Long histories retain endpoints, local extrema and gaps per metric.
+- **Expand chart** opens an independent interval. Drag to zoom, pan, undo, restore the full range, or include zero on the Y axis. Zooming queries the selected interval again. Available X axes are recorded steps, samples and elapsed seconds.
+- **Diagnostics** shows the recent distribution, P50/P95, standard deviation, slope per step, consecutive window means, learning rates, clipping and timing. Enter a validation loss target to find the first observed checkpoint at or below it. Clipping inferred from a legacy norm and threshold is labelled.
+- Expand **Training setup** for startup freeze flags, parameter counts, optimizer groups and preflight results. Open a current `train check` report or a historical `RUN.preflight.json` here. Older consoles may supply aggregate parameter counts. **Configuration** supports key and value filters. **Logs** displays raw JSONL and available launch consoles.
+- **Evaluation** accepts local recordings and offline reports (JSON, up to 4 MiB). Select an episode and channel for frame-index trajectories. Reports show per-channel MAE, signed bias, RMSE and per-offset MAE when supplied. The view includes available source and checkpoint manifest information. Imported selections are stored in the current browser.
 
-- Select a run to see its latest training and validation records. Tick additional attempts to overlay curves and compare their saved configurations. Each resume has its own trace, including retries from the same checkpoint.
-- Choose metrics and an X axis. Drag across a chart or enter a range to query that interval. Use **Full history** to reset. Hover over a point, or focus the plot and use the arrow keys. The question marks explain metric definitions and available aggregation rules.
-- Solid lines show training and dashed lines show validation. For sparse records the tooltip gives the observed value at the selected coordinate. Overview counts are the displayed points and recorded values in the current range. Short ranges show all points. Longer ranges preserve endpoints, local extrema and gaps in each metric.
-- **Logs** shows the original structured records and available detached console streams. Each console stream is labelled by its launch filename. The browser follows the latest output and bounds the displayed tail. Pause auto-refresh to read it. Hidden tabs suspend polling.
-- Use the language control or open with `?lang=zh` or `?lang=en`. The URL includes the selected primary attempt.
+## Optional training diagnostics
 
-The trainer flushes `metrics.jsonl` after each successful optimizer update. Validation uses `validation-metrics.jsonl`. A resumed attempt uses the corresponding `*-from-STEP-ATTEMPT.jsonl`, configuration and metric schema. New records include cumulative consumed samples, seconds since this attempt's training loop started (`elapsed_s`) and Unix event time (`event_time_s`). Validation and checkpoint pauses are included in elapsed time. New training records also include cumulative AMP skips, clipping decisions when clipping is enabled, and per-group rates for multi-group optimizers. Historical files use the axes they actually recorded.
-
-## Evaluation
-
-In **Add evaluation data**, select a local AlohaMini or LeRobot v3 dataset. The monitor reads its metadata and projects numeric Parquet columns for the selected episode and action channel. The trajectory X axis is the recorded frame index. Matching state channel names with compatible declared units can be displayed alongside actions. A missing unit is marked unspecified. A numbered checkpoint's manifest is compared with the SHA-256 in `meta/evaluation.json` when available.
-
-**Evaluation** also shows the run directory's current `offline-evaluation.json`. Use the file chooser to import an additional offline evaluation JSON with `mae_by_action` (up to 4 MiB). MAE is shown separately per action in its recorded scale. The final report belongs to the output directory as a whole. Dataset selections and imported report values are saved for the primary attempt in this browser. Removing one from the view leaves the source intact.
-
-## Studio API
-
-Read-only HTTP GET endpoints under `/api/v1` return JSON. Use the IDs returned by discovery. Studio can use a same-origin proxy with a loopback upstream Host, or the exact browser origin option above.
-
-| Endpoint | Response and options |
+| Training option | Measurement |
 | --- | --- |
-| `/runs` | `runs[]` with attempt `id`, `name`, resume suffix, `version` and `metadata_version`. Compare versions before fetching details. |
-| `/runs/{id}` | Resolved configuration, component schema, console filenames, final offline report, and per-phase metric names, available axes, latest record and anomaly counts. `brief=1` omits configuration, schema, report and filenames. |
-| `/runs/{id}/series` | Repeat `metric` up to 32 times. `axis=step\|samples\|elapsed_s`, inclusive `min` and `max`, `points=16..4096` per metric and phase. Defaults are loss, step and 800 points. |
-| `/runs/{id}/records` | Unaggregated structured records, `phase=train\|validation`, `limit=1..1000`, optional `cursor`. `tail=1` starts at the latest page. Returns `records`, `cursor`, `more`, `reset` and `invalid_lines`. |
-| `/runs/{id}/console` | `name` from the attempt's log list and optional byte `cursor`. Returns a UTF-8 tail with `text`, `cursor` and `reset`. |
-| `/datasets`, `/datasets/{id}` | Configured dataset IDs and metadata. Pass `run={attempt_id}` on the detail endpoint to check the recorded checkpoint manifest. |
-| `/datasets/{id}/trajectory` | `episode`, exact action `field`, optional `points`. Returns the frame-index series, frame count and declared unit. |
+| `--diagnostics.modules='["model.action_head"]' --diagnostics.update_every=500` | ACT action-head example. On the chosen updates, copy the selected trainable parameters and measure pre-clip gradients, actual weight changes and their relative norms. Supports single-device and replicated DDP. |
+| `--diagnostics.train_eval_samples=64` | During periodic validation, evaluate a fixed training subset with the same weights and evaluation mode. Records `train_eval_loss` and `generalization_gap`. |
 
-```bash
-curl -s http://127.0.0.1:7860/api/v1/runs
-curl -s "http://127.0.0.1:7860/api/v1/runs/$RUN_ID/series?metric=loss&metric=grad_norm&points=800"
-```
+Both are off by default. Freeze flags are collected once at startup. Offline error summaries reuse evaluation predictions. New successful updates include sample counts, monotonic elapsed seconds and event time. Historical fields appear when recorded. Closing the monitor leaves training running.
 
-Each series response contains independent `train` and `validation` objects with `mode`, `cursor`, full axis `extent`, and `series[metric] = {count, points: [[x, y], ...]}`. Pass the cursors back as `after_train` and `after_validation` with the same metric selection, range and resolution. Apply `append` by appending points and adding counts. Apply `replace` by replacing the phase. Request a fresh snapshot on zoom or to re-bin a growing trace. Cursors count records, so duplicate steps remain distinct.
+## Files and Studio API
 
-The service indexes complete JSONL lines on demand and keeps the six most recently viewed attempt indexes in memory. File replacement, truncation or index eviction invalidates old cursors. Malformed lines are counted separately. Null and non-finite scalars appear as gaps. For quantitative analysis, paginate `records` or read the original JSONL files.
+Run files include `train.json`, `metrics.jsonl`, `validation-metrics.jsonl`, `metrics-schema.json`, `metrics-resources.json` and the directory-wide `offline-evaluation.json`. Resumes use matching `from-STEP-ATTEMPT` metrics and preflight files and a `resume-STEP-ATTEMPT.json` configuration. Initial runs also accept `resources.json` in their output directory and a matching launch preflight in the logs directory. Bundles with `runs/RUN` and a sibling `logs/RUN.preflight.json` are discovered automatically.
+
+Read-only HTTP GET endpoints use the `/api/v1` prefix. Studio can use a same-origin proxy with a loopback upstream Host, or an exact browser origin set with `--allow-origin`.
+
+| Endpoint | Parameters and response |
+| --- | --- |
+| `/runs`, `/runs/{id}` | Listing with `id`, `version` and `metadata_version`. Details include phase summaries, configuration, `schema.runtime`, `preflight`, `launch_preflight`, console parameter counts and the offline report. Use `brief=1` for dynamic summaries. |
+| `/runs/{id}/series` | Up to 32 repeated `metric` keys, `axis=step\|samples\|elapsed_s`, inclusive `min/max`, and `points=16..4096` per line (default 800). Set `mean_window=0..4096` for loss trends, off by default. |
+| `/runs/{id}/diagnostics` | `metric`, `window=2..4096`, optional validation loss `target`. Returns raw-record window statistics, optimizer diagnostics and observed validation results. |
+| `/runs/{id}/records`, `/runs/{id}/console` | Records accept `phase=train\|validation`, `limit=1..1000`, `cursor` and optional `tail=1`. Console reads use a log `name` and byte cursor. |
+| `/datasets`, `/datasets/{id}`, `/datasets/{id}/trajectory` | Dataset listing, metadata (optional `run` for manifest matching), and frame-index series for `episode`, `field` and `points`. |
+
+Series return `extent`, `cursor`, `series` and optional `means` separately for `train` and `validation`. Each metric contains `count` and `points: [[x,y], ...]`. Pass cursors as `after_train` and `after_validation` with unchanged metrics, axis, bounds, resolution and mean window. Append points and counts on `append`. Replace the phase on `replace`. Raw records support pagination and return malformed-line counts.

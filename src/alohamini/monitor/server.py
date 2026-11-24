@@ -63,6 +63,13 @@ def dispatch(monitor, parts, query):
         run = monitor.catalog.get(parts[1])
         if len(parts) == 2:
             return monitor.summary(run, brief=arg("brief") == "1")
+        if parts[2] == "diagnostics":
+            return monitor.diagnostics(
+                run,
+                integer(arg("window", "100"), 2, 4096),
+                arg("metric", "loss"),
+                bound(arg("target")),
+            )
         if parts[2] == "series":
             axis = arg("axis", "step")
             keys = list(dict.fromkeys(query.get("metric", ["loss"])))
@@ -74,7 +81,16 @@ def dispatch(monitor, parts, query):
             ):
                 raise ValueError("Invalid axis, range or metric count")
             cursors = {p: arg("after_" + p) for p in ("train", "validation")}
-            return monitor.chart(run, keys, axis, low, high, budget(), cursors)
+            return monitor.chart(
+                run,
+                keys,
+                axis,
+                low,
+                high,
+                budget(),
+                cursors,
+                integer(arg("mean_window", "0"), 0, 4096),
+            )
         if parts[2] == "records":
             phase = arg("phase", "train")
             if phase not in ("train", "validation"):

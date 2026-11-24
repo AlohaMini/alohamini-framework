@@ -5,7 +5,7 @@ import {
   el,
   explain,
   fmt,
-  hint,
+  describe,
   lang,
   modal,
   opt,
@@ -16,6 +16,9 @@ import {
 } from "./ui.js";
 import { accents, colors, Plot } from "./plot.js";
 import { Evaluation } from "./evaluation.js";
+import { inspectChart } from "./inspector.js";
+import { Diagnostics } from "./diagnostics.js";
+import { renderResources } from "./resources.js";
 
 let runs = [],
   selected = [],
@@ -23,7 +26,8 @@ let runs = [],
   axis = "step",
   range = null,
   live = true,
-  metrics = null;
+  metrics = null,
+  trend = 100;
 let request,
   timer,
   runListKey = "",
@@ -39,6 +43,7 @@ const evaluation = new Evaluation(() => {
   evalKey = "";
   switchTab("evaluation");
 });
+const diagnostics = new Diagnostics(refresh);
 const primary = () => info.get(selected[0]);
 const attemptName = (r) =>
   r.attempt ? "#" + r.ordinal + " · " + t("resume") + " " + r.attempt.split("-")[0] : t("initial");
@@ -59,9 +64,44 @@ function metricSpec(r, k) {
 function metricDescription(key) {
   const descriptions = selection()
     .filter((r) => Object.values(r.phases).some((p) => p.metrics.includes(key)))
-    .map((r) => [runName(r), explain(key, metricSpec(r, key))]);
+    .map((r) => [runName(r), explain(key, metricSpec(r, key), r)]);
   if (new Set(descriptions.map(([, text]) => text)).size <= 1) return descriptions[0]?.[1] || explain(key);
   return descriptions.map(([name, text]) => name + " · " + text).join("\n");
+}
+function defaultMetrics() {
+  const r = primary();
+  if (!r) return [];
+  const available = [...new Set(Object.values(r.phases).flatMap((p) => p.metrics))];
+  const specs = r.schema?.components || [];
+  const isComponent = (k) => k.startsWith("loss_") || k.endsWith("_loss");
+  const policy = [
+    ...new Set([
+      ...specs.filter((s) => s.console).map((s) => s.name),
+      ...specs.map((s) => s.name).filter(isComponent),
+      ...available.filter(isComponent),
+    ]),
+  ]
+    .filter((k) => available.includes(k))
+    .slice(0, 6);
+  const groupRates = available.filter((k) => k.startsWith("lr/"));
+  const defaults = [
+    "loss",
+    ...policy,
+    "grad_norm",
+    ...(groupRates.length > 1 ? groupRates.slice(0, 3) : ["lr"]),
+  ];
+  const recorded = [...new Set(defaults)].filter((k) => available.includes(k));
+  return recorded.length ? recorded : available.slice(0, 5);
+}
+function extent() {
+  const extents = selection().flatMap((r) =>
+    Object.values(snapshots.get(r.id)?.phases || {})
+      .map((p) => p.extent)
+      .filter(Boolean),
+  );
+  return extents.length
+    ? [Math.min(...extents.map((v) => v[0])), Math.max(...extents.map((v) => v[1]))]
+    : null;
 }
 function getBudget() {
   return Math.min(2048, Math.max(256, Math.ceil($("metrics-view").clientWidth / 64) * 64));
@@ -76,11 +116,37 @@ function setUrl() {
   url.searchParams.set("lang", lang);
   history.replaceState(null, "", url);
 }
-function sidebar(close = false) {
-  const open = !close && !document.body.classList.contains("menu-open");
-  document.body.classList.toggle("menu-open", open);
-  $("shade").hidden = !open;
+const mobile = matchMedia("(max-width:850px)");
+let collapsed = localStorage.getItem("am:sidebarCollapsed") === "1",
+  drawer = false;
+function showSidebar() {
+  const open = mobile.matches ? drawer : !collapsed;
+  document.body.classList.toggle("sidebar-collapsed", !mobile.matches && collapsed);
+  document.body.classList.toggle("menu-open", mobile.matches && drawer);
+  $("sidebar").inert = !open;
+  $("shade").hidden = !mobile.matches || !drawer;
+  $("menu").title = t(open ? "hideRuns" : "showRuns");
+  $("menu").setAttribute("aria-label", $("menu").title);
+  $("menu").setAttribute("aria-expanded", String(open));
 }
+function sidebar(close = false) {
+  if (mobile.matches) {
+    drawer = close ? false : !drawer;
+    if (!drawer && $("sidebar").contains(document.activeElement)) $("menu").focus();
+  } else if (!close) {
+    collapsed = !collapsed;
+    localStorage.setItem("am:sidebarCollapsed", collapsed ? "1" : "0");
+  }
+  showSidebar();
+  if (mobile.matches && drawer) $("search").focus();
+}
+mobile.addEventListener("change", () => {
+  drawer = false;
+  showSidebar();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && drawer) sidebar(true);
+});
 function selectRun(id, compare = false) {
   if (compare) {
     if (selected.includes(id)) selected = selected.filter((k) => k !== id);
@@ -136,7 +202,11 @@ function renderList() {
     if (i < 0 && box.disabled) box.title = t("compareLimit");
     box.setAttribute("aria-label", box.title);
     box.onchange = () => selectRun(r.id, true);
-    item.append(label, box);
+    if (i === 0) {
+      const mark = el("span", "primary-mark", "✓");
+      mark.title = t("primary");
+      item.append(label, mark);
+    } else item.append(label, box);
     list.append(item);
   }
   if (!list.childElementCount) list.append(el("p", "side-note", filter ? t("noMatches") : t("noRuns")));
@@ -153,49 +223,23 @@ function renderHead(r) {
     (when ? t("lastEvent") : t("fileUpdated")) +
     " " +
     date.toLocaleString(lang, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const cards = [
-    ["step", train.step, r.steps ? t("budget") + " " + fmt(r.steps) : t("scope")],
-    ["trainLoss", train.loss, t("stepAt") + " " + fmt(train.step)],
-    [
-      "valLoss",
-      val.loss,
-      val.step != null
-        ? t("stepAt") + " " + fmt(val.step) + " · " + (val.weights || t("validation"))
-        : t("unavailable"),
-    ],
-    ["grad_norm", train.grad_norm, t("stepAt") + " " + fmt(train.step)],
+  const readings = [
+    ["step", train.step, r.steps ? " / " + fmt(r.steps) : ""],
+    ["trainLoss", train.loss, ""],
+    ["valLoss", val.loss, val.step != null && val.step !== train.step ? " @ " + fmt(val.step) : ""],
+    ["grad_norm", train.grad_norm, ""],
   ];
   const grid = $("kpis");
-  cards.forEach(([key, value, note], index) => {
-    let cell = grid.children[index];
+  for (const [i, [key, value, note]] of readings.entries()) {
+    let cell = grid.children[i];
     if (!cell) {
-      cell = el("div", "kpi");
-      const label = el("div", "kpi-label");
-      label.append(el("span"), hint(""));
-      cell.append(label, el("div", "kpi-value"), el("small"));
-      if (index === 0) {
-        const bar = el("div", "progress");
-        bar.append(el("i"));
-        cell.append(bar);
-      } else {
-        const accent = el("span", "accent");
-        accent.style.setProperty("--accent", [colors[0], colors[2], colors[1]][index - 1]);
-        cell.append(accent);
-      }
+      cell = el("div");
+      cell.append(el("dt"), el("dd"));
       grid.append(cell);
     }
-    cell.querySelector(".kpi-label span").textContent = t(key);
-    const help = cell.querySelector(".hint");
-    help.dataset.help = explain(key);
-    help.setAttribute("aria-label", help.dataset.help);
-    cell.querySelector(".kpi-value").textContent = fmt(value, true);
-    cell.querySelector("small").textContent = note;
-    if (index === 0) {
-      const bar = cell.querySelector(".progress");
-      bar.hidden = !r.steps || train.step == null;
-      if (!bar.hidden) bar.firstChild.style.width = Math.min(100, (100 * train.step) / r.steps) + "%";
-    }
-  });
+    cell.firstChild.textContent = t(key);
+    cell.lastChild.replaceChildren(document.createTextNode(fmt(value, true)), el("small", null, note));
+  }
 }
 function renderAxes() {
   const present = selection()
@@ -280,7 +324,7 @@ function rangeDialog() {
 function metricDialog() {
   const body = modal(t("chooseMetrics")),
     keys = sortedKeys(unionMetrics()),
-    chosen = new Set(metrics || []);
+    chosen = new Set(metrics || defaultMetrics());
   const options = el("div");
   for (const key of keys) {
     const label = el("label", "metric-choice"),
@@ -297,6 +341,11 @@ function metricDialog() {
   body.append(message);
   const actions = el("div", "dialog-actions");
   actions.append(
+    btn(t("byPolicy"), () => {
+      metrics = null;
+      $("dialog").close();
+      refresh();
+    }),
     btn(
       t("apply"),
       () => {
@@ -316,7 +365,7 @@ function metricDialog() {
 async function fetchSeries(r, keys, queryKey, budget, signal) {
   const old = snapshots.get(r.id);
   if (old?.version === r.version && old.key === queryKey) return false;
-  const params = new URLSearchParams({ axis, points: budget });
+  const params = new URLSearchParams({ axis, points: budget, mean_window: trend });
   keys.forEach((k) => params.append("metric", k));
   if (range) {
     params.set("min", range[0]);
@@ -330,13 +379,15 @@ async function fetchSeries(r, keys, queryKey, budget, signal) {
     appended = false;
   for (const [phase, p] of Object.entries(phases)) {
     if (p.mode !== "append" || !delta) continue;
-    const previous = old.phases[phase].series;
     let added = 0;
-    for (const [k, s] of Object.entries(p.series)) {
-      added = Math.max(added, s.points.length);
-      if (previous[k]) {
-        s.points = previous[k].points.concat(s.points);
-        s.count += previous[k].count;
+    for (const group of ["series", "means"]) {
+      for (const [k, series] of Object.entries(p[group] || {})) {
+        added = Math.max(added, series.points.length);
+        const previous = old.phases[phase][group]?.[k];
+        if (previous) {
+          series.points = previous.points.concat(series.points);
+          series.count += previous.count;
+        }
       }
     }
     appended = true;
@@ -350,6 +401,38 @@ async function fetchSeries(r, keys, queryKey, budget, signal) {
   });
   return true;
 }
+function seriesLines(key, index, runs, phases, windowSize) {
+  const lines = [];
+  for (const [i, r] of runs.entries()) {
+    for (const [phase, p] of Object.entries(phases[i] || {})) {
+      const series = p.series[key];
+      if (!series?.count) continue;
+      const mean = p.means?.[key],
+        hasMean = mean?.points.some((point) => point[1] != null);
+      const slot = index % accents.length;
+      const phaseColor = phase === "train" ? accents[slot] : slot === 2 ? colors[3] : colors[2];
+      const base = runs.length === 1 ? phaseColor : colors[i % colors.length];
+      const prefix = runs.length > 1 ? runName(r) + " · " : "";
+      lines.push({
+        ...series,
+        id: r.id + "/" + phase,
+        color: hasMean ? base + "58" : base,
+        faint: hasMean,
+        dash: phase === "validation",
+        label: prefix + t(hasMean ? "rawLine" : phase),
+      });
+      if (hasMean)
+        lines.push({
+          ...mean,
+          id: r.id + "/mean",
+          trend: true,
+          color: base,
+          label: prefix + t("mean") + " · " + fmt(windowSize) + " " + t("recordsUnit"),
+        });
+    }
+  }
+  return lines;
+}
 function drawCharts(keys) {
   const box = $("charts");
   box.querySelector(".empty-state")?.remove();
@@ -358,7 +441,6 @@ function drawCharts(keys) {
       plot.destroy();
       charts.delete(key);
     }
-  $("chart-count").textContent = keys.length;
   if (!keys.length) {
     box.append(el("div", "empty-state", t("noneYet")));
     return;
@@ -366,30 +448,33 @@ function drawCharts(keys) {
   keys.forEach((key, index) => {
     let plot = charts.get(key);
     if (!plot) {
-      plot = new Plot(box, chooseRange);
+      plot = new Plot(box, chooseRange, () => {
+        const runs = selection(),
+          currentTrend = trend,
+          currentIndex = [...box.children].indexOf(plot.card);
+        inspectChart({
+          key,
+          description: metricDescription(key),
+          runs,
+          axis,
+          bounds: extent(),
+          initial: range,
+          trend: currentTrend,
+          linesFor: (phases) => seriesLines(key, currentIndex, runs, phases, currentTrend),
+          accent: accents[currentIndex % accents.length],
+        });
+      });
       charts.set(key, plot);
     }
     if (box.children[index] !== plot.card) box.insertBefore(plot.card, box.children[index] || null);
-    const lines = [];
-    for (const [i, r] of selection().entries()) {
-      const snap = snapshots.get(r.id);
-      for (const [phase, p] of Object.entries(snap?.phases || {})) {
-        const s = p.series[key];
-        if (!s?.count) continue;
-        const color =
-          selected.length === 1
-            ? phase === "train"
-              ? accents[index % accents.length]
-              : colors[2]
-            : colors[i % colors.length];
-        lines.push({
-          ...s,
-          color,
-          dash: phase === "validation",
-          label: (selected.length > 1 ? runName(r) + " · " : "") + t(phase),
-        });
-      }
-    }
+    const runs = selection(),
+      lines = seriesLines(
+        key,
+        index,
+        runs,
+        runs.map((r) => snapshots.get(r.id)?.phases),
+        trend,
+      );
     plot.update({
       title: t(key),
       description: metricDescription(key),
@@ -433,8 +518,8 @@ function renderConfig() {
       continue;
     const row = body.insertRow(),
       name = el("td", null, k);
-    const explanation = explain(k, null, true);
-    if (explanation) name.append(hint(explanation));
+    const explanation = explain(k);
+    describe(name, explanation);
     row.append(name);
     data.forEach((d) => row.append(el("td", "config-value", d.get(k) ?? "—")));
   }
@@ -493,6 +578,11 @@ function showLive() {
   $("live").setAttribute("aria-pressed", String(live));
   $("live").title = t(live ? "pauseHint" : "resumeHint");
   $("live-icon").setAttribute("href", live ? "#icon-pause" : "#icon-play");
+  showSidebar();
+  $("trend").replaceChildren(
+    ...[0, 20, 100, 500].map((n) => opt(n, n ? n + " " + t("recordsUnit") : t("off"))),
+  );
+  $("trend").value = trend;
   $("language-label").textContent = lang === "zh" ? "English" : "中文";
 }
 let lastPaint = "",
@@ -513,12 +603,12 @@ async function sync(signal) {
   renderList();
   const empty = !selected.length;
   $("empty").hidden = !empty;
-  $("import").disabled = empty;
+  $("import").hidden = empty;
   if (empty) {
     lastHeader = "";
     $("run-view").hidden = true;
     $("policy-badge").hidden = true;
-    $("primary-name").textContent = t("localWorkspace");
+    $("primary-name").textContent = t("monitor");
     $("last-event").textContent = "";
     $("feedback").hidden = true;
     return;
@@ -544,6 +634,7 @@ async function sync(signal) {
     renderHead(r);
     lastHeader = headerSig;
   }
+  renderResources(selection(), refresh);
   const notices = [];
   for (const run of selection())
     for (const [phase, p] of Object.entries(run.phases)) {
@@ -565,10 +656,10 @@ async function sync(signal) {
   if (tab === "metrics") {
     renderAxes();
     const all = unionMetrics();
-    if (!metrics?.length) metrics = sortedKeys(all).slice(0, 5);
-    const keys = metrics.filter((k) => all.includes(k)),
+    $("metrics-view").querySelector(".toolbar").hidden = !all.length;
+    const keys = (metrics || defaultMetrics()).filter((k) => all.includes(k)),
       budget = getBudget();
-    const queryKey = signature([axis, range, keys, budget]);
+    const queryKey = signature([axis, range, keys, budget, trend]);
     const changed = await Promise.all(
       selection().map((run) => fetchSeries(run, keys, queryKey, budget, signal)),
     );
@@ -578,7 +669,8 @@ async function sync(signal) {
       drawCharts(keys);
       lastPaint = paint;
     }
-  } else if (tab === "config") renderConfig();
+  } else if (tab === "diagnostics") await diagnostics.render(selection(), runName, signal);
+  else if (tab === "config") renderConfig();
   else if (tab === "logs") await renderLogs(r, signal);
   else if (tab === "evaluation") {
     const key = signature([r.id, r.metadata_version, lang]);
@@ -625,6 +717,10 @@ $("axis").onchange = (e) => {
   range = null;
   refresh();
 };
+$("trend").onchange = () => {
+  trend = Number($("trend").value);
+  refresh();
+};
 $("metrics-btn").onclick = metricDialog;
 $("range-btn").onclick = rangeDialog;
 $("reset-range").onclick = () => {
@@ -639,6 +735,7 @@ $("log-source").onchange = () => {
   refresh();
 };
 $("menu").onclick = () => sidebar();
+$("close-sidebar").onclick = () => sidebar(true);
 $("shade").onclick = () => sidebar(true);
 document
   .querySelectorAll("[data-tab]")
