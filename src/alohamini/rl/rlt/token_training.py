@@ -8,13 +8,50 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch import nn
 
-from alohamini.datasets.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.datasets.experience.storage import RunLock, atomic_json, json_lines, load_snapshot
 from alohamini.learning.loading import collate_samples
 from alohamini.learning.precision import tf32_context
 from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint, supervised_stage
-from alohamini.policies.rlt.networks import RLTokenDecoder, RLTokenEncoder
+from alohamini.policies.rlt.networks import RLTokenEncoder
 from alohamini.policies.rlt.policy import RLTPolicy, require_contract
+from alohamini.rl.rlt.episodes import recorded_action_names
+
+
+class RLTokenDecoder(nn.Module):
+    def __init__(self, input_dim=2048, dim=2048, layers=4, heads=8, max_tokens=2048):
+        super().__init__()
+        self.projection = nn.Linear(input_dim, dim)
+        self.position = nn.Parameter(torch.randn(1, max_tokens, dim) * 0.02)
+        layer = nn.TransformerEncoderLayer(
+            dim,
+            heads,
+            dim * 4,
+            dropout=0.0,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.decoder = nn.TransformerEncoder(
+            layer, layers, norm=nn.LayerNorm(dim), enable_nested_tensor=False
+        )
+        self.output = nn.Linear(dim, input_dim)
+
+    def forward(self, token, targets, mask):
+        length = targets.shape[1]
+        if length > self.position.shape[1]:
+            raise ValueError("Decoder sequence exceeds max_tokens")
+        x = torch.cat((token[:, None], self.projection(targets.detach()[:, :-1].float())), dim=1)
+        valid = torch.cat((torch.ones_like(mask[:, :1], dtype=torch.bool), mask[:, :-1]), dim=1)
+        causal = torch.ones(length, length, dtype=torch.bool, device=x.device).triu(1)
+        return self.output(
+            self.decoder(x + self.position[:, :length], mask=causal, src_key_padding_mask=~valid)
+        )
+
+    def loss(self, token, targets, mask):
+        error = (self(token, targets, mask) - targets.detach().float()).square()
+        return (error * mask[..., None]).sum() / (mask.sum() * targets.shape[-1]).clamp_min(1)
 
 
 class TokenData:
@@ -218,8 +255,17 @@ def train_token(config, *, baseline_checkpoint=None):
             )
         torch.manual_seed(config.seed)
         rng = np.random.default_rng(config.seed)
+        learned = config.learned_action_names
+        if learned is None and config.dataset:
+            learned = recorded_action_names(config.dataset)
         policy = RLTPolicy(
-            replace(config, token_checkpoint="", actor_checkpoint="", gate_checkpoint="")
+            replace(
+                config,
+                token_checkpoint="",
+                actor_checkpoint="",
+                gate_checkpoint="",
+                learned_action_names=learned,
+            )
         )
         data = TokenData(config, policy)
         validation = TokenValidation(data, config.token_validation_frames_per_episode)

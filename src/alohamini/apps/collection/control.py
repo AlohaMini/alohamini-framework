@@ -8,36 +8,32 @@ from alohamini.schema import CommandIdentity
 @dataclass
 class ControlState:
     mode: str = "idle"
-    critical: bool = False
     generation: int = 0
     quit: bool = False
-    paused_mode: str = "vla"
+    paused_mode: str = "policy"
 
     @property
     def active(self):
-        return self.mode in ("vla", "human", "paused")
+        return self.mode in ("policy", "human", "paused")
 
     def start(self):
         if self.mode != "idle":
             raise ValueError("Episode already active")
-        self.critical = False
-        self.mode = "vla"
+        self.mode = "policy"
         self.generation += 1
 
     def key(self, key):
         if key in ("q", "esc"):
             self.quit = True
-        elif key == "c" and self.active:
-            self.critical = not self.critical
         elif key == "h" and self.active:
-            self.mode = "vla" if self.mode == "human" else "human"
+            self.mode = "policy" if self.mode == "human" else "human"
         elif key == " " and self.active:
             if self.mode == "paused":
                 self.mode = self.paused_mode
             else:
                 self.pause()
                 return
-        elif key == "right" and self.active:
+        elif key in ("right", "t") and self.active:
             self.end_episode()
             return
         else:
@@ -83,32 +79,3 @@ class ReturnToStart:
             name: value + fraction * (self.target[name] - value)
             for name, value in self.origin.items()
         }
-
-
-class RelativeLeader:
-    """Latch both sides on each explicit takeover, in calibrated Host units."""
-
-    def __init__(self, names, bounds):
-        self.names, self.bounds = tuple(names), bounds
-        self.origin = None
-
-    def latch(self, leader, follower):
-        self.origin = (
-            {n: float(leader[n]) for n in self.names},
-            {n: float(follower[n]) for n in self.names},
-        )
-
-    def targets(self, leader):
-        import math
-
-        if self.origin is None:
-            raise RuntimeError("Relative takeover needs a fresh latch")
-        source, target = self.origin
-        result = {}
-        for name in self.names:
-            value = target[name] + float(leader[name]) - source[name]
-            if not math.isfinite(value):
-                raise ValueError("Non-finite leader target")
-            lower, upper = self.bounds[name]
-            result[name] = min(max(value, lower), upper)
-        return result

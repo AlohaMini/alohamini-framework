@@ -1,4 +1,4 @@
-"""Publish scored RLT episodes as portable LeRobot v3, with RGB video and command provenance."""
+"""Publish scored episodes as portable LeRobot v3, with RGB video and command provenance."""
 
 import json
 import os
@@ -10,6 +10,16 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from alohamini.datasets.experience.merge import ScoredEpisodeMerge
+from alohamini.datasets.experience.storage import (
+    RUN_METADATA,
+    RunLock,
+    action_step,
+    atomic_json,
+    json_lines,
+    validate_training_episode,
+)
+from alohamini.datasets.experience.video import prepare_videos, snapshot_directories
 from alohamini.datasets.image_statistics import ImageStatistics
 from alohamini.datasets.lerobot_tools import aggregate_stats
 from alohamini.datasets.lerobotv3 import (
@@ -19,19 +29,10 @@ from alohamini.datasets.lerobotv3 import (
     VIDEO_PATH,
     _arrow_schema,
     _Stats,
+    episode_metadata,
 )
-from alohamini.datasets.rlt.merge import ScoredEpisodeMerge
-from alohamini.datasets.rlt.segments import training_ranges
-from alohamini.datasets.rlt.storage import (
-    RunLock,
-    atomic_json,
-    json_lines,
-    validate_training_episode,
-)
-from alohamini.datasets.rlt.v3_video import prepare_videos, snapshot_directories
 from alohamini.schema import CommandIdentity
 
-SOURCES = {"HOLD": 0, "VLA": 1, "RLT": 2, "HUMAN": 3, "TERMINAL": 4}
 DISPOSITIONS = {"none": 0, "applied": 1, "superseded": 2, "rejected": 3}
 VERSION = 1
 
@@ -40,28 +41,59 @@ def _json(path):
     return json.loads(path.read_bytes())
 
 
-def _features(names, videos):
+class ExperienceFormat:
+    prefix = "experience"
+    legacy_untagged = False
+    receipt_field_key = "receipt_fields"
+    merge = ScoredEpisodeMerge
+    run_metadata = RUN_METADATA
+    sources = {"HOLD": 0, "POLICY": 1, "HUMAN": 3, "TERMINAL": 4}
+    dispositions = {**DISPOSITIONS, "unknown": -1}
+    validate = staticmethod(validate_training_episode)
+    eligible = staticmethod(action_step)
+
+    extra_vectors = ()
+    extra_flags = ("next.terminated", "next.truncated")
+
+    @staticmethod
+    def extra_values(step, width):
+        return {"next.terminated": False, "next.truncated": False}
+
+    @staticmethod
+    def mark_boundaries(rows, summary, count):
+        if count:
+            truncated = summary["truncated"]
+            rows[count - 1].update(
+                {
+                    "next.done": True,
+                    "next.reward": float(summary["reward"]),
+                    "next.terminated": not truncated,
+                    "next.truncated": truncated,
+                }
+            )
+
+
+def _features(names, videos, layout):
     vector = {"dtype": "float32", "shape": [len(names)], "names": names}
     features = {
         **DEFAULT_FEATURES,
         "observation.state": vector,
         "action": vector,
-        "rlt.requested_action": vector,
-        "rlt.step_reference": vector,
-        "rlt.applied_mask": dict(vector, dtype="bool"),
+        f"{layout.prefix}.requested_action": vector,
+        **{key: vector for key in layout.extra_vectors},
+        f"{layout.prefix}.applied_mask": dict(vector, dtype="bool"),
     }
-    for key in ("rlt.source", "rlt.disposition"):
+    for key in (f"{layout.prefix}.source", f"{layout.prefix}.disposition"):
         features[key] = {"dtype": "int64", "shape": [1], "names": None}
     for key in (
-        "rlt.is_terminal_observation",
-        "rlt.action_valid",
-        "rlt.has_reference",
-        "rlt.critical",
+        f"{layout.prefix}.is_terminal_observation",
+        f"{layout.prefix}.action_valid",
+        *layout.extra_flags,
         "next.done",
     ):
         features[key] = {"dtype": "bool", "shape": [1], "names": None}
     features["next.reward"] = {"dtype": "float32", "shape": [1], "names": None}
-    features["rlt.control_time"] = {"dtype": "float64", "shape": [1], "names": None}
+    features[f"{layout.prefix}.control_time"] = {"dtype": "float64", "shape": [1], "names": None}
     for cam, video in videos.items():
         info = video["info"]
         features["observation.images." + cam] = {
@@ -100,7 +132,7 @@ def _link_file(source, target):
 
 def _write_safety_frame(stream, snapshot, episode_index, frame_index):
     payload = snapshot["payload"]
-    # RLT records receipt and command provenance, but no interval for sampling a
+    # The recorder stores receipt and command provenance, but no interval for sampling a
     # teleoperator action. The native safety schema supports a single client clock.
     record = {
         "episode_index": episode_index,
@@ -112,12 +144,12 @@ def _write_safety_frame(stream, snapshot, episode_index, frame_index):
     stream.write(json.dumps(record, separators=(",", ":")) + "\n")
 
 
-def _close_safety(stream, episode_index, expected, written):
+def _close_safety(stream, episode_index, expected, written, prefix):
     event = {
         "type": "recorder_closed",
         "frame_count": written,
         "dropped_records": expected - written,
-        "source": "committed_rlt_observations",
+        "source": f"committed_{prefix}_observations",
     }
     stream.write(
         json.dumps(
@@ -128,22 +160,20 @@ def _close_safety(stream, episode_index, expected, written):
     )
 
 
-def _frame_table(episode, summary, side, safety_path, features, episode_index, offset, task_index):
+def _frame_table(
+    episode, summary, side, safety_path, features, episode_index, offset, task_index, layout
+):
     steps = json_lines(episode / "steps.jsonl")
     outcomes = {CommandIdentity(**r["command"]): r for r in json_lines(episode / "acks.jsonl")}
     dirs = snapshot_directories(episode)
     names = summary["base_contract"]["names"]
-    learned = set(summary["base_contract"]["learned_names"])
-    whole = (
-        summary.get("phase_labels") == "optional-operator-v2"
-        and summary.get("critical_entries") == 0
-    )
+    required_targets = set(summary["base_contract"][layout.receipt_field_key])
     trainable = summary.get("training_valid", True) and not summary.get("evaluation", False)
     has_terminal = bool(dirs and dirs[-1].name == "terminal")
     if len(dirs) != len(steps) + int(has_terminal):
         raise ValueError(f"Step and observation counts disagree in {episode}")
     if trainable:
-        validate_training_episode(episode, summary)
+        layout.validate(episode, summary)
     rows, snapshot_batch = [], []
     schema = pa.schema([("snapshot", pa.binary())])
     with (
@@ -169,15 +199,14 @@ def _frame_table(episode, summary, side, safety_path, features, episode_index, o
             state = [payload[n] for n in names]
             requested = step.get("requested", state)
             source = step.get("source", "TERMINAL")
-            critical = bool(step.get("critical", False))
+
             valid = bool(
                 trainable
-                and (whole or critical)
-                and source in ("HUMAN", "RLT", "VLA")
-                and learned <= targets.keys()
+                and not terminal
+                and layout.eligible(summary, step)
+                and required_targets <= targets.keys()
                 and status == "applied"
             )
-            ref = step.get("reference")
             rows.append(
                 {
                     "episode_index": episode_index,
@@ -187,31 +216,27 @@ def _frame_table(episode, summary, side, safety_path, features, episode_index, o
                     "timestamp": i / summary["fps"],
                     "observation.state": state,
                     "action": [targets.get(n, requested[j]) for j, n in enumerate(names)],
-                    "rlt.applied_mask": [n in targets for n in names],
-                    "rlt.requested_action": requested,
-                    "rlt.step_reference": ref if ref is not None else [0.0] * len(names),
-                    "rlt.has_reference": ref is not None,
-                    "rlt.source": SOURCES[source],
-                    "rlt.disposition": DISPOSITIONS[status],
-                    "rlt.action_valid": valid,
-                    "rlt.is_terminal_observation": terminal,
-                    "rlt.critical": critical,
-                    "rlt.control_time": step.get("time", snapshot["received_s"]),
+                    f"{layout.prefix}.applied_mask": [n in targets for n in names],
+                    f"{layout.prefix}.requested_action": requested,
+                    **layout.extra_values(step, len(names)),
+                    f"{layout.prefix}.source": layout.sources[source],
+                    f"{layout.prefix}.disposition": layout.dispositions.get(
+                        status, layout.dispositions["none"]
+                    ),
+                    f"{layout.prefix}.action_valid": valid,
+                    f"{layout.prefix}.is_terminal_observation": terminal,
+                    f"{layout.prefix}.control_time": step.get("time", snapshot["received_s"]),
                     "next.done": False,
                     "next.reward": 0.0,
                 }
             )
-        _close_safety(safety, episode_index, len(dirs), len(rows))
+        _close_safety(safety, episode_index, len(dirs), len(rows), layout.prefix)
     if trainable:
-        for start, stop, reward in training_ranges(summary, len(steps)):
-            for i in range(stop - 1, start - 1, -1):
-                if rows[i]["rlt.action_valid"]:
-                    rows[i].update({"next.reward": float(reward), "next.done": True})
-                    break
+        layout.mark_boundaries(rows, summary, len(steps))
     return pa.Table.from_pylist(rows, schema=_arrow_schema(features))
 
 
-def _write_episode(root, stage, output, episode, summary, info):
+def _write_episode(root, stage, output, episode, summary, info, layout):
     index = info["total_episodes"] if info else 0
     offset = info["total_frames"] if info else 0
     chunk, file_index = divmod(index, 1000)
@@ -221,11 +246,13 @@ def _write_episode(root, stage, output, episode, summary, info):
     if transaction.exists():
         shutil.rmtree(transaction)
     transaction.mkdir(parents=True)
-    side = transaction / "meta/rlt" / f"episode_{index:06d}"
+    side = transaction / layout.merge.directory / f"episode_{index:06d}"
     side.mkdir(parents=True)
     videos_dir = stage / "video" / episode.name
     videos = prepare_videos(episode, videos_dir, summary["fps"])
-    features = _features(summary["base_contract"]["names"], videos)
+    features = _features(summary["base_contract"]["names"], videos, layout)
+    if info and features == info["features"]:
+        features = info["features"]  # Continue the existing Arrow column order when appending.
     if info and (features != info["features"] or info["fps"] != summary["fps"]):
         raise ValueError(f"LeRobot v3 camera, action schema or FPS changed in {episode}")
     tasks = list(pd.read_parquet(output / "meta/tasks.parquet").index) if info else []
@@ -241,21 +268,15 @@ def _write_episode(root, stage, output, episode, summary, info):
         index,
         offset,
         task_index,
+        layout,
     )
     length = len(table)
     pq.write_table(table, _mkdir(transaction / DATA_PATH.format(**parts)), compression="zstd")
     stats = _table_stats(table, features)
-    epmeta = {
-        "episode_index": index,
-        "length": length,
-        "tasks": [summary["task"]],
-        "data/chunk_index": parts["chunk_index"],
-        "data/file_index": parts["file_index"],
-        "meta/episodes/chunk_index": parts["chunk_index"],
-        "meta/episodes/file_index": parts["file_index"],
-        "dataset_from_index": offset,
-        "dataset_to_index": offset + length,
-    }
+    location = (chunk, file_index)
+    epmeta = episode_metadata(
+        index, summary["task"], length, offset, data_location=location, meta_location=location
+    )
     image_stats = ImageStatistics()
     camera_manifest = {}
     for camera, video in videos.items():
@@ -303,7 +324,7 @@ def _write_episode(root, stage, output, episode, summary, info):
     pd.DataFrame({"task_index": list(range(len(tasks)))}, index=tasks).to_parquet(
         transaction / "meta/tasks.parquet"
     )
-    ids = [*info["alohamini_rlt"]["episode_ids"], episode.name] if info else [episode.name]
+    ids = [*info[layout.merge.key]["episode_ids"], episode.name] if info else [episode.name]
     if not info:
         first = snapshot_directories(episode)[0]
         robot = _json(first / "state.json")["payload"]["_robot_metadata"]
@@ -318,7 +339,7 @@ def _write_episode(root, stage, output, episode, summary, info):
         atomic_json(transaction / "meta/alohamini.json", {"version": 1, "source_info": source})
         for file in ("run-contract.json", "run-config.json"):
             if (root / file).is_file():
-                shutil.copyfile(root / file, transaction / "meta/rlt" / file)
+                shutil.copyfile(root / file, transaction / layout.merge.directory / file)
         info = dict(
             codebase_version="v3.0",
             robot_type=robot["robot_model"],
@@ -329,16 +350,16 @@ def _write_episode(root, stage, output, episode, summary, info):
             data_path=DATA_PATH,
             video_path=VIDEO_PATH,
             features=features,
-            action_validity_fields=list(ScoredEpisodeMerge.action_validity_fields),
-            alohamini_rlt=dict(
-                version=VERSION,
-                sources=SOURCES,
-                dispositions=DISPOSITIONS,
-                color="Host decoded once into RGB; H.264 yuv420p using the recording encoder",
-                terminal="observation-only final row, action_valid=false",
-            ),
+            action_validity_fields=list(layout.merge.action_validity_fields),
         )
-    info["alohamini_rlt"]["episode_ids"] = ids
+        info[layout.merge.key] = dict(
+            version=VERSION,
+            sources=layout.sources,
+            dispositions=layout.dispositions,
+            color="Host decoded once into RGB; H.264 yuv420p using the recording encoder",
+            terminal="observation-only final row, action_valid=false",
+        )
+    info[layout.merge.key]["episode_ids"] = ids
     info.update(
         total_episodes=index + 1,
         total_frames=offset + length,
@@ -351,7 +372,7 @@ def _write_episode(root, stage, output, episode, summary, info):
     )
     files.remove("meta/info.json")
     # Generic readers discover episode metadata by glob. Publish that row only
-    # after every frame, MP4 and RLT sidecar it refers to is readable.
+    # after every frame, MP4 and episode sidecar it refers to is readable.
     files.sort(key=lambda p: p.startswith("meta/episodes/"))
     atomic_json(
         transaction / "ready.json", {"episode": episode.name, "files": [*files, "meta/info.json"]}
@@ -387,17 +408,21 @@ def _finish(stage, output):
         shutil.rmtree(cache)
 
 
-def export_v3(root):
+def export_v3(root, *, layout=None):
     """Publish all committed episodes. The same command resumes a partial export."""
     root = Path(root).expanduser().absolute()
     if not (root / "episodes").is_dir() and not (root / "run-contract.json").is_file():
-        raise ValueError(f"No RLT recording at {root}")
-    stage, output = root / ".rlt-v3-stage", root / "lerobot_v3"
+        raise ValueError(f"No scored recording at {root}")
+    if layout is None:
+        from alohamini.datasets.v3_extensions import collection_layout
+
+        layout = collection_layout(root)
+    stage, output = root / f".{layout.prefix}-v3-stage", root / "lerobot_v3"
     with RunLock(stage / "publish.lock"), RunLock(output / "recording.lock"):
         info_path = output / "meta/info.json"
         if (
             info_path.exists()
-            and _json(info_path).get("alohamini_rlt", {}).get("version") != VERSION
+            and _json(info_path).get(layout.merge.key, {}).get("version") != VERSION
         ):
             raise ValueError(f"Destination contains another dataset: {output}")
         if (
@@ -409,7 +434,7 @@ def export_v3(root):
             raise ValueError(f"Destination is not an empty v3 directory: {output}")
         _finish(stage, output)
         info = _json(info_path) if info_path.is_file() else None
-        known = set(info["alohamini_rlt"]["episode_ids"]) if info else set()
+        known = set(info[layout.merge.key]["episode_ids"]) if info else set()
         entries = []
         for episode in (root / "episodes").glob("*"):
             if episode.is_dir() and episode.name not in known:
@@ -422,13 +447,22 @@ def export_v3(root):
                     or summary["reward"] not in (0, 1)
                 ):
                     raise ValueError(f"Invalid committed episode: {episode}")
+                if (
+                    summary.get(
+                        "collection_format", layout.prefix if layout.legacy_untagged else None
+                    )
+                    != layout.prefix
+                ):
+                    raise ValueError(
+                        f"Episode does not belong to the selected collection format: {episode}"
+                    )
                 entries.append((episode, summary))
         failed = []
         for episode, summary in sorted(
             entries, key=lambda item: (item[1]["started_at"], item[0].name)
         ):
             try:
-                _write_episode(root, stage, output, episode, summary, info)
+                _write_episode(root, stage, output, episode, summary, info, layout)
             except (ValueError, FileNotFoundError, KeyError) as exc:
                 # This episode still has its source journal. Later valid episodes
                 # can be published while its missing data is being investigated.
@@ -438,8 +472,7 @@ def export_v3(root):
             _finish(stage, output)
             info = _json(info_path)
             print(
-                f"LeRobot v3 已保存第 {info['total_episodes']} 回合 {episode.name}，"
-                "视频 RGB 校验通过。",
+                f"LeRobot v3 已保存第 {info['total_episodes']} 回合 {episode.name}。",
                 flush=True,
             )
         if failed:

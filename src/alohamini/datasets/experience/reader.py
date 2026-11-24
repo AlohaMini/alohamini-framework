@@ -1,4 +1,4 @@
-"""Read portable RLT boundaries from a LeRobot v3 episode and its standard MP4s."""
+"""Read scored observations from a LeRobot v3 episode and its standard MP4s."""
 
 import json
 from bisect import bisect_right
@@ -19,7 +19,7 @@ class V3Observations:
         for camera in cameras if cameras is not None else manifest["cameras"]:
             path = (root / manifest["cameras"][camera]["path"]).resolve()
             if not path.is_relative_to(root / "videos"):
-                raise ValueError(f"Invalid RLT camera path in {self.directory}")
+                raise ValueError(f"Invalid episode camera path in {self.directory}")
             self.paths[camera] = path
         self.videos = VideoFrameCache(max_size=len(self.paths))
         self.snapshots = pq.ParquetFile(self.directory / "observations.parquet")
@@ -32,11 +32,11 @@ class V3Observations:
             self.ends.append(rows)
         if rows != manifest["frames"]:
             self.close()
-            raise ValueError("RLT snapshot count differs from episode video length")
+            raise ValueError("Snapshot count differs from episode video length")
 
     def read(self, index):
         if not 0 <= index < self.ends[-1]:
-            raise IndexError(f"Frame {index} is outside this RLT episode")
+            raise IndexError(f"Frame {index} is outside this episode")
         group = bisect_right(self.ends, index)
         if group != self.group:
             self.records = self.snapshots.read_row_group(group, columns=["snapshot"])["snapshot"]

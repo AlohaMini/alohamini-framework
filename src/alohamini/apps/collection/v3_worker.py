@@ -24,10 +24,13 @@ def collection_publisher(root):
                             sys.executable,
                             "-m",
                             "alohamini",
-                            "rlt",
-                            "export-v3",
-                            "--output-dir",
+                            "dataset",
+                            "export",
                             str(root),
+                            "--format",
+                            "lerobot-v3",
+                            "--output",
+                            str(root / "lerobot_v3"),
                         ],
                         stdin=subprocess.DEVNULL,
                         check=True,
@@ -41,7 +44,7 @@ def collection_publisher(root):
                 return
             stopped.wait(2)
 
-    worker = threading.Thread(target=publish, name="RLT-v3-publisher", daemon=True)
+    worker = threading.Thread(target=publish, name="ExperiencePublisher", daemon=True)
     worker.start()
     try:
         yield

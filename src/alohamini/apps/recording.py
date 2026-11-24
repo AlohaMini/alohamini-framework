@@ -25,7 +25,7 @@ from alohamini.apps.teleoperation import (
 )
 from alohamini.client import HostClient, control_feedback_valid
 from alohamini.errors import ResponseTimeoutError
-from alohamini.hardware.leader import BimanualLeader
+from alohamini.hardware.leader import BimanualLeader, leader_sides
 from alohamini.paths import WorkspacePaths
 
 
@@ -580,14 +580,7 @@ def record(
     )
     from alohamini.datasets.record import state_names
 
-    active_sides = tuple(
-        side
-        for side in ("left", "right")
-        if any(
-            n.startswith(f"arm_{side}_") and n not in selected_fixed
-            for n in state_names(robot_model)
-        )
-    )
+    active_sides = leader_sides(n for n in state_names(robot_model) if n not in selected_fixed)
     leader = BimanualLeader(
         robot_model,
         leader_id=leader_id,

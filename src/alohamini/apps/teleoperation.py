@@ -19,6 +19,7 @@ from alohamini.errors import ResponseTimeoutError
 from alohamini.hardware.leader import BimanualLeader
 from alohamini.model import get_robot_model
 from alohamini.protocol import HostSnapshot, decode_command_context
+from alohamini.runtime.handover import measured_hold_targets
 
 logger = logging.getLogger(__name__)
 
@@ -189,21 +190,14 @@ def stop_owned_robot(client, robot_model, identity):
             safety.get("control_owner") not in (None, client.client_id)
             or safety.get("host_session_id") != identity.host_session_id
             or safety.get("control_epoch") != identity.control_epoch
-            or ready_units(snapshot, robot_model, client.client_id) is None
         ):
             return
         # A prefetched reply can precede our first command's ownership claim.
         # A newer sequence on the same lease also supersedes that in-flight command.
         units = ready_units(snapshot, robot_model, client.client_id)
-        targets = {key: snapshot.payload[key] for key in units}
-        targets.update(
-            {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": 0.0,
-                "lift_axis.height_mm": snapshot.payload["lift_axis.height_mm"],
-            }
-        )
+        if units is None:
+            return
+        targets = measured_hold_targets(snapshot, [*units, "lift_axis.height_mm"])
         stopped = client.send_command(targets, based_on=snapshot)
         if stopped is None:
             logger.warning("停止目标未发送；Host watchdog 将在命令超时后停止运动。")

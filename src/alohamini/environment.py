@@ -104,13 +104,16 @@ def command_packages(argv):
     if not argv or "--help" in argv or "-h" in argv or argv[0] in {"env", "paths", "inspect"}:
         return set()
     command = argv[0]
-    if command == "rlt":
-        if argv[1:2] == ["export-v3"]:
-            # Deployment locks apply to Linux. The offline dataset codec also runs on Windows.
-            return {"numpy", "pandas", "pyarrow", "pillow", "av"} if platform.system() == "Linux" else set()
-        packages = command_packages(["train"])
-        if argv[1:2] == ["collect"]:
-            packages |= {"pyzmq", "pyserial", "feetech-servo-sdk", "opencv-python-headless"}
+    if command == "collect":
+        if argv[1:2] == ["score"]:
+            return command_packages(["dataset", "export"])
+        packages = command_packages(["train"]) | {"pyzmq", "opencv-python-headless"}
+        if argv[1:2] in (["dagger"], ["rlt"]) or any(
+            arg.partition("=")[0] == "--intervention" for arg in argv
+        ):
+            packages |= {"pyserial", "feetech-servo-sdk"}
+        if argv[1:2] == ["dagger"]:
+            packages.add("pynput")
         return packages
     if argv[:2] == ["train", "monitor"]:
         return set()
@@ -132,6 +135,8 @@ def command_packages(argv):
     if argv[:2] == ["inference", "run"]:
         return {"numpy", "pyzmq", "opencv-python-headless"}
     if command == "dataset":
+        if argv[1:2] == ["export"] and platform.system() != "Linux":
+            return set()  # Offline exports also run outside the Linux deployment environment.
         packages = {"numpy", "pyarrow", "pandas", "opencv-python-headless", "av"}
         if argv[1:2] == ["analyze"]:
             packages |= {"rerun-sdk", "matplotlib"}

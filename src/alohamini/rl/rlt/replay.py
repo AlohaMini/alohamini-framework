@@ -4,14 +4,28 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
-from alohamini.datasets.rlt.segments import training_ranges
-from alohamini.datasets.rlt.storage import (
-    json_lines,
-    load_snapshot,
-    validate_training_episode,
-)
-from alohamini.policies.rlt.policy import encode_physical, pad_actions, require_contract
+from alohamini.datasets.experience.storage import json_lines, load_snapshot
+from alohamini.learning.processor import scale_action
+from alohamini.policies.rlt.policy import require_contract
+from alohamini.rl.rlt.episodes import training_ranges, validate_training_episode
+
+
+def encode_physical(native, actions, context):
+    actions = torch.as_tensor(actions, dtype=torch.float32, device=context.device)
+    actions = scale_action(
+        actions,
+        getattr(native.config, "inference_action_scale_dims", ()),
+        1 / getattr(native.config, "inference_action_scale", 1.0),
+    )
+    return native.processor.action_prefix(actions, context=context)
+
+
+def pad_actions(actions, chunk_size):
+    result = np.zeros((chunk_size, actions.shape[-1]), dtype=np.float32)
+    result[: len(actions)] = actions
+    return result
 
 
 def command_key(command):
@@ -78,7 +92,7 @@ def materialize_episode(policy, directory, on_boundary=lambda: None):
     if (directory / "v3.json").is_file():
         from contextlib import closing
 
-        from alohamini.datasets.rlt.v3_reader import V3Observations
+        from alohamini.datasets.experience.reader import V3Observations
 
         cameras = getattr(policy.native, "manifest", {}).get("cameras")
         with closing(V3Observations(directory, cameras)) as observations:

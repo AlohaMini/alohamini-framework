@@ -8,8 +8,9 @@ from alohamini.datasets.record import _write_json
 
 
 class ScoredEpisodeMerge:
-    key = "alohamini_rlt"
-    action_validity_fields = ("rlt.action_valid", "rlt.applied_mask")
+    directory = "meta/experience"
+    key = "alohamini_experience"
+    action_validity_fields = ("experience.action_valid", "experience.applied_mask")
 
     def __init__(self, sources):
         self.ids = []
@@ -29,9 +30,9 @@ class ScoredEpisodeMerge:
         eid = source.info[self.key]["episode_ids"][old]
         if eid in self.seen:
             raise ValueError(f"Duplicate scored episode ID: {eid}")
-        source_dir = source.root / "meta/rlt" / f"episode_{old:06d}"
+        source_dir = source.root / self.directory / f"episode_{old:06d}"
         new = row["episode_index"]
-        dest = stage / "meta/rlt" / f"episode_{new:06d}"
+        dest = stage / self.directory / f"episode_{new:06d}"
         if source_dir.is_symlink() or any(p.is_symlink() for p in source_dir.rglob("*")):
             raise ValueError("Scored episode sidecars must be regular local files")
         shutil.copytree(source_dir, dest)

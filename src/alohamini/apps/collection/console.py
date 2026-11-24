@@ -8,7 +8,8 @@ import time
 class ConsoleInput:
     ESCAPE_TIMEOUT_S = 0.15
 
-    def __init__(self, stream=None):
+    def __init__(self, stream=None, *, hotkeys=("h", " ", "t")):
+        self.hotkeys = hotkeys
         self.stream = sys.stdin if stream is None else stream
         self.reward_text = ""
         self._rating = False
@@ -99,7 +100,7 @@ class ConsoleInput:
                     self.reward_text = self.reward_text[:-1]
                 else:
                     self.reward_text += char
-            elif char.lower() in ("c", "h", " "):
+            elif char.lower() in self.hotkeys:
                 events.append(("key", char.lower()))
         return events
 

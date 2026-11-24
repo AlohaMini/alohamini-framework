@@ -2,56 +2,24 @@
 
 import hashlib
 import json
-import math
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from alohamini.datasets.rlt.storage import RunLock
+from alohamini.datasets.experience.storage import RunLock
 from alohamini.learning.precision import tf32_context
 from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint
 from alohamini.learning.training_state import restore_rng
-from alohamini.policies.rlt.actor_critic import AC_FORMAT, ActorCritic
+from alohamini.policies.rlt.networks import AC_FORMAT
 from alohamini.policies.rlt.policy import RLTPolicy
-from alohamini.policies.rlt.replay import materialize_episode
-
-
-def scored_episodes(root):
-    if (root / "episodes").is_dir():
-        candidates = [(p.name, p) for p in sorted((root / "episodes").iterdir()) if p.is_dir()]
-    else:
-        if (root / "lerobot_v3/meta/info.json").is_file():
-            root = root / "lerobot_v3"
-        info_path = root / "meta/info.json"
-        if not info_path.is_file():
-            raise ValueError(f"No RLT episodes or published LeRobot v3 metadata in {root}")
-        info = json.loads(info_path.read_bytes())
-        ids = info.get("alohamini_rlt", {}).get("episode_ids", [])
-        if len(ids) != info["total_episodes"] or len(set(ids)) != len(ids):
-            raise ValueError("Invalid RLT episode index in v3 metadata")
-        candidates = [(eid, root / "meta/rlt" / f"episode_{i:06d}") for i, eid in enumerate(ids)]
-    result = []
-    for eid, path in candidates:
-        summary = json.loads((path / "episode.json").read_bytes())
-        if summary["episode_id"] != eid:
-            raise ValueError(f"Episode ID differs from its dataset index in {path}")
-        if (
-            summary.get("status") != "committed"
-            or not summary.get("ended")
-            or not summary.get("training_valid", True)
-            or summary.get("evaluation")
-            or summary.get("writer_error")
-        ):
-            continue
-        reward = summary.get("reward")
-        if type(reward) is not int or reward not in (0, 1):
-            raise ValueError(f"Invalid operator reward in {path}")
-        result.append((eid, reward, path))
-    if not result:
-        raise ValueError("No completed, scored, training-valid RLT episodes")
-    return result
+from alohamini.rl.replay import UniformReplaySampler
+from alohamini.rl.rlt.actor_critic import ActorCritic
+from alohamini.rl.rlt.episodes import scored_episodes
+from alohamini.rl.rlt.replay import materialize_episode
+from alohamini.rl.trainer import RLTrainer
 
 
 def split_episodes(rewards, fraction, seed):
@@ -119,7 +87,7 @@ def _evaluate(learner, data):
 
 def train_ac(config, *, resume=False):
     if not config.dataset or not config.token_checkpoint:
-        raise ValueError("train-ac requires a scored RLT dataset and a trained token_checkpoint")
+        raise ValueError("RLT actor-critic training requires scored data and token_checkpoint")
     if config.replay_stride > config.chunk_size:
         raise ValueError("replay_stride must be at most chunk_size so terminal rewards are covered")
     dataset, root = Path(config.dataset).resolve(), Path(config.output_dir).resolve()
@@ -164,9 +132,11 @@ def train_ac(config, *, resume=False):
             flush=True,
         )
         torch.manual_seed(config.seed)
-        rng = torch.Generator().manual_seed(config.seed)
+        sampler = UniformReplaySampler(
+            len(train["done"]), partial(_batch, train, device=config.device), seed=config.seed
+        )
         learner = ActorCritic(config, contract)
-        sampled_terminals = sampled_successes = 0
+        trainer = RLTrainer(learner, sampler, batch_size=config.ac_batch_size)
         models = {"actor": learner.actor, "critic": learner.critic}
         signature = hashlib.sha256()
         for partition in (train, val):
@@ -216,60 +186,60 @@ def train_ac(config, *, resume=False):
                 getattr(learner, "target_" + name).load_state_dict(state["target_" + name])
                 getattr(learner, name + "_optimizer").load_state_dict(state[name + "_optimizer"])
             learner.updates, learner.actor_updates = start, saved["actor_updates"]
-            sampled_terminals = saved["metrics"]["sampled_terminals"]
-            sampled_successes = saved["metrics"]["sampled_successes"]
-            rng.set_state(state["sampler_rng"])
+            learner.sampled_terminals = saved["metrics"]["sampled_terminals"]
+            learner.sampled_successes = saved["metrics"]["sampled_successes"]
+            sampler.set_rng_state(state["sampler_rng"])
             restore_rng(state["rng"])
         log_path = root / "ac-metrics.jsonl"
         if resume:
             with log_path.open("rb+") as stream:
                 stream.truncate(state["log_bytes"])
         with log_path.open("a" if resume else "w", encoding="utf-8") as log:
-            for step in range(start + 1, config.ac_steps + 1):
-                indices = torch.randint(len(train["done"]), (config.ac_batch_size,), generator=rng)
-                metrics = learner.update(_batch(train, indices, config.device))
-                sampled_terminals += int(train["done"][indices].sum())
-                sampled_successes += int(train["reward"][indices].any(dim=1).sum())
-                metrics.update(
-                    sampled_terminals=sampled_terminals, sampled_successes=sampled_successes
-                )
-                if step == config.ac_steps:
-                    metrics.update(_evaluate(learner, val))
-                if not all(math.isfinite(value) for value in metrics.values()):
-                    raise ValueError(f"Non-finite AC metric at update {step}")
+
+            def log_metrics(step, metrics):
                 log.write(json.dumps(dict(step=step, **metrics), allow_nan=False) + "\n")
                 if step == 1 or step % 100 == 0 or step == config.ac_steps:
                     log.flush()
                     print(f"AC update {step} {metrics}", flush=True)
-                if step == config.ac_steps or step % config.save_freq == 0:
-                    log.flush()
-                    training = dict(
-                        identity=identity,
-                        replay_sha256=signature.hexdigest(),
-                        log_bytes=log.buffer.tell(),
-                        sampler_rng=rng.get_state(),
-                    )
-                    for name in models:
-                        training["target_" + name] = getattr(learner, "target_" + name).state_dict()
-                        training[name + "_optimizer"] = getattr(
-                            learner, name + "_optimizer"
-                        ).state_dict()
-                    save_stage_checkpoint(
-                        root,
-                        step,
-                        models,
-                        dict(
-                            format=AC_FORMAT,
-                            contract=contract,
-                            token_sha256=token_sha,
-                            residual_limit=config.ac_residual_limit,
-                            actor_updates=learner.actor_updates,
-                            critic_updates=learner.updates,
-                            split=split,
-                            metrics=metrics,
-                        ),
-                        settings,
-                        training=training,
-                        aliases=("actor",),
-                    )
+
+            def save(step, metrics):
+                log.flush()
+                training = dict(
+                    identity=identity,
+                    replay_sha256=signature.hexdigest(),
+                    log_bytes=log.buffer.tell(),
+                    sampler_rng=sampler.get_rng_state(),
+                )
+                for name in models:
+                    training["target_" + name] = getattr(learner, "target_" + name).state_dict()
+                    training[name + "_optimizer"] = getattr(
+                        learner, name + "_optimizer"
+                    ).state_dict()
+                save_stage_checkpoint(
+                    root,
+                    step,
+                    models,
+                    dict(
+                        format=AC_FORMAT,
+                        contract=contract,
+                        token_sha256=token_sha,
+                        residual_limit=config.ac_residual_limit,
+                        actor_updates=learner.actor_updates,
+                        critic_updates=learner.updates,
+                        split=split,
+                        metrics=metrics,
+                    ),
+                    settings,
+                    training=training,
+                    aliases=("actor",),
+                )
+
+            trainer.fit(
+                config.ac_steps,
+                start_step=start,
+                evaluate=partial(_evaluate, learner, val),
+                on_step=log_metrics,
+                save_checkpoint=save,
+                save_freq=config.save_freq,
+            )
         return checkpoint

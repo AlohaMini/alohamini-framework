@@ -50,6 +50,21 @@ VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.m
 DATA_FILE_BYTES = 100 * 1024**2
 
 
+def episode_metadata(index, task, length, offset, *, data_location, meta_location):
+    """Locate one episode in the v3 frame table and metadata shards."""
+    return {
+        "episode_index": index,
+        "tasks": [task],
+        "length": length,
+        "data/chunk_index": data_location[0],
+        "data/file_index": data_location[1],
+        "dataset_from_index": offset,
+        "dataset_to_index": offset + length,
+        "meta/episodes/chunk_index": meta_location[0],
+        "meta/episodes/file_index": meta_location[1],
+    }
+
+
 class _Stats:
     def __init__(self, features, *, recording=False):
         self.features = features
@@ -381,20 +396,19 @@ def _write_dataset(
             if timings is not None:
                 timings["episode_statistics"] = time.perf_counter() - stats_started
             episode_row = {
-                "episode_index": index,
-                "tasks": [summary.get("task", checker.info["task"])],
-                "length": length,
+                **episode_metadata(
+                    index,
+                    summary.get("task", checker.info["task"]),
+                    length,
+                    offset,
+                    data_location=(chunk, file),
+                    meta_location=(meta_chunk, meta_file),
+                ),
                 **(
                     {"image_statistics": json.dumps(episode_stats.image_statistics.payload())}
                     if recording
                     else {}
                 ),
-                "data/chunk_index": chunk,
-                "data/file_index": file,
-                "dataset_from_index": offset,
-                "dataset_to_index": offset + length,
-                "meta/episodes/chunk_index": meta_chunk,
-                "meta/episodes/file_index": meta_file,
                 **video_metadata,
                 **{
                     f"stats/{key}/{stat}": value.tolist()
@@ -874,11 +888,34 @@ def _validate_export(source, output, checker, selection):
 
 
 def export_lerobot(root, output, *, state=StateSelection.DEFAULT, vision_only=False):
+    source = Path(root).expanduser().resolve()
+    if (source / "run-contract.json").is_file():
+        from alohamini.datasets.experience.v3 import export_v3
+
+        published = source / "lerobot_v3"
+        destination = Path(output).expanduser().resolve()
+        if destination == published:
+            if vision_only or state != StateSelection.DEFAULT:
+                raise ValueError("Project fields into a separate --output")
+        elif (
+            destination.exists()
+            or destination.is_relative_to(source)
+            or source.is_relative_to(destination)
+        ):
+            raise ValueError("Choose a new output outside the scored collection")
+        info = export_v3(source)
+        if destination == published:
+            return {
+                "dataset_root": str(published),
+                "published_episodes": info["total_episodes"] if info else 0,
+            }
+        if info is None:
+            raise ValueError("No committed scored episodes to export")
+        source = published
     if vision_only:
         if state != StateSelection.DEFAULT:
             raise ValueError("--vision-only cannot be combined with a custom --state")
-        return export_visual_lerobot(root, output)
-    source = Path(root).expanduser().resolve()
+        return export_visual_lerobot(source, output)
     if json.loads((source / "meta/info.json").read_text()).get("codebase_version") == "v3.0":
         return export_visual_lerobot(source, output, vision_only=False, state=state)
     output = Path(output).expanduser().absolute()

@@ -6,40 +6,20 @@ import threading
 import time
 
 
-def _inference_process(config, initial, jobs, results, stop):
-    from alohamini.policies.rlt.policy import RLTPolicy
-
+def serve(config, initial, jobs, results, stop, *, load):
+    close = None
     try:
-        policy = RLTPolicy(config)
-        policy.bind(initial)
-        native = policy.native
-        results.put(
-            dict(
-                kind="ready",
-                names=native.names,
-                fps=native.fps,
-                cameras=native.manifest["cameras"],
-                fixed=native.fixed_dimensions,
-                metadata=native.robot_metadata,
-                base_contract=policy.contract,
-                actor_identity=policy.actor_identity,
-                gate_identity=policy.gate_identity,
-            )
-        )
-
+        ready, reset, select, close = load(config, initial)
+        results.put(dict(kind="ready", **ready))
         generation = None
 
         def predict(job):
             nonlocal generation
             if job["generation"] != generation:
-                native.reset()
+                reset()
                 generation = job["generation"]
             started = time.monotonic()
-            prediction = policy.predict(
-                job["snapshot"],
-                observation_id=job["id"],
-                apply_actor=job.get("critical", False),
-            )
+            prediction = select(job)
             results.put(
                 dict(
                     kind="prediction",
@@ -65,18 +45,21 @@ def _inference_process(config, initial, jobs, results, stop):
     except Exception as exc:
         results.put(dict(kind="error", error=f"{type(exc).__name__}: {exc}"), timeout=1)
         raise
+    finally:
+        if close is not None:
+            close()
 
 
 class InferenceWorker:
-    def __init__(self, config, initial):
+    def __init__(self, config, initial, *, target):
         context = multiprocessing.get_context("spawn")
         self.jobs = context.Queue(maxsize=1)
         self.results = context.Queue(maxsize=4)
         self.stop = context.Event()
         self.process = context.Process(
-            target=_inference_process,
+            target=target,
             args=(config, initial, self.jobs, self.results, self.stop),
-            name="RLTInference",
+            name="CollectionInference",
         )
         self.pending = False
         self.process.start()
@@ -118,13 +101,14 @@ class InferenceWorker:
 class LeaderReader:
     """Only this thread touches the serial buses. A blocked read expires naturally."""
 
-    def __init__(self, config, units):
+    def __init__(self, config, units, active_sides):
+        self.active_sides = active_sides
         self.config, self.units = config, units
         self.latest = None
         self.error = None
         self.stop = threading.Event()
         self._lock = threading.Lock()
-        self.thread = threading.Thread(target=self._run, name="RLTLeader", daemon=True)
+        self.thread = threading.Thread(target=self._run, name="CollectionLeader", daemon=True)
         self.thread.start()
 
     def _run(self):
@@ -136,7 +120,8 @@ class LeaderReader:
                 leader_id=self.config.leader_id,
                 calibration_dir=self.config.calibration_dir,
                 left_port=self.config.left_port,
-                active_sides=("left",),
+                right_port=self.config.right_port,
+                active_sides=self.active_sides,
                 interactive_calibration=False,
             ) as leader:
                 while not self.stop.is_set():

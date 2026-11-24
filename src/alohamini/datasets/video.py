@@ -67,7 +67,16 @@ def video_frame_count(path: Path) -> int:
 
 
 def _encode_frames(
-    frames, path, fps, shape, *, codec="libx264", pix_fmt="yuv420p", options=None, timings=None
+    frames,
+    path,
+    fps,
+    shape,
+    *,
+    codec="libx264",
+    pix_fmt="yuv420p",
+    options=None,
+    timings=None,
+    strict_shape=False,
 ):
     started = time.perf_counter() if timings is not None else 0.0
     if timings is not None:
@@ -98,6 +107,8 @@ def _encode_frames(
                 timings["mux_s"] += mux_time
 
         for frame in frames:
+            if strict_shape and (frame.height, frame.width) != (shape[0], shape[1]):
+                raise ValueError(f"Camera image size changed at frame {count}")
             began = time.perf_counter() if timings is not None else 0.0
             frame = frame.reformat(width=stream.width, height=stream.height, format=pix_fmt)
             frame.pts, frame.time_base = count, 1 / rate

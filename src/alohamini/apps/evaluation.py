@@ -440,9 +440,7 @@ def run_evaluation(
                         "action_semantics": HOST_REQUEST_SEMANTICS,
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
                         **({"policy_action": {name: float(value[name]) for name in names}}
-                           if intervention is None else {"intervention": True,
-                                                       "control_source": "human",
-                                                       "dagger": asdict(intervention.config)}),
+                           if intervention is None else intervention.frame_metadata()),
                         **(
                             {"execution_timing": deepcopy(policy.execution_timing)}
                             if isinstance(getattr(policy, "execution_timing", None), dict) else {}
@@ -494,7 +492,7 @@ def evaluate(
     """Load a developer-supplied policy factory before opening any robot connection."""
     _options(fps, episode_time_s)
     if dagger is not None:
-        from alohamini.apps.dagger import DAggerConfig
+        from alohamini.apps.collection.dagger import DAggerConfig
 
         if not isinstance(dagger, DAggerConfig):
             raise TypeError("dagger must be a DAggerConfig")
@@ -533,7 +531,7 @@ def evaluate(
             cleanup.callback(policy.close)
         keyboard = None
         if dagger is not None:
-            from alohamini.apps.dagger import DAggerKeyboard
+            from alohamini.apps.collection.dagger import DAggerKeyboard
 
             keyboard = cleanup.enter_context(DAggerKeyboard())
         client = cleanup.enter_context(
@@ -562,9 +560,11 @@ def evaluate(
             if any(name.startswith("arm_") for name in validate(fixed_config, robot_model)):
                 raise ValueError("DAgger currently requires unfixed arm dimensions")
             leader = cleanup.enter_context(BimanualLeader(robot_model, **dagger.leader_options()))
-            # Fail before any policy motion if the leader cannot provide strict
-            # full feedback. Passive voltage-alarm tolerance is not a hold permit.
-            leader.read_handover(ready_units(initial, robot_model, client.client_id))
+            units = ready_units(initial, robot_model, client.client_id)
+            if dagger.handover_mode == "aligned":
+                leader.read_handover(units)  # Torque holds require strict full feedback.
+            else:
+                leader.read(units)
         dataset = None
         if path is not None:
             dataset = LocalDataset(
@@ -581,10 +581,11 @@ def evaluate(
         for episode in range(num_episodes):
             intervention = None
             if dagger is not None:
-                from alohamini.apps.dagger import ManualHandover
+                from alohamini.apps.collection.dagger import ManualHandover
 
                 intervention = ManualHandover(leader, keyboard, dagger)
-                print("DAgger：Space 暂停/恢复；Tab 对齐/接管/结束纠错；Esc 退出。", flush=True)
+                transition = "对齐/接管" if dagger.handover_mode == "aligned" else "相对接管"
+                print(f"DAgger：Space 暂停/恢复；Tab {transition}/结束纠错；Esc 退出。", flush=True)
             if dataset is not None and intervention is None:
                 dataset.begin_episode()
             print(f"Eval episode {episode + 1} of {num_episodes}", flush=True)

@@ -272,6 +272,10 @@ class TargetRanges:
         self.lift_min = live["lift_axis"]["soft_min_mm"]
         self.lift_max = live["lift_axis"]["soft_max_mm"]
 
+    @property
+    def arm_bounds(self):
+        return {f"{name}.pos": (low, high) for name, _, low, high, _ in self.joints}
+
     def check_policy_action(self, action):
         """Check degree axes without altering any requested coordinate.
 

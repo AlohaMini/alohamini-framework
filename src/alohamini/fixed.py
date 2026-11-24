@@ -8,8 +8,7 @@ from pathlib import Path
 
 from alohamini._validation import finite_number
 from alohamini.client import control_feedback_valid
-
-VELOCITIES = ("x.vel", "y.vel", "theta.vel")
+from alohamini.runtime.handover import VELOCITIES, measured_hold_targets
 
 
 def dimensions(selection, robot_model):
@@ -181,7 +180,7 @@ def restore(
                     raise RuntimeError("Host context changed before fixed-target preparation")
                 initial = deepcopy(snapshot)
                 metadata = initial.payload["_robot_metadata"]
-                baseline = {n: 0.0 if n in VELOCITIES else float(initial.payload[n]) for n in names}
+                baseline = measured_hold_targets(initial, names)
                 final = {**baseline, **targets}
                 check_target_ranges(np.asarray([[final[n] for n in names]]), names, snapshot)
                 started_motion = time.monotonic()

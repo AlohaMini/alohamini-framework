@@ -6,9 +6,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from alohamini.policies.rlt import training
-from alohamini.policies.rlt.config import RLTConfig
-from alohamini.policies.rlt.networks import RLTokenDecoder, RLTokenEncoder
+from alohamini.policies.rlt.networks import RLTokenEncoder
+from alohamini.rl.rlt import token_training as training
+from alohamini.rl.rlt.config import RLTConfig
+from alohamini.rl.rlt.token_training import RLTokenDecoder
 
 
 def test_validation_covers_all_ten_episodes_and_endpoints():
@@ -114,7 +115,24 @@ def test_training_baseline_and_optimizer_use_separate_samples(tmp_path, monkeypa
         token_batch_size=2,
         token_validation_frames_per_episode=2,
     )
-    training.train_token(config, baseline_checkpoint=baseline)
+    from alohamini.cli import _main
+
+    settings = tmp_path / "config.json"
+    settings.write_text(json.dumps(config.to_dict()))
+    assert (
+        _main(
+            [
+                "train",
+                "rlt",
+                "token",
+                "--config",
+                str(settings),
+                "--baseline-checkpoint",
+                str(baseline),
+            ]
+        )
+        == 0
+    )
     assert calls[:2] == [2, 5]
     assert len(calls) == 2 + 3 * 2
     assert set(calls[2:]) <= {0, 1}

@@ -14,7 +14,7 @@ from test_dataset import frame, jpeg
 from test_evaluation import EvaluationClient
 from test_native_learning import model_options
 
-from alohamini.apps.dagger import DAggerConfig, ManualHandover
+from alohamini.apps.collection.dagger import DAggerConfig, ManualHandover
 from alohamini.apps.evaluation import run_evaluation
 from alohamini.datasets.edit import edit_dataset, parse_args
 from alohamini.datasets.record import LocalDataset, state_names

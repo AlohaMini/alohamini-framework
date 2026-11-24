@@ -1,8 +1,12 @@
 """Registered v3 extensions that require metadata relocation or target validity rules."""
 
-from alohamini.datasets.rlt.merge import ScoredEpisodeMerge
+import json
+from pathlib import Path
 
-EXTENSIONS = (ScoredEpisodeMerge,)
+from alohamini.datasets.experience.merge import ScoredEpisodeMerge as ExperienceMerge
+from alohamini.rl.rlt.merge import ScoredEpisodeMerge
+
+EXTENSIONS = (ExperienceMerge, ScoredEpisodeMerge)
 
 
 def merge_handlers(sources):
@@ -28,3 +32,15 @@ def action_validity_fields(info):
     if not set(expected) <= set(declared):
         raise ValueError("Dataset omits validity fields required by its registered extension")
     return declared
+
+
+def collection_layout(root):
+    """Select the raw scored-run schema from its durable collection contract."""
+    from alohamini.datasets.experience.v3 import ExperienceFormat
+    from alohamini.rl.rlt.v3 import RLTFormat
+
+    contract = json.loads((Path(root) / "run-contract.json").read_bytes())
+    for layout in (ExperienceFormat, RLTFormat):
+        if {k: v for k, v in contract.items() if k != "base"} == layout.run_metadata:
+            return layout
+    raise ValueError(f"Unknown scored collection format at {root}")

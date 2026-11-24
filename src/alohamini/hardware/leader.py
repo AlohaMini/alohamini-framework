@@ -18,6 +18,14 @@ from alohamini.model import ActuatorSpec, get_robot_model
 from alohamini.paths import WorkspacePaths
 
 
+def leader_sides(names):
+    """Return the serial buses required by the named arm position channels."""
+    positions = tuple(name for name in names if name.endswith(".pos"))
+    return tuple(
+        side for side in ("left", "right") if any(n.startswith(f"arm_{side}_") for n in positions)
+    )
+
+
 class BimanualLeader:
     """SO 5-DoF or AM 6-DoF leaders; grippers are additional position channels.
 

@@ -5,15 +5,17 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from itertools import chain
 from pathlib import Path
 
 import av
 import numpy as np
 
+from alohamini.datasets.experience.storage import atomic_json
 from alohamini.datasets.image_statistics import ImageStatistics, sample_indices
 from alohamini.datasets.images import decode_host_image
 from alohamini.datasets.recording_video import encoder_settings
-from alohamini.datasets.rlt.storage import atomic_json, digest_file
+from alohamini.datasets.video import _encode_frames, file_sha256
 
 
 def snapshot_directories(episode):
@@ -33,10 +35,8 @@ def _camera_paths(directories):
     paths = {}
     for frame, directory in enumerate(directories):
         cameras = json.loads((directory / "cameras.json").read_bytes())
-        if (
-            not cameras
-            or len(cameras) != len(set(cameras))
-            or any(not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in cameras)
+        if len(cameras) != len(set(cameras)) or any(
+            not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in cameras
         ):
             raise ValueError(f"Invalid camera list in {directory}")
         if frame and set(cameras) != set(paths):
@@ -62,30 +62,30 @@ def _encode_camera(camera, files, cache, fps):
             saved.get("encoding") == settings
             and saved["frames"] == len(files)
             and saved["fps"] == fps
-            and digest_file(output) == saved["sha256"]
+            and file_sha256(output) == saved["sha256"]
         ):
             return camera, saved
 
     rate = Fraction(str(fps)).limit_denominator(100_000)
     temporary = output.with_suffix(".tmp.mp4")
-    with av.open(str(temporary), "w") as writer:
-        stream = writer.add_stream(codec, rate=rate, options=options)
-        stream.pix_fmt = settings["pix_fmt"]
-        stream.codec_context.thread_count = 2
-        stream.time_base = 1 / rate
-        for index, file in enumerate(files):
+
+    def frames():
+        for file in files:
             rgb = decode_host_image(file.read_bytes())
-            if index == 0:
-                stream.height, stream.width = rgb.shape[:2]
-            if rgb.shape != (stream.height, stream.width, 3):
-                raise ValueError(f"Camera image size changed at {file}")
-            frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format="rgb24")
-            frame = frame.reformat(format=stream.pix_fmt)
-            frame.pts, frame.time_base = index, 1 / rate
-            for packet in stream.encode(frame):
-                writer.mux(packet)
-        for packet in stream.encode():
-            writer.mux(packet)
+            yield av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format="rgb24")
+
+    source = frames()
+    first = next(source)
+    _encode_frames(
+        chain((first,), source),
+        temporary,
+        fps,
+        (first.height, first.width, 3),
+        codec=codec,
+        pix_fmt=settings["pix_fmt"],
+        options=options,
+        strict_shape=True,
+    )
 
     count = 0
     stats = ImageStatistics()
@@ -133,7 +133,7 @@ def _encode_camera(camera, files, cache, fps):
         frames=count,
         fps=fps,
         bytes=output.stat().st_size,
-        sha256=digest_file(output),
+        sha256=file_sha256(output),
         encoding=settings,
         color_check={"frames": len(checks), "rgb_mae": mae, "bgr_mae": bgr_mae},
         info=info,
@@ -148,7 +148,7 @@ def prepare_videos(episode, cache, fps, *, workers=4):
     episode, cache = Path(episode), Path(cache)
     paths = _camera_paths(snapshot_directories(episode))
     if not paths:
-        raise ValueError(f"No images in {episode}")
+        return {}
     cache.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=min(workers, len(paths))) as pool:
         futures = [

@@ -13,6 +13,8 @@ from alohamini.protocol import HostSnapshot
 from alohamini.runtime.command_feedback import feedback_after_command
 from alohamini.schema import CommandIdentity
 
+RUN_METADATA = {"collection": "experience"}
+
 
 def _digest_stream(stream):
     digest = hashlib.sha256()
@@ -150,26 +152,27 @@ def recording_history(root, *, resume):
     return history
 
 
-def validate_training_episode(directory, summary):
+def action_step(summary, row):
+    return row["source"] in ("POLICY", "HUMAN")
+
+
+def validate_training_episode(
+    directory, summary, *, include_step=None, receipt_field_key="receipt_fields"
+):
     if not summary.get("training_valid", True):
         raise ValueError(f"Episode is excluded from training: {summary.get('invalid_reason')}")
-    if not summary.get("requires_acknowledgements") and "started_at" not in summary:
-        return
     outcomes = {
         CommandIdentity(**row["command"]): row for row in json_lines(directory / "acks.jsonl")
     }
-    names = set(summary["base_contract"]["learned_names"])
+    names = set(summary["base_contract"][receipt_field_key])
     dispositions = summary.get("requires_command_dispositions", False)
-    whole_episode = summary.get("phase_labels") == "optional-operator-v2" and (
-        summary.get("critical_entries") == 0
-    )
     for row in json_lines(directory / "steps.jsonl"):
-        if (row["critical"] or whole_episode) and row["source"] in ("VLA", "RLT", "HUMAN"):
+        if include_step is None or include_step(summary, row):
             outcome = outcomes.get(CommandIdentity(**row["command"]), {})
             status = outcome.get("status", "applied")
             if dispositions and status in ("superseded", "rejected"):
                 continue
-            if status != "applied" or not names <= outcome.get("targets", {}).keys():
+            if not outcome or status != "applied" or not names <= outcome.get("targets", {}).keys():
                 raise ValueError(
                     f"Episode is still awaiting Host acceptance for step {row['index']}"
                 )
@@ -191,7 +194,7 @@ def validate_training_episode(directory, summary):
                 raise ValueError("Legacy terminal has no post-application ordering proof")
 
 
-def commit_episode(directory, reward):
+def commit_episode(directory, reward, *, validate=validate_training_episode):
     """Called only after the writer closed an explicitly ended episode."""
     if type(reward) is not int or reward not in (0, 1):
         raise ValueError("Reward must be the integer 0 or 1")
@@ -212,7 +215,7 @@ def commit_episode(directory, reward):
     if summary.get("writer_error"):
         raise ValueError("Episode recording failed and cannot be committed")
     if valid:
-        validate_training_episode(directory, summary)
+        validate(directory, summary)
     summary.update(reward=reward, status="committed", committed_at=time.time())
     target.parent.mkdir(exist_ok=True)
     if target.exists():
@@ -236,6 +239,9 @@ def commit_episode(directory, reward):
 class EpisodeRecorder:
     """One bounded disk worker. Slow storage never blocks the control loop."""
 
+    def commit(self, reward):
+        return commit_episode(self.directory, reward)
+
     def __init__(self, root, metadata):
         self.id = uuid4().hex
         self.directory = Path(root) / "pending" / self.id
@@ -247,7 +253,7 @@ class EpisodeRecorder:
         self._queue = queue.Queue(maxsize=128)
         self._done = threading.Event()
         self.terminal_saved = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="RLTEpisodeWriter", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="ScoredEpisodeWriter", daemon=True)
         self._thread.start()
 
     def put(self, kind, value):
@@ -255,7 +261,7 @@ class EpisodeRecorder:
         try:
             self._queue.put_nowait((kind, value))
         except queue.Full:
-            self.error = RuntimeError("RLT recording queue is full, episode remains pending")
+            self.error = RuntimeError("Recording queue is full, episode remains pending")
             raise self.error from None
 
     def step(self, index, snapshot, record):
@@ -320,7 +326,7 @@ class EpisodeRecorder:
                         os.fsync(acks.fileno())
                         break
             if kind == "reward" and self.error is None:
-                self.committed = commit_episode(self.directory, value)
+                self.committed = self.commit(value)
         except Exception as exc:
             self.error = exc
         finally:

@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,13 +11,13 @@ import pytest
 import torch
 from PIL import Image
 
-from alohamini.apps.rlt.v3_worker import collection_publisher
+from alohamini.apps.collection.v3_worker import collection_publisher
+from alohamini.datasets.experience import v3
+from alohamini.datasets.experience.reader import V3Observations
+from alohamini.datasets.experience.storage import save_snapshot
 from alohamini.datasets.images import decode_host_image
-from alohamini.datasets.rlt import v3
-from alohamini.datasets.rlt.storage import save_snapshot
-from alohamini.datasets.rlt.v3_reader import V3Observations
-from alohamini.policies.rlt.replay import materialize_episode
 from alohamini.protocol import HostSnapshot
+from alohamini.rl.rlt.replay import materialize_episode
 
 
 def _episode(root, sequence, *, scored=True):
@@ -80,6 +81,9 @@ def _episode(root, sequence, *, scored=True):
     for filename, values in (("steps.jsonl", rows), ("acks.jsonl", outcomes)):
         (directory / filename).write_text("\n".join(map(json.dumps, values)), encoding="utf-8")
     contract = {"names": names, "learned_names": ["left"]}
+    (root / "run-contract.json").write_text(
+        json.dumps({"reference_contract": "vla-start-chunk-v1", "base": contract})
+    )
     summary = dict(
         episode_id=directory.name,
         status="committed" if scored else "pending",
@@ -114,6 +118,21 @@ def test_scored_collection_publishes_compact_rgb_and_portable_replay(tmp_path):
     feature = info["features"]["observation.images.chest"]["info"]
     assert (feature["video.codec"], feature["video.pix_fmt"]) == ("h264", "yuv420p")
     rows = pq.read_table(dataset / "data/chunk-000/file-000.parquet").to_pylist()
+    # Published v1 shards must remain directly mergeable by Arrow schema, including column order.
+    assert [k for k in rows[0] if k.startswith(("rlt.", "next."))] == [
+        "rlt.requested_action",
+        "rlt.step_reference",
+        "rlt.applied_mask",
+        "rlt.source",
+        "rlt.disposition",
+        "rlt.is_terminal_observation",
+        "rlt.action_valid",
+        "rlt.has_reference",
+        "rlt.critical",
+        "next.done",
+        "next.reward",
+        "rlt.control_time",
+    ]
     assert [r["rlt.action_valid"] for r in rows] == [True, True, False, False, False]
     assert [r["next.reward"] for r in rows] == [0, 1, 0, 0, 0]
     assert [r["next.done"] for r in rows] == [False, True, False, False, False]
@@ -171,7 +190,7 @@ def test_v3_append_recovers_partial_publication_and_is_idempotent(tmp_path, monk
     assert v3.export_v3(tmp_path)["total_episodes"] == 1
     _episode(tmp_path, 2)
     info_path = tmp_path / "lerobot_v3/meta/info.json"
-    replace = v3.os.replace
+    replace = os.replace
 
     def interrupted(source, target):
         if Path(target) == info_path:
@@ -179,7 +198,7 @@ def test_v3_append_recovers_partial_publication_and_is_idempotent(tmp_path, monk
         return replace(source, target)
 
     with monkeypatch.context() as m:
-        m.setattr(v3.os, "replace", interrupted)
+        m.setattr(os, "replace", interrupted)
         with pytest.raises(OSError, match="interruption"):
             v3.export_v3(tmp_path)
     assert json.loads(info_path.read_bytes())["total_episodes"] == 1
@@ -193,7 +212,7 @@ def test_v3_append_recovers_partial_publication_and_is_idempotent(tmp_path, monk
 def test_platform_merge_and_action_training_use_scored_data(tmp_path):
     from alohamini.datasets.merge_v3 import merge_v3
     from alohamini.learning.data import AlohaMiniDataset
-    from alohamini.policies.rlt.ac_training import scored_episodes
+    from alohamini.rl.rlt.episodes import recorded_action_names, scored_episodes
 
     sources = []
     for number in (1, 2):
@@ -204,6 +223,7 @@ def test_platform_merge_and_action_training_use_scored_data(tmp_path):
     merged = tmp_path / "merged"
     merge_v3(sources, merged)
     assert (merged / "recording.lock").is_file()
+    assert recorded_action_names(merged) == ["left"]
     for eid, reward, directory in scored_episodes(merged):
         assert json.loads((directory / "episode.json").read_bytes())["episode_id"] == eid
         assert reward == 1
@@ -218,7 +238,7 @@ def test_platform_merge_and_action_training_use_scored_data(tmp_path):
 
 
 def test_token_reads_recorded_task_and_observations_at_checkpoint_fps(tmp_path):
-    from alohamini.policies.rlt.training import TokenData
+    from alohamini.rl.rlt.token_training import TokenData
 
     for i in (1, 2):
         directory, _, _ = _episode(tmp_path, i)
@@ -251,3 +271,29 @@ def test_token_reads_recorded_task_and_observations_at_checkpoint_fps(tmp_path):
         ((1, 4), "task 2"),
     ]
     assert all("action" not in data.batch(i) for i in range(4))
+
+
+def test_score_pending_and_export_portable_dataset(tmp_path):
+    from alohamini.cli import _main
+
+    root, output = tmp_path / "collection", tmp_path / "portable"
+    pending, _, _ = _episode(root, 1, scored=False)
+    score = [
+        "collect",
+        "score",
+        "--output-dir",
+        str(root),
+        "--episode",
+        pending.name,
+        "--reward",
+        "0",
+    ]
+    assert _main(score) == 0
+    assert _main(score) == 0
+    assert (
+        _main(["dataset", "export", str(root), "--format", "lerobot-v3", "--output", str(output)])
+        == 0
+    )
+    meta = json.loads((output / "meta/info.json").read_bytes())
+    assert meta["alohamini_rlt"]["episode_ids"] == [pending.name]
+    assert json.loads((output / "meta/rlt/episode_000000/episode.json").read_bytes())["reward"] == 0

@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 import torch
 
-from alohamini.datasets.rlt.storage import save_snapshot
-from alohamini.policies.rlt.replay import materialize_episode
+from alohamini.datasets.experience.storage import save_snapshot
 from alohamini.protocol import HostSnapshot
+from alohamini.rl.rlt.replay import materialize_episode
 
 
 def test_optional_phase_uses_applied_actions_and_separate_reference(tmp_path):

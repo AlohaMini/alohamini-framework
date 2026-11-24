@@ -56,10 +56,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["rlt"]:
-        from alohamini.apps.rlt.cli import main as rlt_main
+    if argv[:1] == ["collect"]:
+        from alohamini.apps.collection.cli import main as collect_main
 
-        return rlt_main(argv[1:])
+        return collect_main(argv[1:])
+    if argv[:2] == ["train", "rlt"]:
+        from alohamini.rl.rlt.cli import main as rlt_main
+
+        return rlt_main(argv[2:])
     if argv[:2] == ["train", "monitor"]:
         from alohamini.monitor.server import main as monitor_training
 
@@ -96,9 +100,9 @@ def _main(argv: list[str] | None = None) -> int:
             return 1
     parser = argparse.ArgumentParser(prog="alohamini", description="AlohaMini 机器人接口")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("rlt", help="采集评分回合及训练 RLT")
+    commands.add_parser("collect", help="策略交互采集、人工纠错和回合评分")
     commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
-    commands.add_parser("train", help="训练策略、检查资源（check）、查看实时日志（monitor）")
+    commands.add_parser("train", help="训练策略、RLT 阶段（rlt）、资源检查（check）和实时日志（monitor）")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(
@@ -136,7 +140,11 @@ def _main(argv: list[str] | None = None) -> int:
         elif operation == "stats":
             command.add_argument("--output", required=True, help="数据集目录外的新 JSON 文件")
         else:
-            command.add_argument("--output", required=True, help="尚不存在的新目录")
+            command.add_argument(
+                "--output", required=True,
+                help="输出到新目录；评分回合可指定原采集目录下的 lerobot_v3 以追加导出"
+                if operation == "export" else "尚不存在的新目录",
+            )
         if operation == "stats":
             command.add_argument("--config", help="训练 JSON 配置；省略时仅统计原始数值字段")
         if operation == "export":
@@ -170,87 +178,9 @@ def _main(argv: list[str] | None = None) -> int:
     replayer.add_argument("--speed", "--replay.speed", dest="speed", type=float, default=1.0)
     replayer.add_argument("--verbose-actions", action="store_true")
     evaluator = commands.add_parser("evaluate", help="运行本地策略并可选录制评估数据")
-    evaluator.add_argument("--host", "--robot.remote_ip", dest="host", required=True)
-    evaluator.add_argument(
-        "--robot_model",
-        "--robot.robot_model",
-        dest="robot_model",
-        required=True,
-        choices=robot_models(),
-    )
-    policy_source = evaluator.add_mutually_exclusive_group(required=True)
-    policy_source.add_argument(
-        "--policy",
-        dest="policy_factory",
-        help="可导入的 module:factory，工厂函数返回策略对象",
-    )
-    policy_source.add_argument(
-        "--policy.path", dest="checkpoint", help="本地 AlohaMini 策略 checkpoint"
-    )
-    evaluator.add_argument("--device", help="checkpoint 推理设备，默认 cuda")
-    evaluator.add_argument(
-        "--language-replan-interval-s", dest="language_replan_interval_s", type=float,
-        default=argparse.SUPPRESS, help="支持语言规划的策略按观测时间周期更新子任务",
-    )
-    evaluator.add_argument(
-        "--goal-images", dest="goal_images", type=json.loads, default=argparse.SUPPRESS,
-        help='目标图像映射，例如 {"forward":"/path/goal.png"}；仅用于支持视觉目标的策略',
-    )
-    from alohamini.trajectory_execution import add_inference_arguments
+    from alohamini.apps.policy_cli import add_policy_arguments
 
-    add_inference_arguments(evaluator)
-    evaluator.add_argument("--policy.time_scale", dest="time_scale", type=float,
-                           default=argparse.SUPPRESS)
-    evaluator.add_argument(
-        "--policy.n_action_steps",
-        dest="n_action_steps",
-        type=int,
-        default=argparse.SUPPRESS,
-        help="执行多少个动作后重新预测，省略时沿用 checkpoint",
-    )
-    evaluator.add_argument(
-        "--policy.temporal_ensemble_coeff",
-        dest="temporal_ensemble_coeff",
-        type=_ensemble_coefficient,
-        default=argparse.SUPPRESS,
-        help="ACT 融合系数；none 关闭，0 等权融合，省略时沿用 checkpoint",
-    )
-    evaluator.add_argument(
-        "--fixed-dimensions",
-        nargs="+",
-        default=argparse.SUPPRESS,
-        help="固定维度或 arm_left/arm_right/lift_axis/base；新增维度使用训练动作均值",
-    )
-    evaluator.add_argument(
-        "--fixed-current",
-        nargs="+",
-        default=argparse.SUPPRESS,
-        help=(
-            "固定所选维度在推理启动时的实测位置，无需训练数据集；"
-            "可选 arm_left/arm_right/lift_axis/base"
-        ),
-    )
-    evaluator.add_argument(
-        "--fixed-dataset",
-        default=argparse.SUPPRESS,
-        help="旧 checkpoint 计算固定均值所用的原训练数据集",
-    )
-    evaluator.add_argument("--fps", type=int, default=30)
-    evaluator.add_argument(
-        "--calibration-mode",
-        choices=("strict", "normalized", "legacy_normalized"),
-        default=argparse.SUPPRESS,
-        help="strict 要求训练标定一致；normalized 迁移已知标定；legacy_normalized 声明旧数据为"
-        "关节[-100,100]/夹爪[0,100]、底盘m/s及deg/s、升降mm，并绑定当前Host标定",
-    )
-    evaluator.add_argument("--episode_time", dest="episode_time_s", type=float, default=60)
-    evaluator.add_argument("--num_episodes", type=int, default=1)
-    evaluator.add_argument("--reset_time", dest="reset_time_s", type=float, default=10)
-    evaluator.add_argument("--dataset", dest="dataset_name", help="可选，本地评估数据集名称")
-    evaluator.add_argument("--task", default="robot task")
-    from alohamini.apps.dagger import add_dagger_arguments
-
-    add_dagger_arguments(evaluator)
+    add_policy_arguments(evaluator)
     recorder = commands.add_parser("record", help="双主臂多频率数采，本地保存，不上传")
     recorder.add_argument(
         "--dataset",
@@ -500,6 +430,9 @@ def _main(argv: list[str] | None = None) -> int:
                 if getattr(args, "state", None) is not None or getattr(args, "vision_only", False):
                     raise ValueError("--state/--vision-only require --format lerobot-v3")
                 report = export_dataset(args.root, args.output, recover=args.operation == "recover")
+            if "published_episodes" in report:
+                print(f"已导出 {report['published_episodes']} 个已评分回合到 {report['dataset_root']}")
+                return 0
             print_report(report, summarize_warnings=args.operation == "export")
             if args.operation == "export" and report["valid"]:
                 print("Export completed; recorded timestamps were not resampled.")
@@ -508,68 +441,9 @@ def _main(argv: list[str] | None = None) -> int:
                 or (getattr(args, "fail_on_warnings", False) and report["warnings"] > 0)
             )
         if args.command == "evaluate":
-            from alohamini.apps.evaluation import evaluate
+            from alohamini.apps.policy_cli import run_policy
 
-            logging.basicConfig(level=logging.WARNING, format="%(message)s")
-            options = vars(args).copy()
-            options.pop("command")
-            from alohamini.apps.dagger import pop_dagger_options
-
-            dagger = pop_dagger_options(options)
-            if dagger is not None:
-                options["dagger"] = dagger
-            checkpoint = options.pop("checkpoint")
-            device = options.pop("device")
-            from alohamini.trajectory_execution import pop_inference_options
-
-            execution = pop_inference_options(options)
-            overrides = {
-                key: options.pop(key)
-                for key in (
-                    "n_action_steps",
-                    "temporal_ensemble_coeff",
-                    "fixed_dimensions",
-                    "fixed_dataset",
-                    "fixed_current",
-                    "calibration_mode",
-                    "goal_images",
-                    "time_scale",
-                    "language_replan_interval_s",
-                )
-                if key in options
-            }
-            if checkpoint is not None:
-                from pathlib import Path
-
-                if not (Path(checkpoint).expanduser() / "policy.json").is_file():
-                    raise ValueError(
-                        "Expected an AlohaMini checkpoint; "
-                        "use the LeRobot fork for LeRobot checkpoints"
-                    )
-
-                def load_checkpoint():
-                    from alohamini.learning.policy import NativePolicy
-
-                    policy = NativePolicy(
-                        checkpoint,
-                        device=device or "cuda",
-                        task=options["task"],
-                        **(
-                            {"robot_model": options["robot_model"]}
-                            if overrides.get("calibration_mode") == "legacy_normalized"
-                            else {}
-                        ),
-                        **overrides,
-                    )
-                    from alohamini.learning.trajectory_execution import prepare_execution
-
-                    return prepare_execution(policy, execution, control_fps=options["fps"])
-
-                options["policy_factory"] = load_checkpoint
-            elif device is not None or overrides or execution != type(execution)():
-                raise ValueError("Checkpoint options require --policy.path, not --policy")
-            evaluate(**options)
-            return 0
+            return run_policy(vars(args).copy())
         if args.command == "replay":
             from alohamini.apps.replay import replay
 

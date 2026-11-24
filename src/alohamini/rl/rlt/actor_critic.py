@@ -7,30 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from alohamini.learning.stages import stage_optimizer
-
-AC_FORMAT = "alohamini-rlt-residual-ac-v1"
-
-
-def _mlp(inputs, outputs):
-    return nn.Sequential(
-        nn.Linear(inputs, 256), nn.ReLU(), nn.Linear(256, 256), nn.ReLU(), nn.Linear(256, outputs)
-    )
-
-
-class ChunkActor(nn.Module):
-    def __init__(self, contract, residual_limit):
-        super().__init__()
-        axes = len(contract["learned_names"])
-        size = contract["chunk_size"] * axes
-        self.net = _mlp(contract["token_spec"]["dim"] + axes + size, size)
-        nn.init.zeros_(self.net[-1].weight)
-        nn.init.zeros_(self.net[-1].bias)
-        self.residual_limit = residual_limit
-
-    def forward(self, token, state, reference):
-        inputs = torch.cat((token, state, reference.flatten(1)), dim=1)
-        residual = self.net(inputs).reshape_as(reference).tanh()
-        return reference + self.residual_limit * residual
+from alohamini.policies.rlt.networks import ChunkActor, chunk_mlp
 
 
 class TwinCritic(nn.Module):
@@ -38,8 +15,8 @@ class TwinCritic(nn.Module):
         super().__init__()
         axes = len(contract["learned_names"])
         size = contract["token_spec"]["dim"] + axes + contract["chunk_size"] * (axes + 1)
-        self.q1 = _mlp(size, 1)
-        self.q2 = _mlp(size, 1)
+        self.q1 = chunk_mlp(size, 1)
+        self.q2 = chunk_mlp(size, 1)
 
     def forward(self, token, state, actions, valid):
         x = torch.cat((token, state, (actions * valid[..., None]).flatten(1), valid), dim=1)
@@ -60,6 +37,7 @@ class ActorCritic:
             self.critic, lr=config.lr, steps=config.ac_steps, kind="adam", clip=10, decay=0
         )
         self.updates = self.actor_updates = 0
+        self.sampled_terminals = self.sampled_successes = 0
 
     @torch.no_grad()
     def target(self, batch):
@@ -119,4 +97,9 @@ class ActorCritic:
                 bc_loss=float(bc.detach()),
                 actor_q=float(q.detach()),
             )
+        self.sampled_terminals += int(batch["done"].sum())
+        self.sampled_successes += int(batch["reward"].any(dim=1).sum())
+        metrics.update(
+            sampled_terminals=self.sampled_terminals, sampled_successes=self.sampled_successes
+        )
         return metrics

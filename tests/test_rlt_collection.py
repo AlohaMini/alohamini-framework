@@ -9,15 +9,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from alohamini.apps.rlt.console import ConsoleInput
-from alohamini.apps.rlt.control import RelativeLeader
-from alohamini.apps.rlt.runtime import ControlSession
+from alohamini.apps.collection.console import ConsoleInput
+from alohamini.apps.collection.rlt import ControlSession
+from alohamini.datasets.experience.storage import json_lines, load_snapshot
 from alohamini.datasets.record import state_names
-from alohamini.datasets.rlt.storage import json_lines, load_snapshot, validate_training_episode
 from alohamini.model import get_robot_model
-from alohamini.policies.rlt.config import RLTConfig
 from alohamini.protocol import HostSnapshot
+from alohamini.rl.rlt.config import RLTConfig
+from alohamini.rl.rlt.episodes import validate_training_episode
 from alohamini.runtime.command_feedback import feedback_after_command
+from alohamini.runtime.handover import RelativeLeader
 from alohamini.schema import CommandIdentity
 
 
@@ -279,15 +280,15 @@ def test_collect_starts_on_valid_feedback_without_n_and_h_toggles(session):
     assert session.record is None
     step(session, clock, positions=pose(session))
     first = session.record
-    assert session.state.mode == "vla" and session.start_pose == pose(session)
+    assert session.state.mode == "policy" and session.start_pose == pose(session)
     step(session, clock, [("key", "h")])
     assert session.state.mode == "human"
     step(session, clock, [("key", "h")])
-    assert session.state.mode == "vla" and session.record is first and session.takeovers == 1
+    assert session.state.mode == "policy" and session.record is first and session.takeovers == 1
 
 
 def test_collect_score_after_reset_waits_for_disk_and_new_observation(returning, monkeypatch):
-    from alohamini.datasets.rlt import storage
+    from alohamini.rl.rlt import episodes as storage
 
     session, clock = returning
     end_episode(session, clock)
@@ -317,7 +318,7 @@ def test_collect_score_after_reset_waits_for_disk_and_new_observation(returning,
     step(session, clock, age=clock.now - key_time + 0.001)
     assert session.record is record
     step(session, clock)
-    assert session.state.mode == "vla" and session.record.id != record.id
+    assert session.state.mode == "policy" and session.record.id != record.id
     assert len(session.finished) == 1 and session.finished[0]["reward"] == 1
 
 
@@ -334,7 +335,7 @@ def test_early_score_stays_stopped_until_a_separate_enter_after_return(returning
     assert console.feed("0\r", awaiting_reward=True) == [("reward", 0)]
     assert console.feed("\n", confirm_reset=True) == []  # LF from the previous CRLF.
     step(session, clock, console.feed("\r", confirm_reset=True))
-    assert session.record is not record and session.state.mode == "vla"
+    assert session.record is not record and session.state.mode == "policy"
     assert len(session.finished) == 1 and session.finished[0]["reward"] == 0
 
 
@@ -348,7 +349,7 @@ def test_collect_quit_or_failed_leader_at_start_creates_no_episode(session):
 
 
 def test_return_waits_until_terminal_is_durably_saved(returning, monkeypatch):
-    from alohamini.datasets.rlt import storage
+    from alohamini.datasets.experience import storage
 
     session, clock = returning
     entered, release = threading.Event(), threading.Event()
@@ -638,8 +639,8 @@ def test_no_manual_start_hotkey_and_passive_only_config(tmp_path):
 def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(
     tmp_path, monkeypatch, use_json
 ):
-    from alohamini.apps.rlt import runtime
-    from alohamini.apps.rlt.cli import main
+    from alohamini.apps.collection import rlt
+    from alohamini.cli import _main as main
 
     monkeypatch.chdir(tmp_path)
     saved = {}
@@ -647,8 +648,8 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(
     def capture(config, *, resume):
         saved.update(config=config, resume=resume)
 
-    monkeypatch.setattr(runtime, "run", capture)
-    args = ["collect"]
+    monkeypatch.setattr(rlt, "run", capture)
+    args = ["collect", "rlt"]
     folder = tmp_path / "settings"
     if use_json:
         folder.mkdir()
@@ -710,12 +711,15 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(
     assert cfg.calibration_dir == str((folder if use_json else tmp_path) / "calibration")
 
 
-def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, monkeypatch):
-    from alohamini.apps.rlt import runtime
-    from alohamini.apps.rlt.cli import main
+@pytest.mark.parametrize("sides", [("left",), ("right",), ("left", "right"), ()])
+def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, monkeypatch, sides):
+    from alohamini.apps.collection import native, rlt, scored_session
+    from alohamini.cli import _main
 
     names = state_names("alohamini2pro")
-    learned = [n for n in names if n.startswith("arm_left_")]
+    learned = [
+        n for n in names if any(n.startswith(f"arm_{side}_") for side in sides or ("left", "right"))
+    ]
     sent = []
     command_times = {}
     command_cycles = {}
@@ -762,7 +766,7 @@ def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, 
             return identity
 
     class Console:
-        def __init__(self):
+        def __init__(self, *, hotkeys):
             self.events = iter(
                 [
                     [],
@@ -796,7 +800,10 @@ def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, 
                 fps=30,
                 fixed=None,
                 metadata=initial.payload["_robot_metadata"],
-                base_contract=dict(learned_names=learned),
+                base_contract={
+                    "names": names,
+                    ("learned_names" if sides else "receipt_fields"): learned,
+                },
                 cameras=[],
             )
 
@@ -811,8 +818,9 @@ def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, 
             pass
 
     class Leader:
-        def __init__(self, *_args):
-            pass
+        def __init__(self, config, units, active_sides):
+            assert active_sides == sides
+            assert set(learned) <= units.keys()
 
         def read(self, _age):
             return time.monotonic(), {name: 0 for name in learned}
@@ -821,18 +829,35 @@ def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, 
             pass
 
     stopped = []
-    monkeypatch.setattr(runtime, "HostClient", Client)
-    monkeypatch.setattr(runtime, "ConsoleInput", Console)
-    monkeypatch.setattr(runtime, "InferenceWorker", Inference)
-    monkeypatch.setattr(runtime, "LeaderReader", Leader)
-    monkeypatch.setattr(runtime, "stop_owned_robot", lambda *_args: stopped.append(True))
+    monkeypatch.setattr(scored_session, "HostClient", Client)
+    monkeypatch.setattr(scored_session, "ConsoleInput", Console)
+    monkeypatch.setattr(rlt, "worker", Inference)
+    monkeypatch.setattr(scored_session, "LeaderReader", Leader)
+    monkeypatch.setattr(scored_session, "stop_owned_robot", lambda *_args: stopped.append(True))
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config(tmp_path).to_dict()))
-    assert main(["collect", "--config", str(path)]) == 0
+    if sides:
+        argv = ["collect", "rlt", "--config", str(path)]
+    else:
+        monkeypatch.setattr(native, "worker", Inference)
+        argv = [
+            "collect",
+            "scored",
+            "--output-dir",
+            str(tmp_path),
+            "--policy.path",
+            "act",
+            "--task",
+            "place",
+        ]
+    assert _main(argv) == 0
     summaries = list((tmp_path / "episodes").glob("*/episode.json"))
     assert len(summaries) == 1
     summary = json.loads(summaries[0].read_text())
-    assert summary["reward"] == 1 and summary["takeovers"] == 1
+    assert summary["reward"] == 1 and summary["takeovers"] == int(bool(sides))
+    info = json.loads((tmp_path / "lerobot_v3/meta/info.json").read_bytes())
+    assert info["total_episodes"] == 1
+    assert ("alohamini_rlt" if sides else "alohamini_experience") in info
     assert stopped == [True]
     assert summary["evaluation"] is False and summary["training_valid"]
 
@@ -864,3 +889,101 @@ def test_stock_host_manual_episode_finalizes_using_only_its_last_application(ses
         "HUMAN"
     }
     validate_training_episode(session.record.committed, summary)
+
+
+def test_manual_motion_uses_handover_speed_limits_on_both_arms(session):
+    base, clock = session
+    learned = ["arm_left_gripper.pos", "arm_right_gripper.pos"]
+    pose = dict.fromkeys(learned, 0.0)
+    leader = SimpleNamespace(read=lambda _: (clock.now, pose))
+    ready = dict(base.ready, base_contract={"learned_names": learned})
+    control = ControlSession(
+        base.client, base.inference, leader, base.config, ready, snapshot(clock.now)
+    )
+    try:
+        tick(control, clock)
+        tick(control, clock, [("key", "h")])
+        pose.update(dict.fromkeys(learned, 90.0))
+        tick(control, clock)
+        sent, _ = control.client.sent[-1]
+        for name in learned:
+            assert sent[name] == pytest.approx(50 / 30)
+        assert sent["x.vel"] == sent["theta.vel"] == 0.0
+    finally:
+        control.record.close()
+
+
+def test_contract_derives_coordinates_and_preserves_saved_order(tmp_path):
+    from alohamini.policies.rlt.policy import base_contract
+
+    left, right = "arm_left_gripper.pos", "arm_right_gripper.pos"
+    names = [right, left, "lift_axis.height_mm"]
+    for filename in ("policy.json", "model.safetensors"):
+        (tmp_path / filename).write_bytes(b"test")
+    native = SimpleNamespace(
+        names=names,
+        checkpoint_path=tmp_path,
+        fps=30,
+        fixed_dimensions=None,
+        fixed_state_references={},
+        manifest={"state_feature": {"names": names}},
+        algorithm=SimpleNamespace(
+            reference_features=SimpleNamespace(asset_files=(), width=lambda _: 4)
+        ),
+    )
+    cfg = config(tmp_path)
+    assert base_contract(native, cfg)["learned_names"] == [right, left]
+    assert base_contract(native, cfg, saved_names=[left])["learned_names"] == [left]
+    assert base_contract(native, replace(cfg, learned_action_names=["arm_right"]))[
+        "learned_names"
+    ] == [right]
+    native.fixed_dimensions = {"targets": {left: 0.0}}
+    assert base_contract(native, cfg)["learned_names"] == [right]
+    with pytest.raises(ValueError, match="fixed"):
+        base_contract(native, replace(cfg, learned_action_names=[left]))
+
+
+def test_configured_leader_reader_opens_only_selected_bus(tmp_path, monkeypatch):
+    from alohamini.apps.collection.workers import LeaderReader
+
+    entered = {}
+    made_read = threading.Event()
+    coordinate = "arm_right_gripper.pos"
+
+    class Leader:
+        def __init__(self, model, **options):
+            entered.update(model=model, **options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def read(self, units):
+            assert units == {coordinate: "range_0_100"}
+            made_read.set()
+            return {coordinate: 16.0}
+
+    monkeypatch.setattr("alohamini.hardware.leader.BimanualLeader", Leader)
+    reader = LeaderReader(
+        config(tmp_path, right_port="/dev/test-right"), {coordinate: "range_0_100"}, ("right",)
+    )
+    try:
+        assert made_read.wait(2)
+    finally:
+        reader.close()
+    assert reader.error is None
+    assert entered["active_sides"] == ("right",)
+    assert entered["right_port"] == "/dev/test-right"
+    assert entered["interactive_calibration"] is False
+
+
+def test_relative_handover_forgets_offset_on_handback(session):
+    control, clock = session
+    tick(control, clock)
+    tick(control, clock, [("key", "h")])
+    tick(control, clock, [("key", "h")])
+    sample = control.leader.read(control.config.leader_max_age_s)[1]
+    with pytest.raises(RuntimeError, match="fresh latch"):
+        control.relative.action(sample, snapshot(clock.now), clock.now)

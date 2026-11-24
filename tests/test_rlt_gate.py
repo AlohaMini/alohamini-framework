@@ -9,16 +9,15 @@ import torch
 from test_rlt_collection import session as session
 from test_rlt_collection import snapshot, tick
 
-from alohamini.apps.rlt.cli import main
-from alohamini.apps.rlt.gate import GripperRelease
-from alohamini.apps.rlt.runtime import ControlSession
-from alohamini.datasets.rlt.storage import json_lines
+from alohamini.apps.collection.rlt import ControlSession, GripperRelease
+from alohamini.cli import _main as main
+from alohamini.datasets.experience.storage import json_lines
 from alohamini.learning.stages import read_stage_weights as load_hashed_weights
-from alohamini.policies.rlt import gate_training as gt
-from alohamini.policies.rlt.config import RLTConfig
 from alohamini.policies.rlt.gate import GateLatch
-from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
+from alohamini.policies.rlt.networks import GATE_FORMAT, StageClassifier
 from alohamini.policies.rlt.policy import RLTPolicy
+from alohamini.rl.rlt import gate_training as gt
+from alohamini.rl.rlt.config import RLTConfig
 
 CONTRACT = {"learned_names": ["left", "grip"], "token_spec": {"dim": 4}}
 
@@ -176,7 +175,9 @@ def test_train_load_and_predict_auto_gate_without_second_policy_forward(tmp_path
     assert (
         main(
             [
-                "train-gate",
+                "train",
+                "rlt",
+                "gate",
                 "--config",
                 str(config_path),
                 "--intervals",
@@ -284,7 +285,7 @@ def test_release_exits_manual_actor_and_ignores_pre_release_plan(session):
         c.client,
         c.inference,
         c.leader,
-        c.config,
+        replace(c.config, gripper_exit=True),
         ready,
         snapshot(clock.now),
     )
@@ -324,7 +325,7 @@ def test_release_exits_manual_actor_and_ignores_pre_release_plan(session):
             frame(30)
         assert c.state.mode == "human" and not c.state.critical
         frame(30, "h")
-        assert c.state.mode == "vla" and not c.state.critical
+        assert c.state.mode == "policy" and not c.state.critical
         rows = _recorded(c)
         assert len(c.gripper_exits) == 2
         assert any(row["source"] == "RLT" for row in rows)
@@ -339,7 +340,11 @@ def test_release_exits_manual_actor_and_ignores_pre_release_plan(session):
 def test_classifier_cannot_reenter_until_gripper_closes(session):
     base, clock = session
     cfg = replace(
-        base.config, gate_checkpoint="gate.pt", token_checkpoint="token.pt", gate_confirmations=1
+        base.config,
+        gate_checkpoint="gate.pt",
+        token_checkpoint="token.pt",
+        gate_confirmations=1,
+        gripper_exit=True,
     )
     c = ControlSession(
         base.client, base.inference, base.leader, cfg, base.ready, snapshot(clock.now)
@@ -350,7 +355,7 @@ def test_classifier_cannot_reenter_until_gripper_closes(session):
         for i, opening in enumerate((13.0, 25.0, 25.0, 25.0, 50.0, 13.0)):
             snap = snapshot(clock.now)
             snap.payload["arm_left_gripper.pos"] = opening
-            c._observe_gripper(snap, clock.now)
+            c.observe(snap, clock.now)
             c._accept_plan(
                 _prediction(
                     c,
@@ -394,7 +399,7 @@ def test_gripper_rule_configuration_and_scoring(session):
         for _ in range(4):
             snap = snapshot(clock.now)
             snap.payload["arm_left_gripper.pos"] = 45
-            c._observe_gripper(snap, clock.now)
+            c.observe(snap, clock.now)
             clock.now += 1 / 30
         assert c.state.mode == "awaiting_reward" and not c.gripper_exits
     finally:
@@ -434,7 +439,7 @@ def test_auto_gate_multiple_entries_fresh_votes_only_and_manual_priority(session
     frame(17, 0.99, 7, generation=old)
     assert c.state.mode == "human"
     tick(c, clock, [("key", "h")])
-    assert c.state.mode == "vla" and not c.state.critical
+    assert c.state.mode == "policy" and not c.state.critical
     frame(18, 0.99, 8, generation=old)
     assert not frame(19, 0.99, 9)
     rows = _recorded(c)
@@ -463,7 +468,7 @@ def test_auto_gate_invalid_probability_fails_closed(session, bad):
         observation=2,
     )
     tick(c, clock)
-    assert c.state.critical and c.actions and c.state.mode == "vla"
+    assert c.state.critical and c.actions and c.state.mode == "policy"
     c.inference.result = _prediction(
         c,
         clock.now,
@@ -489,3 +494,32 @@ def test_shadow_gate_without_actor_always_sends_reference(session):
     tick(c, clock)
     row = _recorded(c)[-1]
     assert row["critical"] and row["source"] == "VLA" and row["requested"] == row["reference"]
+
+
+def test_bimanual_gate_requires_an_explicit_gripper_rule(session):
+    base, clock = session
+    left, right = "arm_left_gripper.pos", "arm_right_gripper.pos"
+    initial = snapshot(clock.now)
+    ready = dict(
+        base.ready, base_contract={"learned_names": [left, right]}, actor_identity={"version": 1}
+    )
+    args = base.client, base.inference, base.leader
+    cfg = base.config
+    assert ControlSession(*args, cfg, ready, initial).release is None
+    with pytest.raises(ValueError, match="gripper-exit-field"):
+        ControlSession(*args, replace(cfg, gripper_exit=True), ready, initial)
+    control = ControlSession(
+        *args, replace(cfg, gripper_exit=True, gripper_exit_field=right), ready, initial
+    )
+    try:
+        tick(control, clock)
+        tick(control, clock, [("key", "c")])
+        for value in (10, 30, 30, 30):
+            observation = snapshot(clock.now)
+            observation.payload[left] = 10
+            observation.payload[right] = value
+            control.observe(observation, clock.now)
+            clock.now += 1 / 30
+        assert not control.state.critical and control.gripper_exits[-1]["field"] == right
+    finally:
+        control.record.close()

@@ -4,15 +4,17 @@ import json
 import math
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
-from alohamini.datasets.rlt.storage import digest_file
-from alohamini.learning.processor import scale_action
+from alohamini.datasets.experience.storage import digest_file
 from alohamini.learning.stages import read_stage_weights
-from alohamini.policies.rlt.actor_critic import AC_FORMAT, ChunkActor
-from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
-from alohamini.policies.rlt.networks import RLTokenEncoder
+from alohamini.policies.rlt.networks import (
+    AC_FORMAT,
+    GATE_FORMAT,
+    ChunkActor,
+    RLTokenEncoder,
+    StageClassifier,
+)
 
 
 def load_native(config, *, offline=False):
@@ -40,14 +42,28 @@ def load_native(config, *, offline=False):
     return native
 
 
-def base_contract(native, config):
+def base_contract(native, config, *, saved_names=None):
+    from alohamini.fixed import dimensions
+
     path = native.checkpoint_path
     names = config.learned_action_names
-    if names is None:
-        from alohamini.fixed import dimensions
-
-        names = dimensions(["arm_left"], config.robot_model)
     state_names_in_checkpoint = native.manifest["state_feature"]["names"]
+    fixed = (native.fixed_dimensions or {}).get("targets", {})
+
+    available = set(native.names).intersection(state_names_in_checkpoint).difference(fixed)
+    if names is not None:
+        selected = []
+        for name in names:
+            if name in ("arm_left", "arm_right"):
+                selected.extend(n for n in dimensions([name], config.robot_model) if n in available)
+            else:
+                selected.append(name)
+        names = selected
+    elif saved_names is not None:
+        names = saved_names
+    else:
+        arm_fields = set(dimensions(["arm_left", "arm_right"], config.robot_model))
+        names = [n for n in native.names if n in arm_fields and n in available]
     if (
         not names
         or len(set(names)) != len(names)
@@ -57,7 +73,7 @@ def base_contract(native, config):
         raise ValueError(
             "Learned coordinates must be unique named action and proprioception fields"
         )
-    if set(names) & set((native.fixed_dimensions or {}).get("targets", {})):
+    if set(names) & fixed.keys():
         raise ValueError("Learned coordinates overlap fixed output targets")
     return dict(
         version=1,
@@ -93,16 +109,6 @@ def require_contract(actual, expected):
         raise ValueError("RLT artifact differs from the base model, task or action/token contract")
 
 
-def encode_physical(native, actions, context):
-    actions = torch.as_tensor(actions, dtype=torch.float32, device=context.device)
-    actions = scale_action(
-        actions,
-        getattr(native.config, "inference_action_scale_dims", ()),
-        1 / getattr(native.config, "inference_action_scale", 1.0),
-    )
-    return native.processor.action_prefix(actions, context=context)
-
-
 @dataclass
 class RLTReference:
     observation_id: int
@@ -117,16 +123,23 @@ class RLTPolicy:
     def __init__(self, config, *, offline=False):
         self.config = config
         self.native = load_native(config, offline=offline)
-        self.contract = base_contract(self.native, config)
+        self.token_sha256 = None
+        checkpoint = None
+        if config.token_checkpoint:
+            checkpoint, self.token_sha256 = read_stage_weights(config.token_checkpoint)
+        self.contract = base_contract(
+            self.native,
+            config,
+            saved_names=checkpoint["contract"]["learned_names"] if checkpoint is not None else None,
+        )
         self.indices = [self.native.names.index(n) for n in self.contract["learned_names"]]
         self.state_indices = [
             self.native.manifest["state_feature"]["names"].index(n)
             for n in self.contract["learned_names"]
         ]
         self.encoder = self.gate = self.gate_identity = None
-        self.actor = self.actor_identity = self.token_sha256 = None
-        if config.token_checkpoint:
-            checkpoint, self.token_sha256 = read_stage_weights(config.token_checkpoint)
+        self.actor = self.actor_identity = None
+        if checkpoint is not None:
             require_contract(checkpoint["contract"], self.contract)
             self.encoder = RLTokenEncoder(**self.contract["token_spec"]).to(config.device)
             self.encoder.load_state_dict(checkpoint["encoder"], strict=True)
@@ -233,9 +246,3 @@ class RLTPolicy:
             actor_version=version,
             gate_probability=gate_probability,
         )
-
-
-def pad_actions(actions, chunk_size):
-    result = np.zeros((chunk_size, actions.shape[-1]), dtype=np.float32)
-    result[: len(actions)] = actions
-    return result

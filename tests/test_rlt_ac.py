@@ -9,15 +9,17 @@ from test_rlt_collection import session as session
 from test_rlt_collection import snapshot, tick
 from test_rlt_v3 import _episode
 
-from alohamini.apps.rlt.cli import main
-from alohamini.apps.rlt.workers import _inference_process
-from alohamini.datasets.rlt.storage import json_lines
-from alohamini.datasets.rlt.v3 import export_v3
-from alohamini.policies.rlt import ac_training
-from alohamini.policies.rlt.actor_critic import AC_FORMAT, ActorCritic
-from alohamini.policies.rlt.config import RLTConfig
+from alohamini.apps.collection import rlt
+from alohamini.apps.collection.workers import serve
+from alohamini.cli import _main as main
+from alohamini.datasets.experience.storage import json_lines
+from alohamini.datasets.experience.v3 import export_v3
+from alohamini.policies.rlt.networks import AC_FORMAT
 from alohamini.policies.rlt.policy import RLTPolicy
-from alohamini.policies.rlt.replay import materialize_episode
+from alohamini.rl.rlt import ac_training
+from alohamini.rl.rlt.actor_critic import ActorCritic
+from alohamini.rl.rlt.config import RLTConfig
+from alohamini.rl.rlt.replay import materialize_episode
 
 CONTRACT = dict(
     names=["left", "right"], learned_names=["left"], token_spec=dict(dim=2), chunk_size=2
@@ -151,7 +153,9 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(cfg.to_dict()), encoding="utf-8")
     args = [
-        "train-ac",
+        "train",
+        "rlt",
+        "ac",
         "--config",
         str(config_file),
         "--token-checkpoint",
@@ -277,7 +281,7 @@ def test_inference_worker_passes_the_requested_stage(monkeypatch):
         dict(id=4, generation=3, critical=False, snapshot=snap),
         InterruptedError(),
     ]
-    _inference_process(None, snap, jobs, results, SimpleNamespace(is_set=lambda: False))
+    serve(None, snap, jobs, results, SimpleNamespace(is_set=lambda: False), load=rlt.load)
     assert [c.kwargs["apply_actor"] for c in policy.predict.call_args_list] == [
         False,
         False,

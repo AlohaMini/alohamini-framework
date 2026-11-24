@@ -1,4 +1,4 @@
-"""Train a binary gate from reviewed episode-local placement intervals."""
+"""Train a binary gate from reviewed episode-local stage intervals."""
 
 import hashlib
 import json
@@ -11,13 +11,14 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from alohamini.datasets.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.datasets.experience.storage import RunLock, atomic_json, json_lines, load_snapshot
 from alohamini.learning.precision import tf32_context
 from alohamini.learning.stages import save_stage_checkpoint, supervised_stage
-from alohamini.policies.rlt.ac_training import scored_episodes, split_episodes
 from alohamini.policies.rlt.gate import GateLatch
-from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
+from alohamini.policies.rlt.networks import GATE_FORMAT, StageClassifier
 from alohamini.policies.rlt.policy import RLTPolicy, require_contract
+from alohamini.rl.rlt.ac_training import split_episodes
+from alohamini.rl.rlt.episodes import scored_episodes
 
 
 def _signature(segment):
@@ -53,7 +54,7 @@ def reviewed_episodes(root, manifest, excluded=None):
                 or type(reward) is not int
                 or reward not in (0, 1)
             ):
-                raise ValueError(f"Invalid placement intervals in {eid}")
+                raise ValueError(f"Invalid stage intervals in {eid}")
             previous_end = stop
         reviewed = excluded.get(eid, [])
         interval_keys = {span[:3] for span in segments}
@@ -117,7 +118,7 @@ def _encode(episode, policy, config, extra_strides=()):
     require_contract(episode["summary"]["base_contract"], policy.contract)
     source = nullcontext(None)
     if (path / "v3.json").exists():
-        from alohamini.datasets.rlt.v3_reader import V3Observations
+        from alohamini.datasets.experience.reader import V3Observations
 
         source = closing(V3Observations(path, policy.native.manifest["cameras"]))
     tokens, states = [], []
@@ -238,11 +239,19 @@ def _assessment(samples, scores, config, fps, stride=None):
 
 def train_gate(config, *, intervals=None):
     if not config.dataset or not config.token_checkpoint:
-        raise ValueError("train-gate requires a scored dataset and frozen token checkpoint")
+        raise ValueError("RLT gate training requires a scored dataset and frozen token checkpoint")
     dataset = Path(config.dataset).resolve()
-    manifest_path = Path(intervals) if intervals else dataset / "rlt-placement-intervals.json"
-    if not intervals and not manifest_path.is_file() and dataset.name == "lerobot_v3":
-        manifest_path = dataset.parent / manifest_path.name
+    if intervals is not None:
+        manifest_path = Path(intervals)
+    else:
+        roots = [dataset, dataset.parent] if dataset.name == "lerobot_v3" else [dataset]
+        # Older collections used the second filename for the same interval schema.
+        candidates = [
+            root / name
+            for name in ("rlt-intervals.json", "rlt-placement-intervals.json")
+            for root in roots
+        ]
+        manifest_path = next((p for p in candidates if p.is_file()), candidates[0])
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
     episodes = reviewed_episodes(dataset, manifest)

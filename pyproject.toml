@@ -87,6 +87,7 @@ alohamini = "alohamini.cli:main"
 
 [tool.setuptools.package-data]
 "alohamini.monitor" = ["static/*.html", "static/*.css", "static/*.js"]
+"alohamini.policies.rlt" = ["README.md"]
 "alohamini.policies.pi0" = ["LICENSE.pi0", "SOURCE.json", "README.md"]
 "alohamini.policies.pi0_fast" = ["LICENSE.pi0_fast", "SOURCE.json", "README.md"]
 "alohamini.policies.longwam" = ["LICENSE.longwam", "SOURCE.json", "README.md"]

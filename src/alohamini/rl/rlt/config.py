@@ -52,6 +52,8 @@ _LEGACY_FIELDS = frozenset(
 
 @dataclass
 class RLTConfig:
+    intervention = True
+
     checkpoint: str
     output_dir: str
     task: str
@@ -65,6 +67,7 @@ class RLTConfig:
     gate_exit_threshold: float = 0.35
     gate_confirmations: int = 2
     gripper_exit: bool | None = None
+    gripper_exit_field: str | None = None
     gripper_exit_closed_pct: float = 18.0
     gripper_exit_open_pct: float = 24.0
     gripper_exit_confirmations: int = 3
@@ -76,6 +79,7 @@ class RLTConfig:
     leader_id: str | None = None
     calibration_dir: str | None = None
     left_port: str = "/dev/am_arm_leader_left"
+    right_port: str = "/dev/am_arm_leader_right"
     calibration_mode: str = "strict"
     fixed_dimensions: list[str] | None = None
     chunk_size: int = 10
@@ -101,11 +105,12 @@ class RLTConfig:
     ac_residual_limit: float = 0.25
     seed: int = 42
     prediction_max_age_s: float = 1.0
+    max_joint_velocity_deg_s: float = 60.0
     leader_max_age_s: float = 0.15
     ack_timeout_s: float = 0.5
     command_settle_timeout_s: float = 2.0
     fps: float | None = None
-    return_to_start: bool = True
+    return_to_start: bool = False
     return_duration_s: float = 3.0
 
     def __post_init__(self):
@@ -121,6 +126,7 @@ class RLTConfig:
             "robot_model",
             "device",
             "left_port",
+            "right_port",
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
@@ -181,6 +187,7 @@ class RLTConfig:
             "lr",
             "prediction_max_age_s",
             "leader_max_age_s",
+            "max_joint_velocity_deg_s",
             "ack_timeout_s",
             "command_settle_timeout_s",
             "return_duration_s",
@@ -207,6 +214,11 @@ class RLTConfig:
             raise ValueError("gate_checkpoint requires its matching token_checkpoint")
         if self.gripper_exit is not None and type(self.gripper_exit) is not bool:
             raise ValueError("gripper_exit must be a boolean or null")
+        if self.gripper_exit_field is not None and (
+            not isinstance(self.gripper_exit_field, str)
+            or not self.gripper_exit_field.endswith("_gripper.pos")
+        ):
+            raise ValueError("gripper_exit_field must name a gripper position")
         closed, opened = self.gripper_exit_closed_pct, self.gripper_exit_open_pct
         if (
             any(type(v) not in (int, float) for v in (closed, opened))
@@ -227,6 +239,11 @@ class RLTConfig:
             or any(not isinstance(name, str) or not name.strip() for name in self.fixed_dimensions)
         ):
             raise ValueError("fixed_dimensions must be a nonempty list of dimension names")
+
+    @classmethod
+    def overrides(cls, options):
+        """Select explicit config values from a parsed training or collection command."""
+        return {f.name: options[f.name] for f in fields(cls) if options.get(f.name) is not None}
 
     @classmethod
     def read(cls, path=None, *, stage=None, **overrides):

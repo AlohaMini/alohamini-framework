@@ -6,7 +6,7 @@ import pytest
 from test_evaluation import EvaluationClient
 from test_replay import Clock, replay_snapshot
 
-from alohamini.apps.dagger import DAggerConfig, DAggerKeyboard, ManualHandover
+from alohamini.apps.collection.dagger import DAggerConfig, DAggerKeyboard, ManualHandover
 from alohamini.apps.evaluation import run_evaluation
 from alohamini.datasets.record import state_names
 
@@ -29,6 +29,10 @@ class Leader:
         }
         self.held = []
         self.releases = 0
+
+    def read(self, units):
+        assert set(units) == set(self.pose)
+        return dict(self.pose)
 
     def read_handover(self, units):
         assert set(units) == set(self.pose)
@@ -258,14 +262,18 @@ def test_cli_dagger_is_opt_in_and_validated_before_policy_loading(monkeypatch):
     assert (
         main(
             [
-                "evaluate",
+                "collect",
+                "dagger",
                 "--host",
                 "pi",
                 "--robot_model",
                 "alohamini2pro",
                 "--policy",
                 "examples:policy",
-                "--dagger",
+                "--dataset",
+                "corrections",
+                "--dagger.handover_mode",
+                "relative",
                 "--dagger.hold_output_limit",
                 "0.1",
                 "--left_port",
@@ -275,9 +283,10 @@ def test_cli_dagger_is_opt_in_and_validated_before_policy_loading(monkeypatch):
         == 0
     )
     options = run.call_args.kwargs["dagger"]
+    assert options.handover_mode == "relative"
     assert options.hold_output_limit == 0.1 and options.left_port == "/dev/left"
     run.reset_mock()
-    assert (
+    with pytest.raises(SystemExit) as rejected:
         main(
             [
                 "evaluate",
@@ -287,10 +296,69 @@ def test_cli_dagger_is_opt_in_and_validated_before_policy_loading(monkeypatch):
                 "alohamini2pro",
                 "--policy",
                 "examples:policy",
-                "--dagger.hold_output_limit",
-                "0.1",
+                "--dagger",
             ]
         )
-        == 1
-    )
+    assert rejected.value.code == 2
     run.assert_not_called()
+
+
+def test_late_confirmation_cannot_skip_alignment_timeout(handover):
+    _, leader, _, _, dataset, _ = handover
+    align(handover)
+    releases = leader.releases
+    with pytest.raises(TimeoutError, match="alignment timed out"):
+        press(handover, "tab", 61)
+    assert leader.releases == releases
+    dataset.begin_episode.assert_not_called()
+
+
+def test_nonfinite_leader_target_is_rejected_during_correction(handover):
+    snapshot, leader, _, _, _, control = handover
+    align(handover)
+    press(handover, "tab", 2)
+    control.action(snapshot, now=2)
+    leader.pose["arm_left_shoulder_pan.pos"] = float("nan")
+    with pytest.raises(ValueError, match="Non-finite manual target"):
+        control.action(snapshot, now=2.1)
+
+
+def test_relative_correction_uses_fresh_origins_and_records_absolute_targets():
+    snapshot = replay_snapshot()
+    leader, keys, policy, dataset = Leader(snapshot), Keys(), Mock(), Mock()
+    control = ManualHandover(leader, keys, DAggerConfig(handover_mode="relative"))
+    setup = snapshot, leader, keys, policy, dataset, control
+    joint = "arm_left_shoulder_pan.pos"
+    try:
+        press(setup, "space", 0)
+        dataset.begin_episode.assert_not_called()
+        leader.pose[joint] = -30
+        snapshot.payload[joint] = 12
+        press(setup, "tab", 0.1)
+        first = control.action(snapshot, now=0.1)
+        assert first == control.hold_targets(snapshot)
+        assert control.phase == "human" and control.recording
+        dataset.begin_episode.assert_called_once()
+        leader.pose[joint] += 1
+        action = control.action(snapshot, now=0.2)
+        assert action[joint] == pytest.approx(13)
+        assert action["x.vel"] == action["y.vel"] == action["theta.vel"] == 0
+        assert action["lift_axis.height_mm"] == first["lift_axis.height_mm"]
+        control.feedback_lost(snapshot, policy, dataset)
+        assert control.phase == "paused" and not control.recording
+        control.finish_save(dataset)
+        control._save_future.result(timeout=2)
+        control.finish_save(dataset)
+        dataset.save_episode.assert_called_once()
+        press(setup, "space", 0.4)
+        assert control.phase == "policy"
+        press(setup, "space", 0.5)
+        snapshot.payload[joint] = -6
+        leader.pose[joint] = 40
+        press(setup, "tab", 0.6)
+        assert control.action(snapshot, now=0.6)[joint] == -6
+        press(setup, "tab", 0.7)
+        assert control.phase == "paused" and control.save_pending
+    finally:
+        control.close()
+    assert not leader.held and leader.releases == 0
