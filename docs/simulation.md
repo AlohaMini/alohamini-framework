@@ -55,13 +55,16 @@ The `alohamini-mujoco` window saves `Print data`, model exports, and screenshots
 
 ## Servo models and compensation
 
-Load measured servo parameters from JSON using `--actuator-profile`:
+Load the bundled AlohaMini2Pro dual-arm profile:
 
 ```bash
-alohamini-mujoco view --actuator-profile /path/to/actuators.json --paused
+alohamini-mujoco view --paused \
+  --actuator-profile models/alohamini2pro/config/actuators/arm_stock.json
 ```
 
-The file uses the `alohamini-actuators-v1` format with `robot_model`, `joints` keyed by URDF joint name, and `provenance` documenting measurement conditions and applicability. Revolute-joint parameters are:
+Both arms share the right arm's measured response by joint, including the grippers. Measurements used low-speed, small-angle motions with an empty gripper and baseline servo settings. The profile uses the reference speed and acceleration from those tests and each joint's travel limits from the URDF. For other setups, `--actuator-profile` accepts a custom JSON file.
+
+The `alohamini-actuators-v1` format includes `robot_model`, `joints` keyed by URDF joint name, and `provenance` documenting measurement conditions and applicability. Revolute-joint parameters are listed below.
 
 | Field | Unit |
 | --- | --- |

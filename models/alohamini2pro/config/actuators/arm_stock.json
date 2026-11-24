@@ -1,0 +1,155 @@
+{
+  "schema": "alohamini-actuators-v1",
+  "robot_model": "alohamini2pro",
+  "joints": {
+    "right_shoulder_pan": {
+      "kp_Nm_per_rad": 2.0112412348568838,
+      "kd_Nm_s_per_rad": 5.980477385235366,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.02,
+      "reference_velocity_gain_Nm_s_per_rad": 2.5346477527771176,
+      "friction_Nm": 0.017041223961119054,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_shoulder_lift": {
+      "kp_Nm_per_rad": 76.60079597983038,
+      "kd_Nm_s_per_rad": 0.00019908359147704073,
+      "peak_effort_Nm": 9.3163175,
+      "delay_s": 0.04,
+      "reference_velocity_gain_Nm_s_per_rad": 8.89720576337905,
+      "friction_Nm": 2.46795435567881,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_elbow_flex": {
+      "kp_Nm_per_rad": 59.33965456740509,
+      "kd_Nm_s_per_rad": 7.371265144004691,
+      "peak_effort_Nm": 9.3163175,
+      "delay_s": 0.0,
+      "reference_velocity_gain_Nm_s_per_rad": 3.5503551003533502,
+      "friction_Nm": 1.2079523751424441,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_wrist_flex": {
+      "kp_Nm_per_rad": 21.485510312481846,
+      "kd_Nm_s_per_rad": 0.09152454288042199,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.02,
+      "reference_velocity_gain_Nm_s_per_rad": 0.2567376728131117,
+      "friction_Nm": 0.1413092896694997,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_wrist_yaw_joint": {
+      "kp_Nm_per_rad": 4.913892349538944,
+      "kd_Nm_s_per_rad": 0.009077819715448954,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.01,
+      "reference_velocity_gain_Nm_s_per_rad": 0.06586712307716104,
+      "friction_Nm": 0.005620497845050899,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_wrist_roll": {
+      "kp_Nm_per_rad": 59.63266023822447,
+      "kd_Nm_s_per_rad": 0.5605289045156518,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.0,
+      "reference_velocity_gain_Nm_s_per_rad": 2.1982669537227237,
+      "friction_Nm": 0.12432365883356394,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "right_gripper": {
+      "kp_Nm_per_rad": 6.203782372507138,
+      "kd_Nm_s_per_rad": 0.3728794692611839,
+      "peak_effort_Nm": 2.4516625,
+      "delay_s": 0.01,
+      "reference_velocity_gain_Nm_s_per_rad": 0.6610689744388154,
+      "friction_Nm": 0.0382834662871738,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_shoulder_pan": {
+      "kp_Nm_per_rad": 2.0112412348568838,
+      "kd_Nm_s_per_rad": 5.980477385235366,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.02,
+      "reference_velocity_gain_Nm_s_per_rad": 2.5346477527771176,
+      "friction_Nm": 0.017041223961119054,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_shoulder_lift": {
+      "kp_Nm_per_rad": 76.60079597983038,
+      "kd_Nm_s_per_rad": 0.00019908359147704073,
+      "peak_effort_Nm": 9.3163175,
+      "delay_s": 0.04,
+      "reference_velocity_gain_Nm_s_per_rad": 8.89720576337905,
+      "friction_Nm": 2.46795435567881,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_elbow_flex": {
+      "kp_Nm_per_rad": 59.33965456740509,
+      "kd_Nm_s_per_rad": 7.371265144004691,
+      "peak_effort_Nm": 9.3163175,
+      "delay_s": 0.0,
+      "reference_velocity_gain_Nm_s_per_rad": 3.5503551003533502,
+      "friction_Nm": 1.2079523751424441,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_wrist_flex": {
+      "kp_Nm_per_rad": 21.485510312481846,
+      "kd_Nm_s_per_rad": 0.09152454288042199,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.02,
+      "reference_velocity_gain_Nm_s_per_rad": 0.2567376728131117,
+      "friction_Nm": 0.1413092896694997,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_wrist_yaw_joint": {
+      "kp_Nm_per_rad": 4.913892349538944,
+      "kd_Nm_s_per_rad": 0.009077819715448954,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.01,
+      "reference_velocity_gain_Nm_s_per_rad": 0.06586712307716104,
+      "friction_Nm": 0.005620497845050899,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_wrist_roll": {
+      "kp_Nm_per_rad": 59.63266023822447,
+      "kd_Nm_s_per_rad": 0.5605289045156518,
+      "peak_effort_Nm": 4.903325,
+      "delay_s": 0.0,
+      "reference_velocity_gain_Nm_s_per_rad": 2.1982669537227237,
+      "friction_Nm": 0.12432365883356394,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    },
+    "left_gripper": {
+      "kp_Nm_per_rad": 6.203782372507138,
+      "kd_Nm_s_per_rad": 0.3728794692611839,
+      "peak_effort_Nm": 2.4516625,
+      "delay_s": 0.01,
+      "reference_velocity_gain_Nm_s_per_rad": 0.6610689744388154,
+      "friction_Nm": 0.0382834662871738,
+      "velocity_rad_s": 0.1533097214951819,
+      "acceleration_rad_s2": 0.7670722062515077
+    }
+  },
+  "provenance": {
+    "kind": "measured_simulation_reference",
+    "asset_revision": 7,
+    "fixture": "Fixed AlohaMini2Pro right arm with the shoulder pan axis vertical, empty gripper, and baseline firmware position-loop settings.",
+    "scope": "Equivalent closed-loop position response under low-speed, small-angle motion near the measured poses.",
+    "motion_limits": "Reference velocity and acceleration match the test commands.",
+    "torque_limits": "Datasheet stall torque scaled by the servo output limit used during testing.",
+    "joint_mapping": "Right-arm measurements are shared with matching left-arm joints on the same hardware and servo settings."
+  }
+}

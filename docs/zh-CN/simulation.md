@@ -55,13 +55,16 @@ alohamini-mujoco view --window-egl-device 0 \
 
 ## 舵机模型与补偿
 
-有实测舵机参数时，用 `--actuator-profile` 加载 JSON 文件：
+加载随资产附带的 AlohaMini2Pro 双臂舵机响应：
 
 ```bash
-alohamini-mujoco view --actuator-profile /path/to/actuators.json --paused
+alohamini-mujoco view --paused \
+  --actuator-profile models/alohamini2pro/config/actuators/arm_stock.json
 ```
 
-参数文件使用 `alohamini-actuators-v1` 格式，包含 `robot_model`、按 URDF 关节名索引的 `joints` 和记录测量条件、适用范围的 `provenance`。各旋转关节参数为：
+双臂按对应关节复用右臂实测响应，含夹爪。测量工况为空载、低速、小角度运动，使用测试时原有的舵机设置。速度和加速度上限沿用测试指令，各关节行程沿用各自的 URDF 限位。其他工况可用 `--actuator-profile` 加载自定义 JSON。
+
+参数文件使用 `alohamini-actuators-v1` 格式，包含 `robot_model`、按 URDF 关节名索引的 `joints` 和记录测量条件、适用范围的 `provenance`。
 
 | 字段 | 单位 |
 | --- | --- |
