@@ -660,7 +660,7 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(tmp_path, m
     args += [
         "--policy.path", "model", "--task", "place the orange module", "--output-dir", "episodes",
         "--robot_model", "alohamini2pro", "--device", "cuda", "--fps", "30",
-        "--policy.n_action_steps", "15", "--fixed-dimensions", "arm_right", "lift_axis",
+        "--chunk-size", "15", "--policy.n_action_steps", "8", "--fixed-dimensions", "arm_right", "lift_axis",
         "--left-port", "/dev/test-left", "--leader-id", "leader", "--resume",
     ]
     assert main(args) == 0
@@ -669,7 +669,7 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(tmp_path, m
     assert (cfg.task, cfg.checkpoint) == ("place the orange module", str(tmp_path / "model"))
     assert cfg.output_dir == str(tmp_path / "episodes")
     assert cfg.fixed_dimensions == ["arm_right", "lift_axis"]
-    assert (cfg.fps, cfg.chunk_size, cfg.device) == (30, 15, "cuda")
+    assert (cfg.fps, cfg.chunk_size, cfg.execution_steps, cfg.device) == (30, 15, 8, "cuda")
     assert (cfg.host, cfg.robot_model, cfg.left_port, cfg.leader_id) == (
         "test-host", "alohamini2pro", "/dev/test-left", "leader",
     )

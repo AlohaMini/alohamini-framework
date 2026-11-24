@@ -83,6 +83,10 @@ class RLTConfig:
     token_dim: int = 2048
     token_layers: int = 4
     token_heads: int = 8
+    mixed_precision: str = "none"
+    save_freq: int = 1000
+    learned_action_names: list[str] | None = None
+    execution_steps: int | None = None
     lr: float = 0.0003
     token_steps: int = 5000
     token_batch_size: int = 4
@@ -152,6 +156,18 @@ class RLTConfig:
                 raise ValueError(f"{name} must be a positive integer")
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError("seed must be a nonnegative integer")
+        if self.learned_action_names is not None and (
+            not isinstance(self.learned_action_names, list) or not self.learned_action_names
+            or any(not isinstance(n, str) or not n for n in self.learned_action_names)
+            or len(set(self.learned_action_names)) != len(self.learned_action_names)
+        ):
+            raise ValueError("learned_action_names must be a list of distinct named fields")
+        if self.mixed_precision not in {"none", "bfloat16", "float16"}:
+            raise ValueError("Invalid mixed_precision")
+        if type(self.save_freq) is not int or self.save_freq < 1:
+            raise ValueError("save_freq must be positive")
+        if self.execution_steps is not None and (type(self.execution_steps) is not int or not 1 <= self.execution_steps <= self.chunk_size):
+            raise ValueError("execution_steps must be within chunk_size")
         if self.token_dim % self.token_heads:
             raise ValueError("token_dim must be divisible by token_heads")
         for name in (
@@ -206,7 +222,7 @@ class RLTConfig:
             raise ValueError("fixed_dimensions must be a nonempty list of dimension names")
 
     @classmethod
-    def read(cls, path=None, **overrides):
+    def read(cls, path=None, *, stage=None, **overrides):
         """Merge optional JSON defaults and explicit command-line settings."""
         directory = Path.cwd()
         data = {}
@@ -216,6 +232,12 @@ class RLTConfig:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("RLT configuration must be a JSON object")
+        if stage is not None:
+            for name in ("steps", "batch_size"):
+                if name in data:
+                    data[stage + "_" + name] = data.pop(name)
+        elif "steps" in data:
+            raise ValueError("steps is a training option")
         data.update(overrides)
         for name in (
             "auto_critical",

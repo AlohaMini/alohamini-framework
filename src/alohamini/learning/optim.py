@@ -165,7 +165,8 @@ def make_optimizer_and_scheduler(cfg, model):
     options = dict(cfg["optimizer"])
     kind = options.pop("type")
     options.pop("grad_clip_norm")
-    params = list(model.get_optim_params())
+    groups = getattr(model, "get_optim_params", None)
+    params = list(groups() if groups else (p for p in model.parameters() if p.requires_grad))
     # Relative groups follow the resolved trainer LR, including explicit overrides.
     if params and isinstance(params[0], dict):
         params = [dict(group) for group in params]

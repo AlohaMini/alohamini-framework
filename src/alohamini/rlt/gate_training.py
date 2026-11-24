@@ -11,11 +11,12 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
+from alohamini.learning.stages import supervised_stage, save_stage_checkpoint
 from alohamini.rlt.ac_training import scored_episodes, split_episodes
 from alohamini.rlt.gate import GateLatch
 from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
 from alohamini.rlt.policy import RLTPolicy, require_contract
-from alohamini.rlt.storage import RunLock, atomic_json, atomic_torch, json_lines, load_snapshot
+from alohamini.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
 
 
 def _signature(segment):
@@ -256,8 +257,8 @@ def train_gate(config, *, intervals=None):
     if out == dataset:
         raise ValueError("Use a separate gate output directory")
     with RunLock(out / "gate.lock"):
-        checkpoint = out / "gate.pt"
-        if checkpoint.exists():
+        checkpoint = out / "gate"
+        if checkpoint.exists() or (out / "checkpoints").exists():
             raise FileExistsError(f"Gate checkpoint already exists at {checkpoint}")
         policy = RLTPolicy(replace(config, actor_checkpoint="", gate_checkpoint=""))
         contract, sha, fps = policy.contract, policy.token_sha256, policy.native.fps
@@ -307,39 +308,38 @@ def train_gate(config, *, intervals=None):
             torch.manual_seed(config.seed)
             rng = torch.Generator(device=config.device).manual_seed(config.seed)
             model = StageClassifier(contract, mode).to(config.device)
-            optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-            best_loss, best_step, stale = float("inf"), 0, 0
-            history = []
-            sizes = [len(data[e]["y"]) for e in selection_ids]
-            for step in range(1, config.gate_steps + 1):
-                model.train()
-                idx = torch.randint(
-                    len(train["y"]), (config.gate_batch_size,), generator=rng, device=config.device
-                )
-                logits = model(train["z"][idx], train["state"][idx])
-                loss = F.binary_cross_entropy_with_logits(logits, train["y"][idx])
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 10, error_if_nonfinite=True)
-                optimizer.step()
-                if step == 1 or step % 25 == 0 or step == config.gate_steps:
-                    model.eval()
-                    with torch.no_grad():
-                        held = model(selection["z"], selection["state"])
-                        errors = F.binary_cross_entropy_with_logits(
-                            held, selection["y"], reduction="none"
-                        )
-                        score = torch.stack([v.mean() for v in errors.split(sizes)]).mean().item()
-                    if not np.isfinite(score):
-                        raise ValueError("Nonfinite gate selection loss")
-                    history.append(dict(step=step, bce=score))
-                    if score < best_loss:
-                        best_loss, best_step, stale = score, step, 0
-                        best = deepcopy(model.state_dict())
-                    else:
-                        stale += 1
-                        if stale >= 5:
-                            break
+            def objective(probe, batch):
+                return F.binary_cross_entropy_with_logits(probe(batch["z"], batch["state"]), batch["y"])
+
+            with supervised_stage(model, objective, device=config.device, lr=config.lr,
+                                  steps=config.gate_steps, clip=10, precision=config.mixed_precision) as update:
+                best_loss, best_step, stale = float("inf"), 0, 0
+                history = []
+                sizes = [len(data[e]["y"]) for e in selection_ids]
+                for step in range(1, config.gate_steps + 1):
+                    model.train()
+                    idx = torch.randint(
+                        len(train["y"]), (config.gate_batch_size,), generator=rng, device=config.device
+                    )
+                    update({"z": train["z"][idx], "state": train["state"][idx], "y": train["y"][idx]})
+                    if step == 1 or step % 25 == 0 or step == config.gate_steps:
+                        model.eval()
+                        with torch.no_grad():
+                            held = model(selection["z"], selection["state"])
+                            errors = F.binary_cross_entropy_with_logits(
+                                held, selection["y"], reduction="none"
+                            )
+                            score = torch.stack([v.mean() for v in errors.split(sizes)]).mean().item()
+                        if not np.isfinite(score):
+                            raise ValueError("Nonfinite gate selection loss")
+                        history.append(dict(step=step, bce=score))
+                        if score < best_loss:
+                            best_loss, best_step, stale = score, step, 0
+                            best = deepcopy(model.state_dict())
+                        else:
+                            stale += 1
+                            if stale >= 5:
+                                break
             model.load_state_dict(best)
             report["selection_history"][mode] = dict(
                 best_step=best_step, best_bce=best_loss, last_step=step, scores=history
@@ -359,15 +359,14 @@ def train_gate(config, *, intervals=None):
                 for period in eval_strides
             }
         atomic_json(out / "gate-validation.json", report)
-        atomic_torch(
-            checkpoint,
+        save_stage_checkpoint(
+            out, step, {"classifier": model},
             dict(
                 format=GATE_FORMAT,
                 contract=contract,
                 token_sha256=sha,
-                classifier=model.cpu().state_dict(),
                 validation=report,
-            ),
+            ), config.to_dict(), aliases=("gate",),
         )
         print(
             f"Gate saved at {checkpoint}; held-out results: {out / 'gate-validation.json'}",

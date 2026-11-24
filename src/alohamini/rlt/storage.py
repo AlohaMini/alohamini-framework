@@ -26,16 +26,6 @@ def digest_file(path):
         return _digest_stream(stream)
 
 
-def load_hashed_weights(path):
-    """Read weights and their identity from the same atomically published file."""
-    import torch
-
-    with Path(path).open("rb") as stream:
-        digest = _digest_stream(stream)
-        stream.seek(0)
-        return torch.load(stream, map_location="cpu", weights_only=True), digest
-
-
 def _replace_artifact(temporary, path):
     for attempt in range(5):
         try:
@@ -54,19 +44,6 @@ def atomic_json(path, value):
     temporary = path.with_name(path.name + "." + uuid4().hex + ".tmp")
     with temporary.open("w", encoding="utf-8") as stream:
         json.dump(value, stream, ensure_ascii=False, allow_nan=False)
-        stream.flush()
-        os.fsync(stream.fileno())
-    _replace_artifact(temporary, path)
-
-
-def atomic_torch(path, value):
-    import torch
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    with temporary.open("wb") as stream:
-        torch.save(value, stream)
         stream.flush()
         os.fsync(stream.fileno())
     _replace_artifact(temporary, path)

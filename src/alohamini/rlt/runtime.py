@@ -840,6 +840,10 @@ class ControlSession:
 
 
 def run(config, *, resume=False):
+    if config.learned_action_names is not None:
+        from alohamini.fixed import dimensions
+        if not set(config.learned_action_names) <= set(dimensions(["arm_left"], config.robot_model)):
+            raise ValueError("This passive-leader collector controls left-arm coordinates only")
     root = Path(config.output_dir)
     with ExitStack() as stack:
         stack.enter_context(RunLock(root / "control.lock"))

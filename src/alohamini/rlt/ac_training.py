@@ -12,7 +12,9 @@ import torch
 from alohamini.rlt.actor_critic import AC_FORMAT, ActorCritic
 from alohamini.rlt.policy import RLTPolicy
 from alohamini.rlt.replay import materialize_episode
-from alohamini.rlt.storage import RunLock, atomic_torch
+from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint
+from alohamini.learning.training_state import restore_rng
+from alohamini.rlt.storage import RunLock
 
 
 def scored_episodes(root):
@@ -114,7 +116,7 @@ def _evaluate(learner, data):
     return dict(validation_critic_loss=loss_sum / count, validation_bc_loss=bc_sum / valid_steps)
 
 
-def train_ac(config):
+def train_ac(config, *, resume=False):
     if not config.dataset or not config.token_checkpoint:
         raise ValueError("train-ac requires a scored RLT dataset and a trained token_checkpoint")
     if config.replay_stride > config.chunk_size:
@@ -124,8 +126,11 @@ def train_ac(config):
         raise ValueError("Use a separate AC output directory")
     candidates = scored_episodes(dataset)
     with RunLock(root / "ac.lock"):
-        checkpoint = root / "ac.pt"
-        if checkpoint.exists():
+        checkpoint = root / "actor"
+        last = root / "checkpoints/last"
+        if config.mixed_precision != "none":
+            raise ValueError("Actor-critic updates currently require FP32")
+        if not resume and (checkpoint.exists() or last.exists() or (root / "ac.pt").exists()):
             raise FileExistsError(f"AC weights already exist in {root}; use a new output directory")
         torch.manual_seed(config.seed)
         policy = RLTPolicy(replace(config, actor_checkpoint="", gate_checkpoint=""))
@@ -161,8 +166,45 @@ def train_ac(config):
         rng = torch.Generator().manual_seed(config.seed)
         learner = ActorCritic(config, contract)
         sampled_terminals = sampled_successes = 0
-        with (root / "ac-metrics.jsonl").open("w", encoding="utf-8") as log:
-            for step in range(1, config.ac_steps + 1):
+        models = {"actor": learner.actor, "critic": learner.critic}
+        signature = hashlib.sha256()
+        for partition in (train, val):
+            for key, value in sorted(partition.items()):
+                signature.update(key.encode())
+                signature.update(str((value.dtype, value.shape)).encode())
+                signature.update(memoryview(value.contiguous().numpy()).cast("B"))
+        settings = config.to_dict()
+        identity = {
+            k: v for k, v in settings.items()
+            if k not in ("ac_steps", "save_freq", "output_dir")
+        }
+        start = 0
+        if resume:
+            path = last.resolve(strict=True)
+            saved, _ = read_stage_weights(path / "pretrained_model")
+            state = torch.load(path / "training_state/state.pt", map_location="cpu", weights_only=True)
+            if (saved["contract"] != contract or saved["token_sha256"] != token_sha
+                    or state["identity"] != identity or saved["split"] != split
+                    or state["replay_sha256"] != signature.hexdigest()):
+                raise ValueError("Resume requires the original replay, base, token and training settings")
+            start = state["step"]
+            if config.ac_steps <= start:
+                raise ValueError("Resume requires ac_steps greater than the saved step")
+            for name, module in models.items():
+                module.load_state_dict(saved[name])
+                getattr(learner, "target_" + name).load_state_dict(state["target_" + name])
+                getattr(learner, name + "_optimizer").load_state_dict(state[name + "_optimizer"])
+            learner.updates, learner.actor_updates = start, saved["actor_updates"]
+            sampled_terminals = saved["metrics"]["sampled_terminals"]
+            sampled_successes = saved["metrics"]["sampled_successes"]
+            rng.set_state(state["sampler_rng"])
+            restore_rng(state["rng"])
+        log_path = root / "ac-metrics.jsonl"
+        if resume:
+            with log_path.open("rb+") as stream:
+                stream.truncate(state["log_bytes"])
+        with log_path.open("a" if resume else "w", encoding="utf-8") as log:
+            for step in range(start + 1, config.ac_steps + 1):
                 indices = torch.randint(len(train["done"]), (config.ac_batch_size,), generator=rng)
                 metrics = learner.update(_batch(train, indices, config.device))
                 sampled_terminals += int(train["done"][indices].sum())
@@ -178,21 +220,18 @@ def train_ac(config):
                 if step == 1 or step % 100 == 0 or step == config.ac_steps:
                     log.flush()
                     print(f"AC update {step} {metrics}", flush=True)
-        atomic_torch(
-            checkpoint,
-            dict(
-                format=AC_FORMAT,
-                contract=contract,
-                token_sha256=token_sha,
-                residual_limit=config.ac_residual_limit,
-                actor_updates=learner.actor_updates,
-                critic_updates=learner.updates,
-                actor=learner.actor.state_dict(),
-                critic=learner.critic.state_dict(),
-                split=split,
-                metrics=metrics,
-                config=config.to_dict(),
-            ),
-        )
-        print(f"Saved {checkpoint}", flush=True)
+                if step == config.ac_steps or step % config.save_freq == 0:
+                    log.flush()
+                    training = dict(identity=identity, replay_sha256=signature.hexdigest(),
+                                    log_bytes=log.buffer.tell(), sampler_rng=rng.get_state())
+                    for name in models:
+                        training["target_" + name] = getattr(learner, "target_" + name).state_dict()
+                        training[name + "_optimizer"] = getattr(learner, name + "_optimizer").state_dict()
+                    save_stage_checkpoint(
+                        root, step, models,
+                        dict(format=AC_FORMAT, contract=contract, token_sha256=token_sha,
+                             residual_limit=config.ac_residual_limit, actor_updates=learner.actor_updates,
+                             critic_updates=learner.updates, split=split, metrics=metrics),
+                        settings, training=training, aliases=("actor",),
+                    )
         return checkpoint

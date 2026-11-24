@@ -124,7 +124,8 @@ def test_training_baseline_and_optimizer_use_separate_samples(tmp_path, monkeypa
     assert metrics[-1]["step"] == 3 and metrics[-1]["validation_frames"] == 2
     report = json.loads((tmp_path / "token-baseline-validation.json").read_text())
     assert report["checkpoint_step"] == 5000 and report["validation_frames"] == 2
-    assert torch.load(tmp_path / "token-last.pt", weights_only=True)["step"] == 3
+    from alohamini.learning.stages import read_stage_weights
+    assert read_stage_weights(tmp_path / "checkpoint")[0]["step"] == 3
 
 
 @pytest.mark.parametrize("count", [0, -1, True, 1.5])

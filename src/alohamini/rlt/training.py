@@ -2,15 +2,17 @@
 
 import json
 import time
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import torch
 
+from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint, supervised_stage
 from alohamini.rlt.networks import RLTokenDecoder, RLTokenEncoder
 from alohamini.rlt.policy import RLTPolicy, require_contract
-from alohamini.rlt.storage import RunLock, atomic_json, atomic_torch, json_lines, load_snapshot
+from alohamini.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
 
 
 class TokenData:
@@ -69,7 +71,9 @@ class TokenData:
                 image_pad_value=manifest.get("image_pad_value", 0.0),
                 include_task=True,
                 return_uint8=True,
-                allow_unannotated=True,
+                allow_unannotated=saved.get("allow_unannotated", False),
+                fps=manifest.get("temporal_sampling", {}).get("fps"),
+                downsample_rate=manifest.get("temporal_sampling", {}).get("downsample_rate", 1),
             )
             self.groups = {}
             for index, row_index in enumerate(self.dataset.sample_indices):
@@ -120,7 +124,8 @@ class TokenData:
         sample = dict(self.dataset[index])
         sample.pop("action", None)
         sample.pop("action_is_pad", None)
-        sample["task"] = self.config.task
+        if not sample.get("task"):
+            sample["task"] = self.config.task
         sample = native.fixed_input(sample)
         from alohamini.learning.loading import collate_samples
 
@@ -191,9 +196,9 @@ class TokenValidation:
 
 def train_token(config, *, baseline_checkpoint=None):
     root = Path(config.output_dir)
-    with RunLock(root / "token-training.lock"):
+    with RunLock(root / "token-training.lock"), ExitStack() as stack:
         artifacts = (
-            "token.pt", "token-last.pt", "token-metrics.jsonl", "token-split.json",
+            "checkpoints", "token.pt", "token-last.pt", "token-metrics.jsonl", "token-split.json",
             "token-validation.json", "token-baseline-validation.json",
         )
         if any((root / name).exists() for name in artifacts):
@@ -218,7 +223,7 @@ def train_token(config, *, baseline_checkpoint=None):
             ),
         )
         if baseline_checkpoint:
-            saved = torch.load(baseline_checkpoint, map_location="cpu", weights_only=True)
+            saved, _ = read_stage_weights(baseline_checkpoint)
             require_contract(saved["contract"], policy.contract)
             baseline_encoder = RLTokenEncoder(**policy.contract["token_spec"]).to(config.device)
             baseline_decoder = RLTokenDecoder(**policy.contract["token_spec"]).to(config.device)
@@ -245,7 +250,15 @@ def train_token(config, *, baseline_checkpoint=None):
         torch.manual_seed(config.seed)
         encoder = RLTokenEncoder(**policy.contract["token_spec"]).to(config.device)
         decoder = RLTokenDecoder(**policy.contract["token_spec"]).to(config.device)
-        optimizer = torch.optim.AdamW([*encoder.parameters(), *decoder.parameters()], lr=config.lr)
+        models = {"encoder": encoder, "decoder": decoder}
+        def objective(modules, batch):
+            feat, mask = batch["features"], batch["mask"]
+            return modules["decoder"].loss(modules["encoder"](feat, mask), feat, mask)
+
+        update = stack.enter_context(supervised_stage(
+            torch.nn.ModuleDict(models), objective, device=config.device, lr=config.lr,
+            steps=config.token_steps, clip=1.0, precision=config.mixed_precision,
+        ))
         atomic_json(
             root / "token-split.json",
             dict(
@@ -260,19 +273,11 @@ def train_token(config, *, baseline_checkpoint=None):
             for step in range(1, config.token_steps + 1):
                 indices = rng.choice(len(data.training), config.token_batch_size)
                 features, mask = data.features([data.training[i] for i in indices])
-                encoder.train()
-                decoder.train()
-                loss = decoder.loss(encoder(features, mask), features, mask)
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    [*encoder.parameters(), *decoder.parameters()], 1, error_if_nonfinite=True
-                )
-                optimizer.step()
+                loss = update({"features": features, "mask": mask})
                 if step == 1 or step % 100 == 0 or step == config.token_steps:
                     metrics = dict(
                         step=step,
-                        loss=float(loss.detach()),
+                        loss=float(loss),
                         **validation.evaluate(
                             encoder, decoder, config.device, config.token_batch_size
                         ),
@@ -288,13 +293,12 @@ def train_token(config, *, baseline_checkpoint=None):
                     saved = dict(
                         format="alohamini-rlt-token-v1",
                         contract=policy.contract,
-                        encoder=encoder.state_dict(),
-                        decoder=decoder.state_dict(),
                         step=step,
                         validation_loss=val,
                         config=config.to_dict(),
                     )
-                    atomic_torch(root / "token-last.pt", saved)
-                    if val < best:
-                        atomic_torch(root / "token.pt", saved)
-                        best = val
+                    save_stage_checkpoint(
+                        root, step, models, saved, config.to_dict(),
+                        aliases=("token",) if val < best else (),
+                    )
+                    best = min(best, val)

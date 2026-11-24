@@ -16,7 +16,8 @@ from alohamini.rlt.gate import GateLatch, GripperRelease
 from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
 from alohamini.rlt.policy import RLTPolicy
 from alohamini.rlt.runtime import ControlSession
-from alohamini.rlt.storage import json_lines, load_hashed_weights
+from alohamini.rlt.storage import json_lines
+from alohamini.learning.stages import read_stage_weights as load_hashed_weights
 
 CONTRACT = {"learned_names": ["left", "grip"], "token_spec": {"dim": 4}}
 
@@ -183,7 +184,7 @@ def test_train_load_and_predict_auto_gate_without_second_policy_forward(tmp_path
         )
         == 0
     )
-    weights = Path(cfg.output_dir) / "gate.pt"
+    weights = Path(cfg.output_dir) / "gate"
     saved, _ = load_hashed_weights(weights)
     assert saved["format"] == GATE_FORMAT
     report = json.loads((weights.parent / "gate-validation.json").read_text())

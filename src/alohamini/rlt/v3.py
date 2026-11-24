@@ -18,6 +18,7 @@ from alohamini.datasets.lerobotv3 import (
     EPISODE_PATH,
     VIDEO_PATH,
     _arrow_schema,
+    _Stats,
 )
 from alohamini.rlt.segments import training_ranges
 from alohamini.rlt.storage import RunLock, atomic_json, json_lines, validate_training_episode
@@ -48,6 +49,7 @@ def _features(names, videos):
     for key in (
         "rlt.is_terminal_observation",
         "rlt.action_valid",
+        "rlt.supervision_valid",
         "rlt.has_reference",
         "rlt.critical",
         "next.done",
@@ -66,17 +68,12 @@ def _features(names, videos):
     return features
 
 
-def _table_stats(table):
-    stats = {}
-    for key in table.column_names:
-        values = np.asarray(table[key].to_pylist(), dtype=np.float64).reshape(len(table), -1)
-        if not np.isfinite(values).all():
-            raise ValueError(f"Non-finite values in {key}")
-        stats[key] = {
-            name: getattr(values, name)(axis=0).tolist() for name in ("min", "max", "mean", "std")
-        }
-        stats[key]["count"] = [len(table)]
-    return stats
+def _table_stats(table, features):
+    numeric = {name: features[name] for name in table.column_names}
+    tracker = _Stats(numeric, recording=True)
+    for batch in table.to_batches(max_chunksize=512):
+        tracker.update(batch.to_pylist())
+    return _lists(tracker.result())
 
 
 def _lists(stats):
@@ -192,6 +189,7 @@ def _frame_table(episode, summary, side, safety_path, features, episode_index, o
                     "rlt.source": SOURCES[source],
                     "rlt.disposition": DISPOSITIONS[status],
                     "rlt.action_valid": valid,
+                    "rlt.supervision_valid": valid and all(n in targets for n in names),
                     "rlt.is_terminal_observation": terminal,
                     "rlt.critical": critical,
                     "rlt.control_time": step.get("time", snapshot["received_s"]),
@@ -242,7 +240,7 @@ def _write_episode(root, stage, output, episode, summary, info):
     )
     length = len(table)
     pq.write_table(table, _mkdir(transaction / DATA_PATH.format(**parts)), compression="zstd")
-    stats = _table_stats(table)
+    stats = _table_stats(table, features)
     epmeta = {
         "episode_index": index,
         "length": length,
@@ -307,7 +305,7 @@ def _write_episode(root, stage, output, episode, summary, info):
         robot = _json(first / "state.json")["payload"]["_robot_metadata"]
         source = dict(
             features=features,
-            action_validity_field="rlt.action_valid",
+            action_validity_field="rlt.supervision_valid",
             cameras=list(videos),
             robot_metadata=robot,
             fps=summary["fps"],

@@ -34,6 +34,12 @@ class ScoredEpisodeMerge:
         if source_dir.is_symlink() or any(p.is_symlink() for p in source_dir.rglob("*")):
             raise ValueError("Scored episode sidecars must be regular local files")
         shutil.copytree(source_dir, dest)
+        for name in ("run-config.json", "run-contract.json"):
+            origin = source_dir.parent / name
+            if origin.is_symlink():
+                raise ValueError("Scored run metadata must be local files")
+            if origin.is_file() and not (dest / name).exists():
+                shutil.copyfile(origin, dest / name)
         if json.loads((dest / "episode.json").read_bytes())["episode_id"] != eid:
             raise ValueError("Scored episode ID differs from its journal")
         index_path = dest / "v3.json"

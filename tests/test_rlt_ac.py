@@ -166,7 +166,8 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
         "4",
     ]
     assert main(args) == 0
-    saved = torch.load(out / "ac.pt", weights_only=True)
+    from alohamini.learning.stages import read_stage_weights
+    saved, _ = read_stage_weights(out / "actor")
     split = saved["split"]
     assert set(split["episodes"]) == {f"{i:032x}" for i in range(4)}
     assert not set(split["train"]) & set(split["validation"])
@@ -177,12 +178,28 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
     assert len(json_lines(out / "ac-metrics.jsonl")) == 5
     with pytest.raises(FileExistsError):
         main(args)
+    if not v3:
+        resumed = tmp_path / "resumed"
+        short = args.copy()
+        short[short.index(str(out))] = str(resumed)
+        short[short.index("--ac-steps") + 1] = "3"
+        assert main(short) == 0
+        short[short.index("--ac-steps") + 1] = "5"
+        assert main([*short, "--resume"]) == 0
+        restored, _ = read_stage_weights(resumed / "actor")
+        for component in ("actor", "critic"):
+            for key, param in saved[component].items():
+                torch.testing.assert_close(param, restored[component][key], rtol=0, atol=0)
+        def state(directory):
+            return torch.load(directory / "checkpoints/last/training_state/state.pt", weights_only=True)
+        for key in ("sampler_rng", "target_actor", "target_critic", "actor_optimizer", "critic_optimizer"):
+            torch.testing.assert_close(state(out)[key], state(resumed)[key], rtol=0, atol=0)
     policy = _policy(cfg)
     snap = SimpleNamespace(payload={"left": 1.0}, images={"chest": None})
     original = policy.predict(snap)
     assert original["actor_version"] == -1
     np.testing.assert_array_equal(original["actions"], original["reference"])
-    policy.load_actor(out / "ac.pt")
+    policy.load_actor(out / "actor")
     outside = policy.predict(snap)
     assert outside["actor_version"] == -1
     np.testing.assert_array_equal(outside["actions"], original["reference"])
@@ -193,10 +210,10 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
     np.testing.assert_array_equal(diff[:, 1], 0)
     policy.token_sha256 = "mismatch"
     with pytest.raises(ValueError, match="exact token"):
-        policy.load_actor(out / "ac.pt")
+        policy.load_actor(out / "actor")
     policy.contract = dict(CONTRACT, chunk_size=3)
     with pytest.raises(ValueError, match="contract"):
-        policy.load_actor(out / "ac.pt")
+        policy.load_actor(out / "actor")
 
 
 def test_gapped_replay_reuses_the_same_stochastic_boundary_and_requires_ack(tmp_path):

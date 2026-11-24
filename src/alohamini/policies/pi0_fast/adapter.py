@@ -10,6 +10,8 @@ from .configuration_pi0_fast import PI0FastConfig
 
 
 class PI0FastAlgorithm(PI05Algorithm):
+    reference_features = None
+
     training_parameter_fields = {}
     visual_backbone_modules = ("network.paligemma.model.vision_tower",)
 

@@ -8,11 +8,11 @@ import numpy as np
 import torch
 
 from alohamini.learning.processor import scale_action
-from alohamini.policies.pi05.configuration_pi05 import get_config
 from alohamini.rlt.actor_critic import AC_FORMAT, ChunkActor
 from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
 from alohamini.rlt.networks import RLTokenEncoder
-from alohamini.rlt.storage import digest_file, load_hashed_weights
+from alohamini.rlt.storage import digest_file
+from alohamini.learning.stages import read_stage_weights
 
 
 def load_native(config, *, offline=False):
@@ -28,29 +28,35 @@ def load_native(config, *, offline=False):
         robot_model=config.robot_model,
         offline=offline,
     )
-    if native.manifest["kind"] != "pi05" or native.field_transform is not None:
-        raise ValueError("RLT requires a native PI0.5 checkpoint in its original 18-D coordinates")
-    if config.chunk_size > native.config.network["action_horizon"]:
+    readout = getattr(native.algorithm, "reference_features", None)
+    if readout is None:
+        raise ValueError(f"{native.manifest['kind']} does not provide reference features")
+    if config.chunk_size > native.algorithm.action_horizon(native.config):
         raise ValueError("RL chunk exceeds the VLA horizon")
     if config.fps is not None and config.fps != native.fps:
         raise ValueError("RLT control FPS must match the checkpoint's action time scale")
     native.model.requires_grad_(False).eval()
-    native.model.network.gradient_checkpointing_disable()
+    readout.prepare(native)
     return native
 
 
 def base_contract(native, config):
     path = native.checkpoint_path
-    names = [name for name in native.names if name.startswith("arm_left_")]
-    if len(names) != 7:
-        raise ValueError("RLT expects six left-arm joints and a gripper")
+    names = config.learned_action_names
+    if names is None:
+        from alohamini.fixed import dimensions
+        names = dimensions(["arm_left"], config.robot_model)
+    state_names_in_checkpoint = native.manifest["state_feature"]["names"]
+    if (not names or len(set(names)) != len(names) or not set(names) <= set(native.names)
+            or not set(names) <= set(state_names_in_checkpoint)):
+        raise ValueError("Learned coordinates must be unique named action and proprioception fields")
     if set(names) & set((native.fixed_dimensions or {}).get("targets", {})):
         raise ValueError("The learned left arm contains fixed output coordinates")
     return dict(
         version=1,
         base={
             name: digest_file(path / name)
-            for name in ("policy.json", "model.safetensors", "tokenizer.model")
+            for name in ("policy.json", "model.safetensors", *native.algorithm.reference_features.asset_files)
         },
         task=config.task,
         names=native.names,
@@ -60,7 +66,7 @@ def base_contract(native, config):
         fixed_state_references=native.fixed_state_references,
         fixed_dimensions=native.fixed_dimensions,
         token_spec=dict(
-            input_dim=get_config(native.config.network["paligemma_variant"]).width,
+            input_dim=native.algorithm.reference_features.width(native),
             dim=config.token_dim,
             layers=config.token_layers,
             heads=config.token_heads,
@@ -102,10 +108,12 @@ class RLTPolicy:
         self.native = load_native(config, offline=offline)
         self.contract = base_contract(self.native, config)
         self.indices = [self.native.names.index(n) for n in self.contract["learned_names"]]
+        self.state_indices = [self.native.manifest["state_feature"]["names"].index(n)
+                              for n in self.contract["learned_names"]]
         self.encoder = self.gate = self.gate_identity = None
         self.actor = self.actor_identity = self.token_sha256 = None
         if config.token_checkpoint:
-            checkpoint, self.token_sha256 = load_hashed_weights(config.token_checkpoint)
+            checkpoint, self.token_sha256 = read_stage_weights(config.token_checkpoint)
             require_contract(checkpoint["contract"], self.contract)
             self.encoder = RLTokenEncoder(**self.contract["token_spec"]).to(config.device)
             self.encoder.load_state_dict(checkpoint["encoder"], strict=True)
@@ -116,7 +124,7 @@ class RLTPolicy:
             self.load_gate(config.gate_checkpoint)
 
     def load_actor(self, path):
-        saved, sha256 = load_hashed_weights(path)
+        saved, sha256 = read_stage_weights(path)
         if saved.get("format") != AC_FORMAT:
             raise ValueError("Unsupported RLT Actor checkpoint format")
         require_contract(saved["contract"], self.contract)
@@ -135,7 +143,7 @@ class RLTPolicy:
         self.actor_identity = dict(sha256=sha256, token_sha256=self.token_sha256, version=version)
 
     def load_gate(self, path):
-        checkpoint, sha = load_hashed_weights(path)
+        checkpoint, sha = read_stage_weights(path)
         if checkpoint.get("format") != GATE_FORMAT:
             raise ValueError("Unsupported RLT stage classifier format")
         require_contract(checkpoint["contract"], self.contract)
@@ -154,7 +162,7 @@ class RLTPolicy:
     @torch.no_grad()
     def features(self, batch):
         with self.native.inference_context():
-            _, _, _, features, mask = self.native.model.network.encode_prefix(batch["observation"])
+            features, mask = self.native.algorithm.reference_features.encode(self.native, batch)
         return features.detach().float(), mask
 
     def _snapshot_batch(self, snapshot, rgb_images):
@@ -170,19 +178,19 @@ class RLTPolicy:
         """Compute only the frozen prefix used by the live gate, without sampling actions."""
         batch = self._snapshot_batch(snapshot, rgb_images)
         features, mask = self.features(batch)
-        return self.encoder(features, mask), batch["observation"].state[:, self.indices].float()
+        return self.encoder(features, mask), self.native.algorithm.reference_features.proprio(batch)[:, self.state_indices].float()
 
     @torch.no_grad()
     def reference(self, snapshot, observation_id=0, *, rgb_images=None, encode_token=True):
         native = self.native
         batch = self._snapshot_batch(snapshot, rgb_images)
         with native.inference_context():
-            raw, features, mask = native.model.predict_action_chunk(batch, return_features=True)
+            raw, features, mask = native.algorithm.reference_features.predict(native, batch)
         raw = raw[:, : self.config.chunk_size].float()
         token = None
         if encode_token and self.encoder is not None:
             token = self.encoder(features.float(), mask)
-        proprio = batch["observation"].state[:, self.indices].float()
+        proprio = self.native.algorithm.reference_features.proprio(batch)[:, self.state_indices].float()
         physical = native.execution_action(raw, context=batch["_action_context"])
         if not torch.isfinite(physical).all() or not torch.isfinite(proprio).all():
             raise ValueError("Non-finite VLA reference")
@@ -211,8 +219,8 @@ class RLTPolicy:
                 raise ValueError("Non-finite RLT Actor output")
             version = self.actor_identity["version"]
         return dict(
-            actions=physical[0].detach().cpu().numpy(),
-            reference=reference.physical[0].detach().cpu().numpy(),
+            actions=physical[0, :self.config.execution_steps].detach().cpu().numpy(),
+            reference=reference.physical[0, :self.config.execution_steps].detach().cpu().numpy(),
             actor_version=version,
             gate_probability=gate_probability,
         )
