@@ -262,7 +262,13 @@ def test_detached_training_logs_and_raw_metrics(
         json.loads(line) for line in (tmp_path / "run/metrics.jsonl").read_text().splitlines()
     ]
     assert [r["step"] for r in records] == [1, 2, 3, 4]
+    samples = [r["samples"] for r in records]
+    assert samples == sorted(set(samples))
+    assert [r["elapsed_s"] for r in records] == sorted(r["elapsed_s"] for r in records)
     for record in records:
+        assert record["elapsed_s"] > 0 and record["event_time_s"] > 0
+        assert record["skipped_updates"] == 0
+        assert record["lr_groups"]["0"] == record["lr"]
         assert record["loss"] == pytest.approx(
             record["metrics"]["loss_l1"] + record["metrics"]["loss_kl_weighted"], rel=1e-6
         )
@@ -271,8 +277,13 @@ def test_detached_training_logs_and_raw_metrics(
         for line in (tmp_path / "run/validation-metrics.jsonl").read_text().splitlines()
     ]
     assert [r["step"] for r in evaluations] == [2, 4]
+    for evaluation in evaluations:
+        train = records[evaluation["step"] - 1]
+        assert evaluation["elapsed_s"] >= train["elapsed_s"]
+        assert evaluation["samples"] == train["samples"]
     assert all(set(r["metrics"]) == {"loss_l1"} for r in evaluations)
     schema = json.loads((tmp_path / "run/metrics-schema.json").read_text())
+    assert schema["console_log"] == Path(job["log"]).name
     assert schema["components"][0]["denominator"] == "valid_action_elements"
     summaries = [line for line in log.splitlines() if " step:" in line]
     if log_freq:

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#17203b" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./monitor.css" />
+    <title>AlohaMini · Training Monitor</title>
+  </head>
+  <body>
+    <svg aria-hidden="true" class="symbols" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M2 13h5l3-8 4 14 3-9 2 3h3" /></symbol>
+      <symbol id="icon-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="2" />
+        <rect x="14" y="3" width="7" height="7" rx="2" />
+        <rect x="3" y="14" width="7" height="7" rx="2" />
+        <rect x="14" y="14" width="7" height="7" rx="2" />
+      </symbol>
+      <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M4 4v15h17M7 13l4-4 4 3 5-7" /></symbol>
+      <symbol id="icon-layers" viewBox="0 0 24 24">
+        <path d="m3 8 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 17l9 5 9-5" />
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <path d="M3 6h8m5 0h5M3 12h3m5 0h10M3 18h10m5 0h3" />
+        <circle cx="13" cy="6" r="2" />
+        <circle cx="8" cy="12" r="2" />
+        <circle cx="15" cy="18" r="2" />
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <rect x="2.5" y="4" width="19" height="16" rx="3" />
+        <path d="m6 9 3 3-3 3m6 0h5" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="10" cy="10" r="6" />
+        <path d="m15 15 5 5" />
+      </symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 3v11m-4-4 4 4 4-4M4 15v5h16v-5" /></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6" /></symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14m8-14v14" /></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m7 4 12 8-12 8V4Z" /></symbol>
+      <symbol id="icon-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <ellipse cx="12" cy="12" rx="4" ry="9" />
+        <path d="M3 12h18" />
+      </symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v12H3V7Z" /></symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 6v6l4 2" />
+      </symbol>
+      <symbol id="icon-panel" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M9 4v16" />
+      </symbol>
+    </svg>
+    <aside id="sidebar">
+      <div class="brand">
+        <span class="brand-mark"
+          ><svg class="icon"><use href="#icon-activity" /></svg
+        ></span>
+        <div><b>AlohaMini</b><small>Training Monitor</small></div>
+      </div>
+      <div class="run-header">
+        <h2 data-t="runs"></h2>
+        <span id="run-count" class="count">0</span>
+      </div>
+      <label class="search"
+        ><svg class="icon"><use href="#icon-search" /></svg
+        ><input type="search" id="search" data-ph="searchRuns" data-label="searchRuns"
+      /></label>
+      <p class="compare-hint" data-t="compareHint"></p>
+      <div id="run-list"></div>
+      <div class="sidebar-foot">
+        <svg class="icon"><use href="#icon-terminal" /></svg><span data-t="localWorkspace"></span>
+      </div>
+    </aside>
+    <div id="shade" hidden></div>
+    <main>
+      <header class="topbar">
+        <button class="icon-button mobile-toggle" id="menu" data-label="runs">
+          <svg class="icon"><use href="#icon-panel" /></svg>
+        </button>
+        <div class="breadcrumb">
+          <svg class="icon"><use href="#icon-grid" /></svg><span data-t="workspace"></span><i>/</i
+          ><strong data-t="monitor"></strong>
+        </div>
+        <div class="top-actions">
+          <button id="live" class="live-control">
+            <span class="status-dot"></span><span id="live-label"></span
+            ><svg class="icon"><use id="live-icon" href="#icon-pause" /></svg>
+          </button>
+          <button id="language" class="quiet">
+            <svg class="icon"><use href="#icon-globe" /></svg><span id="language-label"></span>
+          </button>
+        </div>
+      </header>
+      <div class="content">
+        <div class="page-heading">
+          <div>
+            <h1 data-t="overview"></h1>
+            <div class="run-caption">
+              <span id="policy-badge" hidden></span><span id="primary-name"></span
+              ><span id="last-event"></span>
+            </div>
+          </div>
+          <button class="primary" id="import">
+            <svg class="icon"><use href="#icon-import" /></svg><span data-t="addEval"></span>
+          </button>
+        </div>
+        <div id="feedback" role="status" hidden></div>
+        <section id="empty" class="empty-state" hidden>
+          <span class="empty-mark"
+            ><svg class="icon"><use href="#icon-chart" /></svg
+          ></span>
+          <h2 data-t="noRuns"></h2>
+          <p data-t="noRunsHint"></p>
+          <code>alohamini train monitor --runs-dir /path/to/runs</code>
+        </section>
+        <div id="run-view" hidden>
+          <div class="kpis" id="kpis"></div>
+          <nav class="tabs" data-label="views">
+            <button data-tab="metrics">
+              <svg class="icon"><use href="#icon-chart" /></svg><span data-t="metrics"></span>
+            </button>
+            <button data-tab="evaluation">
+              <svg class="icon"><use href="#icon-layers" /></svg><span data-t="evaluation"></span>
+            </button>
+            <button data-tab="config">
+              <svg class="icon"><use href="#icon-settings" /></svg><span data-t="config"></span>
+            </button>
+            <button data-tab="logs">
+              <svg class="icon"><use href="#icon-terminal" /></svg><span data-t="logs"></span>
+            </button>
+          </nav>
+          <section id="metrics-view">
+            <div class="toolbar">
+              <div class="toolbar-title">
+                <h2 data-t="curves"></h2>
+                <span class="count light" id="chart-count"></span>
+              </div>
+              <div class="controls">
+                <label class="axis"
+                  ><span data-t="axis"></span
+                  ><select id="axis"></select
+                ></label>
+                <button class="secondary" id="range-btn" data-t="range"></button>
+                <button class="secondary" id="metrics-btn">
+                  <svg class="icon"><use href="#icon-settings" /></svg><span data-t="chooseMetrics"></span>
+                </button>
+              </div>
+            </div>
+            <div id="active-range" hidden>
+              <span></span><button class="quiet" id="reset-range" data-t="resetRange"></button>
+            </div>
+            <div class="chart-grid" id="charts"></div>
+          </section>
+          <section id="evaluation-view" hidden></section>
+          <section id="config-view" hidden>
+            <div class="toolbar">
+              <h2 data-t="savedConfig"></h2>
+              <input
+                id="config-filter"
+                class="input"
+                type="search"
+                data-ph="filterConfig"
+                data-label="filterConfig"
+              />
+            </div>
+            <div class="table-wrap"><table id="config-table"></table></div>
+          </section>
+          <section id="logs-view" hidden>
+            <div class="toolbar">
+              <h2 data-t="logStream"></h2>
+              <select id="log-source" data-label="logSource"></select>
+            </div>
+            <pre tabindex="0" id="log-output"></pre>
+          </section>
+        </div>
+      </div>
+    </main>
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <h2 id="dialog-title"></h2>
+        <button class="icon-button" id="close-dialog" data-label="close">
+          <svg class="icon"><use href="#icon-close" /></svg>
+        </button>
+      </div>
+      <div id="dialog-body"></div>
+    </dialog>
+    <div role="tooltip" id="help" hidden></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

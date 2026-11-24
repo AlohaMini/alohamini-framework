@@ -98,6 +98,7 @@ def launch_training(settings):
     )
     if run.exists() and not settings.get("resume"):
         raise FileExistsError(run)
+    settings["output_dir"] = str(run)
     directory = paths.logs / "training"
     directory.mkdir(parents=True, exist_ok=True)
     label = run.name + (f"_resume_{time.time_ns()}" if settings.get("resume") else "")
@@ -123,6 +124,7 @@ def launch_training(settings):
             ]
         process = subprocess.Popen(
             [*command, "--config", str(config_path), "--foreground"],
+            env={**os.environ, "ALOHAMINI_TRAIN_CONSOLE": log_path.name},
             stdin=subprocess.DEVNULL,
             stdout=stream,
             stderr=subprocess.STDOUT,
@@ -135,6 +137,7 @@ def launch_training(settings):
         "log": str(log_path),
         "pid_file": str(pid_path),
         "config": str(config_path),
+        "output_dir": str(run),
         "checkpoint": str(run / "checkpoint"),
     }
 
@@ -763,6 +766,8 @@ def _train(settings, execution, *, prepared=None):
                 "loss": "original differentiable objective; separately weighted terms",
                 "components": [spec.schema() for spec in metric_specs],
             }
+            if console := os.environ.get("ALOHAMINI_TRAIN_CONSOLE"):
+                schema["console_log"] = console
             (output / metrics_name.replace(".jsonl", "-schema.json")).write_text(
                 json.dumps(schema, indent=2) + "\n"
             )
@@ -780,6 +785,8 @@ def _train(settings, execution, *, prepared=None):
             )
             step = start_step
             skipped = 0
+            skipped_total = 0
+            loop_started = time.perf_counter()
             while step < steps:
                 started = time.perf_counter()
                 previous_consumed = consumed
@@ -812,6 +819,7 @@ def _train(settings, execution, *, prepared=None):
                     )
                     if not update["optimizer_step"]:
                         skipped += 1
+                        skipped_total += 1
                         if execution.main:
                             logger.warning(
                                 "AMP overflow: skipped update; scale=%s",
@@ -840,6 +848,20 @@ def _train(settings, execution, *, prepared=None):
                     )
                 count = consumed_samples(sampler, consumed)
                 window_count = count - consumed_samples(sampler, previous_consumed)
+                if stream:
+                    record.update(
+                        samples=count,
+                        elapsed_s=time.perf_counter() - loop_started,
+                        event_time_s=time.time(),
+                        skipped_updates=skipped_total,
+                    )
+                    clip = cfg["optimizer"]["grad_clip_norm"]
+                    if clip > 0 and record["grad_norm"] is not None:
+                        record["grad_clipped"] = int(record["grad_norm"] > clip)
+                    if len(optimizer.param_groups) > 1:
+                        record["lr_groups"] = {
+                            str(i): group["lr"] for i, group in enumerate(optimizer.param_groups)
+                        }
                 progress.samples = count - window_count
                 progress.update(record, window_count)
                 if scheduler:
@@ -891,6 +913,9 @@ def _train(settings, execution, *, prepared=None):
                         if execution.main:
                             evaluation = {
                                 "step": step,
+                                "samples": count,
+                                "elapsed_s": time.perf_counter() - loop_started,
+                                "event_time_s": time.time(),
                                 "loss": eval_loss,
                                 "weights": "ema" if use_ema else "online",
                                 **metric_result,
@@ -1036,6 +1061,7 @@ def main(argv=None):
             job = launch_training(cfg)
             print(json.dumps(job, ensure_ascii=False, indent=2))
             print("tail -f", shlex.quote(job["log"]))
+            print("alohamini train monitor --runs-dir", shlex.quote(job["output_dir"]))
         else:
             train(cfg)
     return 0

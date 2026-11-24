@@ -60,6 +60,10 @@ def _main(argv: list[str] | None = None) -> int:
         from alohamini.apps.rlt.cli import main as rlt_main
 
         return rlt_main(argv[1:])
+    if argv[:2] == ["train", "monitor"]:
+        from alohamini.monitor.server import main as monitor_training
+
+        return monitor_training(argv[2:])
     if argv[:2] == ["train", "check"]:
         from alohamini.learning.resource_cli import main as check_training
 
@@ -94,7 +98,7 @@ def _main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("rlt", help="采集评分回合及训练 RLT")
     commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
-    commands.add_parser("train", help="训练策略；train check --config FILE 输出资源检查 JSON")
+    commands.add_parser("train", help="训练策略、检查资源（check）、查看实时日志（monitor）")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(

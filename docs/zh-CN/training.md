@@ -286,6 +286,12 @@ python -m alohamini.learning.train --config /path/to/train.json \
 
 ### 日志与配置
 
+打开[本地训练监控](training-monitor.md)可跟踪实时指标与控制台输出、对比多次训练或导入评估数据。
+
+```bash
+alohamini train monitor --open
+```
+
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_01.log
 cat ~/Alohamini_workspace/logs/training/act_01.pid

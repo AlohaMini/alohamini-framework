@@ -286,6 +286,12 @@ Without `--stats`, training computes statistics automatically. New runs save `ru
 
 ### Logs and configuration
 
+Open the [local training monitor](training-monitor.md) to follow metrics and console output, compare runs, or import evaluation data.
+
+```bash
+alohamini train monitor --open
+```
+
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_01.log
 cat ~/Alohamini_workspace/logs/training/act_01.pid

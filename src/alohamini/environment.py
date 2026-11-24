@@ -112,6 +112,8 @@ def command_packages(argv):
         if argv[1:2] == ["collect"]:
             packages |= {"pyzmq", "pyserial", "feetech-servo-sdk", "opencv-python-headless"}
         return packages
+    if argv[:2] == ["train", "monitor"]:
+        return set()
     if command == "host":
         return {"numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"}
     if command in {"train", "evaluate"} or argv[:2] == ["inference", "serve"]:

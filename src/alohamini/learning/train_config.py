@@ -64,7 +64,8 @@ def validate_training_budget(settings):
 
 def parse_training_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Local policy training on LeRobot v3 and AlohaMini datasets"
+        description="Local policy training on LeRobot v3 and AlohaMini datasets",
+        epilog="View live metrics and evaluation data with alohamini train monitor.",
     )
     parser.add_argument("--config", "--config_path", type=Path)
     parser.add_argument("--dataset.root", dest="dataset")
