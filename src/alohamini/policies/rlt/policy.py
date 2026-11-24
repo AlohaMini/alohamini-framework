@@ -1,4 +1,4 @@
-"""Frozen native PI0.5 references with identical offline/live action transforms."""
+"""Frozen native policy references with identical offline/live action transforms."""
 
 import json
 import math
@@ -7,12 +7,12 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from alohamini.datasets.rlt.storage import digest_file
 from alohamini.learning.processor import scale_action
-from alohamini.rlt.actor_critic import AC_FORMAT, ChunkActor
-from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
-from alohamini.rlt.networks import RLTokenEncoder
-from alohamini.rlt.storage import digest_file
 from alohamini.learning.stages import read_stage_weights
+from alohamini.policies.rlt.actor_critic import AC_FORMAT, ChunkActor
+from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
+from alohamini.policies.rlt.networks import RLTokenEncoder
 
 
 def load_native(config, *, offline=False):
@@ -45,18 +45,29 @@ def base_contract(native, config):
     names = config.learned_action_names
     if names is None:
         from alohamini.fixed import dimensions
+
         names = dimensions(["arm_left"], config.robot_model)
     state_names_in_checkpoint = native.manifest["state_feature"]["names"]
-    if (not names or len(set(names)) != len(names) or not set(names) <= set(native.names)
-            or not set(names) <= set(state_names_in_checkpoint)):
-        raise ValueError("Learned coordinates must be unique named action and proprioception fields")
+    if (
+        not names
+        or len(set(names)) != len(names)
+        or not set(names) <= set(native.names)
+        or not set(names) <= set(state_names_in_checkpoint)
+    ):
+        raise ValueError(
+            "Learned coordinates must be unique named action and proprioception fields"
+        )
     if set(names) & set((native.fixed_dimensions or {}).get("targets", {})):
-        raise ValueError("The learned left arm contains fixed output coordinates")
+        raise ValueError("Learned coordinates overlap fixed output targets")
     return dict(
         version=1,
         base={
             name: digest_file(path / name)
-            for name in ("policy.json", "model.safetensors", *native.algorithm.reference_features.asset_files)
+            for name in (
+                "policy.json",
+                "model.safetensors",
+                *native.algorithm.reference_features.asset_files,
+            )
         },
         task=config.task,
         names=native.names,
@@ -108,8 +119,10 @@ class RLTPolicy:
         self.native = load_native(config, offline=offline)
         self.contract = base_contract(self.native, config)
         self.indices = [self.native.names.index(n) for n in self.contract["learned_names"]]
-        self.state_indices = [self.native.manifest["state_feature"]["names"].index(n)
-                              for n in self.contract["learned_names"]]
+        self.state_indices = [
+            self.native.manifest["state_feature"]["names"].index(n)
+            for n in self.contract["learned_names"]
+        ]
         self.encoder = self.gate = self.gate_identity = None
         self.actor = self.actor_identity = self.token_sha256 = None
         if config.token_checkpoint:
@@ -165,32 +178,28 @@ class RLTPolicy:
             features, mask = self.native.algorithm.reference_features.encode(self.native, batch)
         return features.detach().float(), mask
 
-    def _snapshot_batch(self, snapshot, rgb_images):
-        native = self.native
-        if not native._robot_bound:
-            self.bind(snapshot)
-        if rgb_images is None:
-            return native._observation_batch(snapshot)
-        return native._observation_batch(snapshot, rgb_images=rgb_images)
-
     @torch.no_grad()
     def gate_features(self, snapshot, *, rgb_images=None):
         """Compute only the frozen prefix used by the live gate, without sampling actions."""
-        batch = self._snapshot_batch(snapshot, rgb_images)
+        batch = self.native.prepare_snapshot(snapshot, rgb_images=rgb_images)
         features, mask = self.features(batch)
-        return self.encoder(features, mask), self.native.algorithm.reference_features.proprio(batch)[:, self.state_indices].float()
+        return self.encoder(features, mask), self.native.algorithm.reference_features.proprio(
+            batch
+        )[:, self.state_indices].float()
 
     @torch.no_grad()
     def reference(self, snapshot, observation_id=0, *, rgb_images=None, encode_token=True):
         native = self.native
-        batch = self._snapshot_batch(snapshot, rgb_images)
+        batch = self.native.prepare_snapshot(snapshot, rgb_images=rgb_images)
         with native.inference_context():
             raw, features, mask = native.algorithm.reference_features.predict(native, batch)
         raw = raw[:, : self.config.chunk_size].float()
         token = None
         if encode_token and self.encoder is not None:
             token = self.encoder(features.float(), mask)
-        proprio = self.native.algorithm.reference_features.proprio(batch)[:, self.state_indices].float()
+        proprio = self.native.algorithm.reference_features.proprio(batch)[
+            :, self.state_indices
+        ].float()
         physical = native.execution_action(raw, context=batch["_action_context"])
         if not torch.isfinite(physical).all() or not torch.isfinite(proprio).all():
             raise ValueError("Non-finite VLA reference")
@@ -219,8 +228,8 @@ class RLTPolicy:
                 raise ValueError("Non-finite RLT Actor output")
             version = self.actor_identity["version"]
         return dict(
-            actions=physical[0, :self.config.execution_steps].detach().cpu().numpy(),
-            reference=reference.physical[0, :self.config.execution_steps].detach().cpu().numpy(),
+            actions=physical[0, : self.config.execution_steps].detach().cpu().numpy(),
+            reference=reference.physical[0, : self.config.execution_steps].detach().cpu().numpy(),
             actor_version=version,
             gate_probability=gate_probability,
         )

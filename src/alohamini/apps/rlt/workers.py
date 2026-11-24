@@ -7,7 +7,7 @@ import time
 
 
 def _inference_process(config, initial, jobs, results, stop):
-    from alohamini.rlt.policy import RLTPolicy
+    from alohamini.policies.rlt.policy import RLTPolicy
 
     try:
         policy = RLTPolicy(config)

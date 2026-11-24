@@ -16,7 +16,6 @@ AlohaMini 双臂移动机器人的控制、数据采集与算法开发平台。�
 - [仿真](docs/zh-CN/simulation.md)：MuJoCo、ManiSkill、RoboTwin 的查看、场景与回放命令。
 - [LeRobot](docs/zh-CN/lerobot.md)：数据与模型兼容范围。
 - [训练与部署](docs/zh-CN/training.md)：数据选择与转换、策略训练、离线检查、云端推理与真机评估。
-- [5090 上的 π0.5 人工示教与 RL token 训练](docs/rlt.md)
 - [Notebook](docs/zh-CN/notebook.md)：可选的数据分析与实验入口。
 
 ## 日常启动

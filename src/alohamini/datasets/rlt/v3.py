@@ -20,9 +20,15 @@ from alohamini.datasets.lerobotv3 import (
     _arrow_schema,
     _Stats,
 )
-from alohamini.rlt.segments import training_ranges
-from alohamini.rlt.storage import RunLock, atomic_json, json_lines, validate_training_episode
-from alohamini.rlt.v3_video import prepare_videos, snapshot_directories
+from alohamini.datasets.rlt.merge import ScoredEpisodeMerge
+from alohamini.datasets.rlt.segments import training_ranges
+from alohamini.datasets.rlt.storage import (
+    RunLock,
+    atomic_json,
+    json_lines,
+    validate_training_episode,
+)
+from alohamini.datasets.rlt.v3_video import prepare_videos, snapshot_directories
 from alohamini.schema import CommandIdentity
 
 SOURCES = {"HOLD": 0, "VLA": 1, "RLT": 2, "HUMAN": 3, "TERMINAL": 4}
@@ -49,7 +55,6 @@ def _features(names, videos):
     for key in (
         "rlt.is_terminal_observation",
         "rlt.action_valid",
-        "rlt.supervision_valid",
         "rlt.has_reference",
         "rlt.critical",
         "next.done",
@@ -189,7 +194,6 @@ def _frame_table(episode, summary, side, safety_path, features, episode_index, o
                     "rlt.source": SOURCES[source],
                     "rlt.disposition": DISPOSITIONS[status],
                     "rlt.action_valid": valid,
-                    "rlt.supervision_valid": valid and all(n in targets for n in names),
                     "rlt.is_terminal_observation": terminal,
                     "rlt.critical": critical,
                     "rlt.control_time": step.get("time", snapshot["received_s"]),
@@ -305,7 +309,6 @@ def _write_episode(root, stage, output, episode, summary, info):
         robot = _json(first / "state.json")["payload"]["_robot_metadata"]
         source = dict(
             features=features,
-            action_validity_field="rlt.supervision_valid",
             cameras=list(videos),
             robot_metadata=robot,
             fps=summary["fps"],
@@ -326,6 +329,7 @@ def _write_episode(root, stage, output, episode, summary, info):
             data_path=DATA_PATH,
             video_path=VIDEO_PATH,
             features=features,
+            action_validity_fields=list(ScoredEpisodeMerge.action_validity_fields),
             alohamini_rlt=dict(
                 version=VERSION,
                 sources=SOURCES,

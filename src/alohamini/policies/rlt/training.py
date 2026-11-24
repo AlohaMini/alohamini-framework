@@ -9,10 +9,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from alohamini.datasets.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.learning.loading import collate_samples
+from alohamini.learning.precision import tf32_context
 from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint, supervised_stage
-from alohamini.rlt.networks import RLTokenDecoder, RLTokenEncoder
-from alohamini.rlt.policy import RLTPolicy, require_contract
-from alohamini.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.policies.rlt.networks import RLTokenDecoder, RLTokenEncoder
+from alohamini.policies.rlt.policy import RLTPolicy, require_contract
 
 
 class TokenData:
@@ -46,10 +48,9 @@ class TokenData:
             training = saved.get("train_episodes")
             validation = saved.get("val_episodes")
             # The training machine and the robot often mount the same dataset at different paths.
-            same_dataset = (
-                root == Path(saved.get("dataset", "")).expanduser().resolve()
-                or info == manifest.get("source_info")
-            )
+            same_dataset = root == Path(
+                saved.get("dataset", "")
+            ).expanduser().resolve() or info == manifest.get("source_info")
             if (
                 same_dataset
                 and training
@@ -62,7 +63,7 @@ class TokenData:
             self.dataset = AlohaMiniDataset(
                 root,
                 episodes=self.train_episodes + self.val_episodes,
-                delta_indices={"action": [0]},
+                include_action=False,
                 state=manifest["state"],
                 exclude_fixed_state=manifest.get("fixed_state_excluded", False),
                 cameras=manifest["cameras"],
@@ -119,19 +120,23 @@ class TokenData:
         native = self.policy.native
         if self.dataset is None:
             snapshot = load_snapshot(index)
-            self.policy.bind(snapshot)
-            return native._observation_batch(snapshot)
+            return native.prepare_snapshot(snapshot)
+        return native.processor(collate_samples([self._offline_sample(index)]))
+
+    def _offline_sample(self, index):
+        native = self.policy.native
         sample = dict(self.dataset[index])
         sample.pop("action", None)
         sample.pop("action_is_pad", None)
         if not sample.get("task"):
             sample["task"] = self.config.task
         sample = native.fixed_input(sample)
-        from alohamini.learning.loading import collate_samples
-
-        return native.processor(collate_samples([sample]))
+        return sample
 
     def features(self, indices):
+        if self.dataset is not None:
+            batch = collate_samples([self._offline_sample(i) for i in indices])
+            return self.policy.features(self.policy.native.processor(batch))
         examples = [self.policy.features(self.batch(index)) for index in indices]
         return torch.cat([e[0] for e in examples]), torch.cat([e[1] for e in examples])
 
@@ -196,10 +201,15 @@ class TokenValidation:
 
 def train_token(config, *, baseline_checkpoint=None):
     root = Path(config.output_dir)
-    with RunLock(root / "token-training.lock"), ExitStack() as stack:
+    with RunLock(root / "token-training.lock"), tf32_context(config.tf32), ExitStack() as stack:
         artifacts = (
-            "checkpoints", "token.pt", "token-last.pt", "token-metrics.jsonl", "token-split.json",
-            "token-validation.json", "token-baseline-validation.json",
+            "checkpoints",
+            "token.pt",
+            "token-last.pt",
+            "token-metrics.jsonl",
+            "token-split.json",
+            "token-validation.json",
+            "token-baseline-validation.json",
         )
         if any((root / name).exists() for name in artifacts):
             raise FileExistsError(
@@ -251,14 +261,22 @@ def train_token(config, *, baseline_checkpoint=None):
         encoder = RLTokenEncoder(**policy.contract["token_spec"]).to(config.device)
         decoder = RLTokenDecoder(**policy.contract["token_spec"]).to(config.device)
         models = {"encoder": encoder, "decoder": decoder}
+
         def objective(modules, batch):
             feat, mask = batch["features"], batch["mask"]
             return modules["decoder"].loss(modules["encoder"](feat, mask), feat, mask)
 
-        update = stack.enter_context(supervised_stage(
-            torch.nn.ModuleDict(models), objective, device=config.device, lr=config.lr,
-            steps=config.token_steps, clip=1.0, precision=config.mixed_precision,
-        ))
+        update = stack.enter_context(
+            supervised_stage(
+                torch.nn.ModuleDict(models),
+                objective,
+                device=config.device,
+                lr=config.lr,
+                steps=config.token_steps,
+                clip=1.0,
+                precision=config.mixed_precision,
+            )
+        )
         atomic_json(
             root / "token-split.json",
             dict(
@@ -274,7 +292,7 @@ def train_token(config, *, baseline_checkpoint=None):
                 indices = rng.choice(len(data.training), config.token_batch_size)
                 features, mask = data.features([data.training[i] for i in indices])
                 loss = update({"features": features, "mask": mask})
-                if step == 1 or step % 100 == 0 or step == config.token_steps:
+                if step == 1 or step % config.save_freq == 0 or step == config.token_steps:
                     metrics = dict(
                         step=step,
                         loss=float(loss),
@@ -298,7 +316,11 @@ def train_token(config, *, baseline_checkpoint=None):
                         config=config.to_dict(),
                     )
                     save_stage_checkpoint(
-                        root, step, models, saved, config.to_dict(),
+                        root,
+                        step,
+                        models,
+                        saved,
+                        config.to_dict(),
                         aliases=("token",) if val < best else (),
                     )
                     best = min(best, val)

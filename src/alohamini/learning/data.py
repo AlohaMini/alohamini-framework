@@ -268,6 +268,7 @@ class AlohaMiniDataset(Dataset):
         drop_n_last_frames=0,
         review_note="",
         include_task=False,
+        include_action=True,
         video_cache_size=8,
         video_backend="pyav",
         camera_workers=0,
@@ -458,7 +459,9 @@ class AlohaMiniDataset(Dataset):
                 "STATE", tuple(self.selection.feature["shape"])
             )
         self.output_features = {}
-        if "action" in self.info["features"]:
+        if not include_action and {"action", "past_action"} & self.delta_indices.keys():
+            raise ValueError("Observation-only samples cannot request action windows")
+        if include_action and "action" in self.info["features"]:
             self.output_features["action"] = PolicyFeature(
                 "ACTION", tuple(self.info["features"]["action"]["shape"])
             )
@@ -510,12 +513,14 @@ class AlohaMiniDataset(Dataset):
         ):
             raise ValueError("Loss metadata requires selected numeric fields and an enabled task")
         columns = [k for k in self.sample_keys if k != "observation.state"]
-        validity = self.info.get("action_validity_field")
-        if validity is not None:
-            feature = self.info["features"].get(validity, {})
-            if feature.get("dtype") != "bool" or feature.get("shape") != [1]:
-                raise ValueError("action_validity_field must name a scalar boolean feature")
-            columns.append(validity)
+        validity = self.info.get("action_validity_fields", ()) if include_action else ()
+        for key in validity:
+            feature = self.info["features"].get(key, {})
+            if feature.get("dtype") != "bool" or feature.get("shape") not in (
+                [1], self.info["features"]["action"]["shape"]
+            ):
+                raise ValueError("Action validity fields must be scalar or per-coordinate booleans")
+            columns.append(key)
         self.context_fields = tuple(context_fields)
         if any(key not in self.info["features"] for key in self.context_fields):
             raise ValueError("Required context field is absent from the recording")
@@ -636,7 +641,7 @@ class AlohaMiniDataset(Dataset):
                 continue
             if validity:
                 action_rows = {*requested.get("action", [i]), *windows.get("past_action", [])}
-                if not all(np.asarray(self.rows[j][validity]).item() for j in action_rows):
+                if not all(np.all(self.rows[j][key]) for j in action_rows for key in validity):
                     continue
             self.sample_indices.append(i)
             for key, indices in requested.items():

@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alohamini.protocol import HostSnapshot
-from alohamini.rlt.control import feedback_after_command
+from alohamini.runtime.command_feedback import feedback_after_command
 from alohamini.schema import CommandIdentity
 
 

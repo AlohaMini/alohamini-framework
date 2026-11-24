@@ -13,7 +13,7 @@ import numpy as np
 from alohamini.datasets.image_statistics import ImageStatistics, sample_indices
 from alohamini.datasets.images import decode_host_image
 from alohamini.datasets.recording_video import encoder_settings
-from alohamini.rlt.storage import atomic_json, digest_file
+from alohamini.datasets.rlt.storage import atomic_json, digest_file
 
 
 def snapshot_directories(episode):

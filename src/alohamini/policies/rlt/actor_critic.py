@@ -3,10 +3,10 @@
 import copy
 
 import torch
-
-from alohamini.learning.stages import stage_optimizer
 from torch import nn
 from torch.nn import functional as F
+
+from alohamini.learning.stages import stage_optimizer
 
 AC_FORMAT = "alohamini-rlt-residual-ac-v1"
 
@@ -53,8 +53,12 @@ class ActorCritic:
         self.critic = TwinCritic(contract).to(config.device)
         self.target_actor = copy.deepcopy(self.actor).requires_grad_(False)
         self.target_critic = copy.deepcopy(self.critic).requires_grad_(False)
-        self.actor_optimizer = stage_optimizer(self.actor, lr=config.lr, steps=config.ac_steps, kind="adam", clip=10, decay=0)
-        self.critic_optimizer = stage_optimizer(self.critic, lr=config.lr, steps=config.ac_steps, kind="adam", clip=10, decay=0)
+        self.actor_optimizer = stage_optimizer(
+            self.actor, lr=config.lr, steps=config.ac_steps, kind="adam", clip=10, decay=0
+        )
+        self.critic_optimizer = stage_optimizer(
+            self.critic, lr=config.lr, steps=config.ac_steps, kind="adam", clip=10, decay=0
+        )
         self.updates = self.actor_updates = 0
 
     @torch.no_grad()

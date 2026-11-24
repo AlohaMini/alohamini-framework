@@ -19,7 +19,7 @@ from alohamini.datasets.lerobot_tools import (
 )
 from alohamini.datasets.lerobotv3 import DATA_PATH, EPISODE_PATH, VIDEO_PATH, _Stats
 from alohamini.datasets.record import _recording_contract, _write_json
-from alohamini.datasets.rlt.merge import ScoredEpisodeMerge
+from alohamini.datasets.v3_extensions import action_validity_fields, merge_handlers
 from alohamini.datasets.tools import _read_lock
 
 
@@ -46,6 +46,8 @@ def merge_v3(roots, output):
             for key in ("fps", "features", "robot_type"):
                 if source.info.get(key) != first.get(key):
                     raise ValueError(f"Cannot merge datasets with different {key}")
+            if action_validity_fields(source.info) != action_validity_fields(first):
+                raise ValueError("Cannot merge different action validity rules")
             if (annotation is None) != (annotations[0] is None):
                 raise ValueError("Cannot mix known and unknown robot calibration")
             if annotation is not None:
@@ -53,15 +55,10 @@ def merge_v3(roots, output):
                     if annotation.get(key) != annotations[0].get(key):
                         raise ValueError(f"Cannot merge different {key}")
                 a, b = (item["source_info"] for item in (annotations[0], annotation))
-                if a.get("action_validity_field") != b.get("action_validity_field"):
-                    raise ValueError("Cannot merge different action validity rules")
                 for key in ("robot_metadata", "features", "fixed_dimensions"):
                     if _recording_contract(a).get(key) != _recording_contract(b).get(key):
                         raise ValueError(f"Cannot merge datasets with different {key}")
-        extensions = [
-            handler(sources) for handler in (ScoredEpisodeMerge,)
-            if any(handler.key in source.info for source in sources)
-        ]
+        extensions = merge_handlers(sources)
         features = first["features"]
         numeric = {
             key: value

@@ -9,14 +9,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from alohamini.apps.rlt.console import ConsoleInput
+from alohamini.apps.rlt.control import RelativeLeader
+from alohamini.apps.rlt.runtime import ControlSession
 from alohamini.datasets.record import state_names
+from alohamini.datasets.rlt.storage import json_lines, load_snapshot, validate_training_episode
 from alohamini.model import get_robot_model
+from alohamini.policies.rlt.config import RLTConfig
 from alohamini.protocol import HostSnapshot
-from alohamini.rlt.config import RLTConfig
-from alohamini.rlt.console import ConsoleInput
-from alohamini.rlt.control import RelativeLeader, feedback_after_command
-from alohamini.rlt.runtime import ControlSession
-from alohamini.rlt.storage import json_lines, load_snapshot, validate_training_episode
+from alohamini.runtime.command_feedback import feedback_after_command
 from alohamini.schema import CommandIdentity
 
 
@@ -286,7 +287,7 @@ def test_collect_starts_on_valid_feedback_without_n_and_h_toggles(session):
 
 
 def test_collect_score_after_reset_waits_for_disk_and_new_observation(returning, monkeypatch):
-    from alohamini.rlt import storage
+    from alohamini.datasets.rlt import storage
 
     session, clock = returning
     end_episode(session, clock)
@@ -347,7 +348,7 @@ def test_collect_quit_or_failed_leader_at_start_creates_no_episode(session):
 
 
 def test_return_waits_until_terminal_is_durably_saved(returning, monkeypatch):
-    from alohamini.rlt import storage
+    from alohamini.datasets.rlt import storage
 
     session, clock = returning
     entered, release = threading.Event(), threading.Event()
@@ -634,9 +635,11 @@ def test_no_manual_start_hotkey_and_passive_only_config(tmp_path):
 
 
 @pytest.mark.parametrize("use_json", [False, True])
-def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(tmp_path, monkeypatch, use_json):
-    from alohamini.rlt import runtime
-    from alohamini.rlt.cli import main
+def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(
+    tmp_path, monkeypatch, use_json
+):
+    from alohamini.apps.rlt import runtime
+    from alohamini.apps.rlt.cli import main
 
     monkeypatch.chdir(tmp_path)
     saved = {}
@@ -650,18 +653,46 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(tmp_path, m
     if use_json:
         folder.mkdir()
         path = folder / "defaults.json"
-        path.write_text(json.dumps(dict(
-            host="test-host", calibration_dir="calibration", task="old task",
-            checkpoint="old-model", fixed_dimensions=["lift_axis"], fps=15,
-        )))
+        path.write_text(
+            json.dumps(
+                dict(
+                    host="test-host",
+                    calibration_dir="calibration",
+                    task="old task",
+                    checkpoint="old-model",
+                    fixed_dimensions=["lift_axis"],
+                    fps=15,
+                )
+            )
+        )
         args += ["--config", str(path)]
     else:
         args += ["--host", "test-host", "--calibration-dir", "calibration"]
     args += [
-        "--policy.path", "model", "--task", "place the orange module", "--output-dir", "episodes",
-        "--robot_model", "alohamini2pro", "--device", "cuda", "--fps", "30",
-        "--chunk-size", "15", "--policy.n_action_steps", "8", "--fixed-dimensions", "arm_right", "lift_axis",
-        "--left-port", "/dev/test-left", "--leader-id", "leader", "--resume",
+        "--policy.path",
+        "model",
+        "--task",
+        "place the orange module",
+        "--output-dir",
+        "episodes",
+        "--robot_model",
+        "alohamini2pro",
+        "--device",
+        "cuda",
+        "--fps",
+        "30",
+        "--chunk-size",
+        "15",
+        "--policy.n_action_steps",
+        "8",
+        "--fixed-dimensions",
+        "arm_right",
+        "lift_axis",
+        "--left-port",
+        "/dev/test-left",
+        "--leader-id",
+        "leader",
+        "--resume",
     ]
     assert main(args) == 0
     cfg = saved["config"]
@@ -671,14 +702,17 @@ def test_collect_cli_selects_task_checkpoint_hardware_and_fixed_axes(tmp_path, m
     assert cfg.fixed_dimensions == ["arm_right", "lift_axis"]
     assert (cfg.fps, cfg.chunk_size, cfg.execution_steps, cfg.device) == (30, 15, 8, "cuda")
     assert (cfg.host, cfg.robot_model, cfg.left_port, cfg.leader_id) == (
-        "test-host", "alohamini2pro", "/dev/test-left", "leader",
+        "test-host",
+        "alohamini2pro",
+        "/dev/test-left",
+        "leader",
     )
     assert cfg.calibration_dir == str((folder if use_json else tmp_path) / "calibration")
 
 
 def test_collect_command_runs_episode_scoring_and_cleanup_through_cli(tmp_path, monkeypatch):
-    from alohamini.rlt import runtime
-    from alohamini.rlt.cli import main
+    from alohamini.apps.rlt import runtime
+    from alohamini.apps.rlt.cli import main
 
     names = state_names("alohamini2pro")
     learned = [n for n in names if n.startswith("arm_left_")]

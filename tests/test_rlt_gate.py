@@ -9,15 +9,16 @@ import torch
 from test_rlt_collection import session as session
 from test_rlt_collection import snapshot, tick
 
-from alohamini.rlt import gate_training as gt
-from alohamini.rlt.cli import main
-from alohamini.rlt.config import RLTConfig
-from alohamini.rlt.gate import GateLatch, GripperRelease
-from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
-from alohamini.rlt.policy import RLTPolicy
-from alohamini.rlt.runtime import ControlSession
-from alohamini.rlt.storage import json_lines
+from alohamini.apps.rlt.cli import main
+from alohamini.apps.rlt.gate import GripperRelease
+from alohamini.apps.rlt.runtime import ControlSession
+from alohamini.datasets.rlt.storage import json_lines
 from alohamini.learning.stages import read_stage_weights as load_hashed_weights
+from alohamini.policies.rlt import gate_training as gt
+from alohamini.policies.rlt.config import RLTConfig
+from alohamini.policies.rlt.gate import GateLatch
+from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
+from alohamini.policies.rlt.policy import RLTPolicy
 
 CONTRACT = {"learned_names": ["left", "grip"], "token_spec": {"dim": 4}}
 
@@ -37,7 +38,9 @@ def _cfg(tmp_path):
     )
 
 
-def _prediction(control, sampled, *, plan_id, generation, length=3, probability=None, observation=None):
+def _prediction(
+    control, sampled, *, plan_id, generation, length=3, probability=None, observation=None
+):
     ref = np.tile([snapshot(sampled).payload[name] for name in control.names], (length, 1))
     axis = control.names.index(control.relative.names[0])
     ref[:, axis] = np.arange(1, length + 1)
@@ -190,7 +193,9 @@ def test_train_load_and_predict_auto_gate_without_second_policy_forward(tmp_path
     report = json.loads((weights.parent / "gate-validation.json").read_text())
     assert set(report["train_episodes"]).isdisjoint(report["validation_episodes"])
     selection = set(report["selection_episodes"])
-    assert selection and selection.isdisjoint(report["train_episodes"] + report["validation_episodes"])
+    assert selection and selection.isdisjoint(
+        report["train_episodes"] + report["validation_episodes"]
+    )
     assert all(
         h["best_bce"] == min(s["bce"] for s in h["scores"])
         for h in report["selection_history"].values()

@@ -1,7 +1,6 @@
-from contextlib import closing
-
 import io
 import json
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,13 +10,13 @@ import pytest
 import torch
 from PIL import Image
 
+from alohamini.apps.rlt.v3_worker import collection_publisher
 from alohamini.datasets.images import decode_host_image
+from alohamini.datasets.rlt import v3
+from alohamini.datasets.rlt.storage import save_snapshot
+from alohamini.datasets.rlt.v3_reader import V3Observations
+from alohamini.policies.rlt.replay import materialize_episode
 from alohamini.protocol import HostSnapshot
-from alohamini.rlt import v3
-from alohamini.rlt.replay import materialize_episode
-from alohamini.rlt.storage import save_snapshot
-from alohamini.rlt.v3_reader import V3Observations
-from alohamini.rlt.v3_worker import collection_publisher
 
 
 def _episode(root, sequence, *, scored=True):
@@ -194,7 +193,7 @@ def test_v3_append_recovers_partial_publication_and_is_idempotent(tmp_path, monk
 def test_platform_merge_and_action_training_use_scored_data(tmp_path):
     from alohamini.datasets.merge_v3 import merge_v3
     from alohamini.learning.data import AlohaMiniDataset
-    from alohamini.rlt.ac_training import scored_episodes
+    from alohamini.policies.rlt.ac_training import scored_episodes
 
     sources = []
     for number in (1, 2):
@@ -206,6 +205,7 @@ def test_platform_merge_and_action_training_use_scored_data(tmp_path):
     merge_v3(sources, merged)
     assert (merged / "recording.lock").is_file()
     for eid, reward, directory in scored_episodes(merged):
+        assert json.loads((directory / "episode.json").read_bytes())["episode_id"] == eid
         assert reward == 1
         with closing(V3Observations(directory)) as observations:
             snapshot, images = observations.read(4)
@@ -215,3 +215,39 @@ def test_platform_merge_and_action_training_use_scored_data(tmp_path):
     )
     assert [s["action"][0, 0].item() for s in samples] == [1, 2, 1, 2]
     assert samples.statistics(keys=["action"])["action"]["mean"][0] == 1.5
+
+
+def test_token_reads_recorded_task_and_observations_at_checkpoint_fps(tmp_path):
+    from alohamini.policies.rlt.training import TokenData
+
+    for i in (1, 2):
+        directory, _, _ = _episode(tmp_path, i)
+        summary = directory / "episode.json"
+        summary.write_text(json.dumps(dict(json.loads(summary.read_bytes()), task=f"task {i}")))
+    v3.export_v3(tmp_path)
+    root = tmp_path / "lerobot_v3"
+    native = SimpleNamespace(
+        manifest=dict(
+            training={},
+            state="none",
+            cameras=["chest"],
+            image_size=[32, 32],
+            temporal_sampling=dict(fps=15, downsample_rate=2),
+        ),
+        processor=lambda batch: batch,
+        fixed_input=lambda sample: sample,
+    )
+    config = SimpleNamespace(dataset=str(root), task="fallback", validation_fraction=0.5, seed=1)
+    data = TokenData(config, SimpleNamespace(native=native))
+    # Source frames 0 and 4: retain the terminal observation without supervising its action.
+    observations = sorted(
+        (data.dataset.locations[row], data.batch(i)["task"][0])
+        for i, row in enumerate(data.dataset.sample_indices)
+    )
+    assert observations == [
+        ((0, 0), "task 1"),
+        ((0, 4), "task 1"),
+        ((1, 0), "task 2"),
+        ((1, 4), "task 2"),
+    ]
+    assert all("action" not in data.batch(i) for i in range(4))

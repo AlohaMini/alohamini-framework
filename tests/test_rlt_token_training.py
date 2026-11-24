@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from alohamini.rlt import training
-from alohamini.rlt.config import RLTConfig
-from alohamini.rlt.networks import RLTokenDecoder, RLTokenEncoder
+from alohamini.policies.rlt import training
+from alohamini.policies.rlt.config import RLTConfig
+from alohamini.policies.rlt.networks import RLTokenDecoder, RLTokenEncoder
 
 
 def test_validation_covers_all_ten_episodes_and_endpoints():
@@ -125,6 +125,7 @@ def test_training_baseline_and_optimizer_use_separate_samples(tmp_path, monkeypa
     report = json.loads((tmp_path / "token-baseline-validation.json").read_text())
     assert report["checkpoint_step"] == 5000 and report["validation_frames"] == 2
     from alohamini.learning.stages import read_stage_weights
+
     assert read_stage_weights(tmp_path / "checkpoint")[0]["step"] == 3
 
 

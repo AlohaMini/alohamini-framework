@@ -10,22 +10,23 @@ from dataclasses import asdict
 from pathlib import Path
 
 from alohamini.apps.replay import TargetRanges
-from alohamini.apps.teleoperation import ready_units, stop_owned_robot
-from alohamini.client import HostClient, control_feedback_valid
-from alohamini.errors import ResponseTimeoutError
-from alohamini.fixed import FixedGuard, limits, restore
-from alohamini.remote.protocol import context_for
-from alohamini.rlt.console import ConsoleInput
-from alohamini.rlt.control import (
+from alohamini.apps.rlt.console import ConsoleInput
+from alohamini.apps.rlt.control import (
     ControlState,
     RelativeLeader,
     ReturnToStart,
-    feedback_after_command,
 )
-from alohamini.rlt.gate import GateLatch, GripperRelease
-from alohamini.rlt.storage import EpisodeRecorder, RunLock, atomic_json, recording_history
-from alohamini.rlt.v3_worker import collection_publisher
-from alohamini.rlt.workers import InferenceWorker, LeaderReader
+from alohamini.apps.rlt.gate import GripperRelease
+from alohamini.apps.rlt.v3_worker import collection_publisher
+from alohamini.apps.rlt.workers import InferenceWorker, LeaderReader
+from alohamini.apps.teleoperation import ready_units, stop_owned_robot
+from alohamini.client import HostClient, control_feedback_valid
+from alohamini.datasets.rlt.storage import EpisodeRecorder, RunLock, atomic_json, recording_history
+from alohamini.errors import ResponseTimeoutError
+from alohamini.fixed import FixedGuard, limits, restore
+from alohamini.policies.rlt.gate import GateLatch
+from alohamini.remote.protocol import context_for
+from alohamini.runtime.command_feedback import feedback_after_command
 from alohamini.schema import CommandIdentity
 
 HELP = "h 人工接管/交还 | 空格 暂停/继续 | 右箭头 结束并回位 | 0/1+回车 评分 | q 退出"
@@ -842,7 +843,10 @@ class ControlSession:
 def run(config, *, resume=False):
     if config.learned_action_names is not None:
         from alohamini.fixed import dimensions
-        if not set(config.learned_action_names) <= set(dimensions(["arm_left"], config.robot_model)):
+
+        if not set(config.learned_action_names) <= set(
+            dimensions(["arm_left"], config.robot_model)
+        ):
             raise ValueError("This passive-leader collector controls left-arm coordinates only")
     root = Path(config.output_dir)
     with ExitStack() as stack:
@@ -885,7 +889,7 @@ def run(config, *, resume=False):
                 f"已加载 RLT Actor，更新次数 {identity['version']}，SHA256 {identity['sha256']}。",
                 flush=True,
             )
-        from alohamini.rlt.policy import require_contract
+        from alohamini.policies.rlt.policy import require_contract
 
         for summary in history:
             try:

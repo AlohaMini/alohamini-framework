@@ -9,15 +9,15 @@ from test_rlt_collection import session as session
 from test_rlt_collection import snapshot, tick
 from test_rlt_v3 import _episode
 
-from alohamini.rlt import ac_training
-from alohamini.rlt.actor_critic import AC_FORMAT, ActorCritic
-from alohamini.rlt.cli import main
-from alohamini.rlt.config import RLTConfig
-from alohamini.rlt.policy import RLTPolicy
-from alohamini.rlt.replay import materialize_episode
-from alohamini.rlt.storage import json_lines
-from alohamini.rlt.v3 import export_v3
-from alohamini.rlt.workers import _inference_process
+from alohamini.apps.rlt.cli import main
+from alohamini.apps.rlt.workers import _inference_process
+from alohamini.datasets.rlt.storage import json_lines
+from alohamini.datasets.rlt.v3 import export_v3
+from alohamini.policies.rlt import ac_training
+from alohamini.policies.rlt.actor_critic import AC_FORMAT, ActorCritic
+from alohamini.policies.rlt.config import RLTConfig
+from alohamini.policies.rlt.policy import RLTPolicy
+from alohamini.policies.rlt.replay import materialize_episode
 
 CONTRACT = dict(
     names=["left", "right"], learned_names=["left"], token_spec=dict(dim=2), chunk_size=2
@@ -167,6 +167,7 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
     ]
     assert main(args) == 0
     from alohamini.learning.stages import read_stage_weights
+
     saved, _ = read_stage_weights(out / "actor")
     split = saved["split"]
     assert set(split["episodes"]) == {f"{i:032x}" for i in range(4)}
@@ -190,9 +191,19 @@ def test_scored_episode_cli_trains_and_deploys(tmp_path, monkeypatch, v3):
         for component in ("actor", "critic"):
             for key, param in saved[component].items():
                 torch.testing.assert_close(param, restored[component][key], rtol=0, atol=0)
+
         def state(directory):
-            return torch.load(directory / "checkpoints/last/training_state/state.pt", weights_only=True)
-        for key in ("sampler_rng", "target_actor", "target_critic", "actor_optimizer", "critic_optimizer"):
+            return torch.load(
+                directory / "checkpoints/last/training_state/state.pt", weights_only=True
+            )
+
+        for key in (
+            "sampler_rng",
+            "target_actor",
+            "target_critic",
+            "actor_optimizer",
+            "critic_optimizer",
+        ):
             torch.testing.assert_close(state(out)[key], state(resumed)[key], rtol=0, atol=0)
     policy = _policy(cfg)
     snap = SimpleNamespace(payload={"left": 1.0}, images={"chest": None})
@@ -256,7 +267,7 @@ def test_inference_worker_passes_the_requested_stage(monkeypatch):
     policy = Mock()
     policy.native.manifest = {"cameras": []}
     policy.predict.return_value = {}
-    monkeypatch.setattr("alohamini.rlt.policy.RLTPolicy", lambda _: policy)
+    monkeypatch.setattr("alohamini.policies.rlt.policy.RLTPolicy", lambda _: policy)
     snap = SimpleNamespace(request_started_s=0.0)
     jobs, results = Mock(), Mock()
     jobs.get.side_effect = [

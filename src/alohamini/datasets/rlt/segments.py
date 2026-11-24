@@ -16,10 +16,20 @@ def training_ranges(summary, step_count):
     result = []
     previous_stop = 0
     for segment in segments:
-        if not isinstance(segment, dict) or not isinstance(segment.get("name"), str) or not segment["name"].strip():
+        if (
+            not isinstance(segment, dict)
+            or not isinstance(segment.get("name"), str)
+            or not segment["name"].strip()
+        ):
             raise ValueError("Training segment is missing a name")
-        start, stop, reward = (segment.get(k) for k in ("start_frame", "end_frame_exclusive", "reward"))
-        if type(start) is not int or type(stop) is not int or not previous_stop <= start < stop <= step_count:
+        start, stop, reward = (
+            segment.get(k) for k in ("start_frame", "end_frame_exclusive", "reward")
+        )
+        if (
+            type(start) is not int
+            or type(stop) is not int
+            or not previous_stop <= start < stop <= step_count
+        ):
             raise ValueError(f"Invalid or overlapping training interval [{start}, {stop})")
         if type(reward) is not int or reward not in (0, 1):
             raise ValueError("Training segment needs a binary outcome")

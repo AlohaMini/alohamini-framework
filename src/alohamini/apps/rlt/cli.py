@@ -4,13 +4,13 @@ import argparse
 from dataclasses import fields
 from pathlib import Path
 
-from alohamini.rlt.config import RLTConfig
+from alohamini.policies.rlt.config import RLTConfig
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="alohamini rlt")
     commands = parser.add_subparsers(dest="command", required=True)
-    collect = commands.add_parser("collect", help="用 π0.5 连续采集可人工接管的回合")
+    collect = commands.add_parser("collect", help="采集可人工接管、评分的回合")
     collect.add_argument("--config", help="可选的采集默认配置。命令行显式参数优先")
     collect.add_argument(
         "--policy.path", "--checkpoint", dest="checkpoint", help="基座 checkpoint 目录"
@@ -20,11 +20,11 @@ def main(argv=None):
     collect.add_argument("--robot_model", "--robot-model", dest="robot_model", help="机器人型号")
     collect.add_argument("--device", help="推理设备，例如 cuda")
     collect.add_argument("--fps", type=float, help="控制频率，须与 checkpoint 一致")
+    collect.add_argument("--chunk-size", dest="chunk_size", type=int, help="每个动作块的步数")
     collect.add_argument(
-        "--chunk-size", dest="chunk_size", type=int, help="每个动作块的步数"
-    )
-    collect.add_argument(
-        "--fixed-dimensions", nargs="+", metavar="DIM",
+        "--fixed-dimensions",
+        nargs="+",
+        metavar="DIM",
         help="使用 checkpoint 保存的固定目标，例如 arm_right lift_axis",
     )
     collect.add_argument("--policy.n_action_steps", dest="execution_steps", type=int)
@@ -85,21 +85,24 @@ def main(argv=None):
         command.add_argument("--batch_size", dest=stage + "_batch_size", type=int)
         command.add_argument("--device")
         command.add_argument("--lr", type=float)
+        command.add_argument("--tf32", action=argparse.BooleanOptionalAction, default=None)
         command.add_argument("--seed", type=int)
         command.add_argument("--mixed_precision", choices=("none", "bfloat16", "float16"))
-    ac.add_argument("--save_freq", type=int)
+    for command in (ac, train):
+        command.add_argument("--save_freq", type=int)
     export = commands.add_parser("export-v3", help="将已评分的回合补存为 LeRobot v3")
     export.add_argument("--output-dir", required=True, help="原始 RLT 采集目录")
     args = parser.parse_args(argv)
     if args.command == "export-v3":
-        from alohamini.rlt.v3 import export_v3
+        from alohamini.datasets.rlt.v3 import export_v3
 
         info = export_v3(args.output_dir)
         count = info["total_episodes"] if info else 0
-        print(f"LeRobot v3 共 {count} 个已评分回合，目录 {Path(args.output_dir).expanduser() / 'lerobot_v3'}")
+        directory = Path(args.output_dir).expanduser() / "lerobot_v3"
+        print(f"LeRobot v3 共 {count} 个已评分回合，目录 {directory}")
         return 0
     if args.command == "collect" and (args.score_episode is not None or args.reward is not None):
-        from alohamini.rlt.storage import RunLock, commit_episode
+        from alohamini.datasets.rlt.storage import RunLock, commit_episode
 
         episode = args.score_episode or ""
         if (
@@ -117,7 +120,7 @@ def main(argv=None):
         with RunLock(root / "control.lock"):
             target = commit_episode(root / "pending" / episode, args.reward)
         print(f"已提交回合 {target}")
-        from alohamini.rlt.v3 import export_v3
+        from alohamini.datasets.rlt.v3 import export_v3
 
         export_v3(root)
         return 0
@@ -128,23 +131,25 @@ def main(argv=None):
         if vars(args).get(field.name) is not None
     }
     if not args.config and not {"checkpoint", "task", "output_dir"} <= overrides.keys():
-        parser.error("直接采集需要 --policy.path、--task 和 --output-dir，也可用 --config 提供默认值")
+        parser.error(
+            "直接采集需要 --policy.path、--task 和 --output-dir，也可用 --config 提供默认值"
+        )
     stage = args.command.removeprefix("train-") if args.command.startswith("train-") else None
     config = RLTConfig.read(args.config, stage=stage, **overrides)
     if args.command == "train-token":
-        from alohamini.rlt.training import train_token
+        from alohamini.policies.rlt.training import train_token
 
         train_token(config, baseline_checkpoint=args.baseline_checkpoint)
     elif args.command == "train-gate":
-        from alohamini.rlt.gate_training import train_gate
+        from alohamini.policies.rlt.gate_training import train_gate
 
         train_gate(config, intervals=args.intervals)
     elif args.command == "train-ac":
-        from alohamini.rlt.ac_training import train_ac
+        from alohamini.policies.rlt.ac_training import train_ac
 
         train_ac(config, resume=args.resume)
     else:
-        from alohamini.rlt.runtime import run
+        from alohamini.apps.rlt.runtime import run
 
         run(config, resume=args.resume)
     return 0

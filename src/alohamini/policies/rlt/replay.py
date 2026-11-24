@@ -5,13 +5,14 @@ from pathlib import Path
 
 import numpy as np
 
-from alohamini.rlt.policy import encode_physical, pad_actions, require_contract
-from alohamini.rlt.segments import training_ranges
-from alohamini.rlt.storage import (
+from alohamini.datasets.rlt.segments import training_ranges
+from alohamini.datasets.rlt.storage import (
     json_lines,
     load_snapshot,
     validate_training_episode,
 )
+from alohamini.policies.rlt.policy import encode_physical, pad_actions, require_contract
+
 
 def command_key(command):
     return tuple(
@@ -76,7 +77,8 @@ def materialize_episode(policy, directory, on_boundary=lambda: None):
     directory = Path(directory)
     if (directory / "v3.json").is_file():
         from contextlib import closing
-        from alohamini.rlt.v3_reader import V3Observations
+
+        from alohamini.datasets.rlt.v3_reader import V3Observations
 
         cameras = getattr(policy.native, "manifest", {}).get("cameras")
         with closing(V3Observations(directory, cameras)) as observations:
@@ -86,7 +88,11 @@ def materialize_episode(policy, directory, on_boundary=lambda: None):
 
 def _materialize(policy, directory, on_boundary, observations):
     summary = json.loads((directory / "episode.json").read_text(encoding="utf-8"))
-    if summary.get("status") != "committed" or not summary.get("ended") or summary.get("evaluation"):
+    if (
+        summary.get("status") != "committed"
+        or not summary.get("ended")
+        or summary.get("evaluation")
+    ):
         raise ValueError("Replay only accepts ended and manually scored episodes")
     if type(summary.get("reward")) is not int or summary["reward"] not in (0, 1):
         raise ValueError("Missing binary episode reward")
@@ -99,16 +105,32 @@ def _materialize(policy, directory, on_boundary, observations):
     for start, stop, reward in ranges:
         result.extend(
             _materialize_range(
-                policy, directory, on_boundary, observations, summary,
-                rows[start:stop], outcomes, stop, len(rows), reward,
+                policy,
+                directory,
+                on_boundary,
+                observations,
+                summary,
+                rows[start:stop],
+                outcomes,
+                stop,
+                len(rows),
+                reward,
             )
         )
     return result
 
 
 def _materialize_range(
-    policy, directory, on_boundary, observations, summary, rows, outcomes,
-    stop, episode_length, reward,
+    policy,
+    directory,
+    on_boundary,
+    observations,
+    summary,
+    rows,
+    outcomes,
+    stop,
+    episode_length,
+    reward,
 ):
     names = policy.native.names
     learned = policy.contract["learned_names"]

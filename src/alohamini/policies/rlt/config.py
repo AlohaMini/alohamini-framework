@@ -83,6 +83,7 @@ class RLTConfig:
     token_dim: int = 2048
     token_layers: int = 4
     token_heads: int = 8
+    tf32: bool = True
     mixed_precision: str = "none"
     save_freq: int = 1000
     learned_action_names: list[str] | None = None
@@ -157,16 +158,22 @@ class RLTConfig:
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError("seed must be a nonnegative integer")
         if self.learned_action_names is not None and (
-            not isinstance(self.learned_action_names, list) or not self.learned_action_names
+            not isinstance(self.learned_action_names, list)
+            or not self.learned_action_names
             or any(not isinstance(n, str) or not n for n in self.learned_action_names)
             or len(set(self.learned_action_names)) != len(self.learned_action_names)
         ):
             raise ValueError("learned_action_names must be a list of distinct named fields")
+        if type(self.tf32) is not bool:
+            raise ValueError("tf32 must be a boolean")
         if self.mixed_precision not in {"none", "bfloat16", "float16"}:
             raise ValueError("Invalid mixed_precision")
         if type(self.save_freq) is not int or self.save_freq < 1:
             raise ValueError("save_freq must be positive")
-        if self.execution_steps is not None and (type(self.execution_steps) is not int or not 1 <= self.execution_steps <= self.chunk_size):
+        if self.execution_steps is not None and (
+            type(self.execution_steps) is not int
+            or not 1 <= self.execution_steps <= self.chunk_size
+        ):
             raise ValueError("execution_steps must be within chunk_size")
         if self.token_dim % self.token_heads:
             raise ValueError("token_dim must be divisible by token_heads")
@@ -257,8 +264,13 @@ class RLTConfig:
                 f"Invalid RLT settings; unknown={sorted(unknown)}, missing={sorted(missing)}"
             )
         for name in (
-            "checkpoint", "output_dir", "token_checkpoint", "actor_checkpoint", "gate_checkpoint",
-            "dataset", "calibration_dir",
+            "checkpoint",
+            "output_dir",
+            "token_checkpoint",
+            "actor_checkpoint",
+            "gate_checkpoint",
+            "dataset",
+            "calibration_dir",
         ):
             if data.get(name):
                 if not isinstance(data[name], str):

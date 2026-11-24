@@ -221,6 +221,7 @@ See each policy directory for training commands, weight preparation, and policy-
 | <a id="leworldmodel"></a>[LeWorldModel](../src/alohamini/policies/lewm/README.md) | `lewm` |
 | <a id="smolvla"></a>[SmolVLA](../src/alohamini/policies/smolvla/README.md) | `smolvla` |
 | <a id="π05"></a>[π0.5](../src/alohamini/policies/pi05/README.md) | `pi05` |
+| [RLT (offline residual actor)](../src/alohamini/policies/rlt/README.md) | `alohamini rlt` |
 | [π0](../src/alohamini/policies/pi0/README.md) | `pi0` |
 | [π0-FAST](../src/alohamini/policies/pi0_fast/README.md) | `pi0_fast` |
 | [EO-1](../src/alohamini/policies/eo1/README.md) | `eo1` |

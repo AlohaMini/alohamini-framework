@@ -2,8 +2,8 @@
 
 import hashlib
 import json
-from copy import deepcopy
 from contextlib import closing, nullcontext
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,12 +11,13 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from alohamini.learning.stages import supervised_stage, save_stage_checkpoint
-from alohamini.rlt.ac_training import scored_episodes, split_episodes
-from alohamini.rlt.gate import GateLatch
-from alohamini.rlt.gate_classifier import GATE_FORMAT, StageClassifier
-from alohamini.rlt.policy import RLTPolicy, require_contract
-from alohamini.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.datasets.rlt.storage import RunLock, atomic_json, json_lines, load_snapshot
+from alohamini.learning.precision import tf32_context
+from alohamini.learning.stages import save_stage_checkpoint, supervised_stage
+from alohamini.policies.rlt.ac_training import scored_episodes, split_episodes
+from alohamini.policies.rlt.gate import GateLatch
+from alohamini.policies.rlt.gate_classifier import GATE_FORMAT, StageClassifier
+from alohamini.policies.rlt.policy import RLTPolicy, require_contract
 
 
 def _signature(segment):
@@ -116,7 +117,7 @@ def _encode(episode, policy, config, extra_strides=()):
     require_contract(episode["summary"]["base_contract"], policy.contract)
     source = nullcontext(None)
     if (path / "v3.json").exists():
-        from alohamini.rlt.v3_reader import V3Observations
+        from alohamini.datasets.rlt.v3_reader import V3Observations
 
         source = closing(V3Observations(path, policy.native.manifest["cameras"]))
     tokens, states = [], []
@@ -185,9 +186,7 @@ def _assessment(samples, scores, config, fps, stride=None):
         tn += int((~pred & ~truth).sum())
         # A new run begins after any unsupervised gap as well as after an inactive prediction.
         starts = np.flatnonzero(pred & ~np.r_[False, pred[:-1] & contiguous]) if len(pred) else []
-        stops = (
-            np.flatnonzero(pred & ~np.r_[pred[1:] & contiguous, False]) + 1 if len(pred) else []
-        )
+        stops = np.flatnonzero(pred & ~np.r_[pred[1:] & contiguous, False]) + 1 if len(pred) else []
         previous_stop = None
         for name, begin, end, _ in e["spans"]:
             prior_end, previous_stop = previous_stop, end
@@ -256,7 +255,7 @@ def train_gate(config, *, intervals=None):
     out = Path(config.output_dir).resolve()
     if out == dataset:
         raise ValueError("Use a separate gate output directory")
-    with RunLock(out / "gate.lock"):
+    with RunLock(out / "gate.lock"), tf32_context(config.tf32):
         checkpoint = out / "gate"
         if checkpoint.exists() or (out / "checkpoints").exists():
             raise FileExistsError(f"Gate checkpoint already exists at {checkpoint}")
@@ -308,20 +307,35 @@ def train_gate(config, *, intervals=None):
             torch.manual_seed(config.seed)
             rng = torch.Generator(device=config.device).manual_seed(config.seed)
             model = StageClassifier(contract, mode).to(config.device)
-            def objective(probe, batch):
-                return F.binary_cross_entropy_with_logits(probe(batch["z"], batch["state"]), batch["y"])
 
-            with supervised_stage(model, objective, device=config.device, lr=config.lr,
-                                  steps=config.gate_steps, clip=10, precision=config.mixed_precision) as update:
+            def objective(probe, batch):
+                return F.binary_cross_entropy_with_logits(
+                    probe(batch["z"], batch["state"]), batch["y"]
+                )
+
+            with supervised_stage(
+                model,
+                objective,
+                device=config.device,
+                lr=config.lr,
+                steps=config.gate_steps,
+                clip=10,
+                precision=config.mixed_precision,
+            ) as update:
                 best_loss, best_step, stale = float("inf"), 0, 0
                 history = []
                 sizes = [len(data[e]["y"]) for e in selection_ids]
                 for step in range(1, config.gate_steps + 1):
                     model.train()
                     idx = torch.randint(
-                        len(train["y"]), (config.gate_batch_size,), generator=rng, device=config.device
+                        len(train["y"]),
+                        (config.gate_batch_size,),
+                        generator=rng,
+                        device=config.device,
                     )
-                    update({"z": train["z"][idx], "state": train["state"][idx], "y": train["y"][idx]})
+                    update(
+                        {"z": train["z"][idx], "state": train["state"][idx], "y": train["y"][idx]}
+                    )
                     if step == 1 or step % 25 == 0 or step == config.gate_steps:
                         model.eval()
                         with torch.no_grad():
@@ -329,7 +343,9 @@ def train_gate(config, *, intervals=None):
                             errors = F.binary_cross_entropy_with_logits(
                                 held, selection["y"], reduction="none"
                             )
-                            score = torch.stack([v.mean() for v in errors.split(sizes)]).mean().item()
+                            score = (
+                                torch.stack([v.mean() for v in errors.split(sizes)]).mean().item()
+                            )
                         if not np.isfinite(score):
                             raise ValueError("Nonfinite gate selection loss")
                         history.append(dict(step=step, bce=score))
@@ -360,13 +376,17 @@ def train_gate(config, *, intervals=None):
             }
         atomic_json(out / "gate-validation.json", report)
         save_stage_checkpoint(
-            out, step, {"classifier": model},
+            out,
+            step,
+            {"classifier": model},
             dict(
                 format=GATE_FORMAT,
                 contract=contract,
                 token_sha256=sha,
                 validation=report,
-            ), config.to_dict(), aliases=("gate",),
+            ),
+            config.to_dict(),
+            aliases=("gate",),
         )
         print(
             f"Gate saved at {checkpoint}; held-out results: {out / 'gate-validation.json'}",

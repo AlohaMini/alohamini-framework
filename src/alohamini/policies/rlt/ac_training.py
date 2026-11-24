@@ -9,12 +9,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from alohamini.rlt.actor_critic import AC_FORMAT, ActorCritic
-from alohamini.rlt.policy import RLTPolicy
-from alohamini.rlt.replay import materialize_episode
+from alohamini.datasets.rlt.storage import RunLock
+from alohamini.learning.precision import tf32_context
 from alohamini.learning.stages import read_stage_weights, save_stage_checkpoint
 from alohamini.learning.training_state import restore_rng
-from alohamini.rlt.storage import RunLock
+from alohamini.policies.rlt.actor_critic import AC_FORMAT, ActorCritic
+from alohamini.policies.rlt.policy import RLTPolicy
+from alohamini.policies.rlt.replay import materialize_episode
 
 
 def scored_episodes(root):
@@ -125,7 +126,7 @@ def train_ac(config, *, resume=False):
     if root == dataset:
         raise ValueError("Use a separate AC output directory")
     candidates = scored_episodes(dataset)
-    with RunLock(root / "ac.lock"):
+    with RunLock(root / "ac.lock"), tf32_context(config.tf32):
         checkpoint = root / "actor"
         last = root / "checkpoints/last"
         if config.mixed_precision != "none":
@@ -175,18 +176,38 @@ def train_ac(config, *, resume=False):
                 signature.update(memoryview(value.contiguous().numpy()).cast("B"))
         settings = config.to_dict()
         identity = {
-            k: v for k, v in settings.items()
-            if k not in ("ac_steps", "save_freq", "output_dir")
+            k: settings[k]
+            for k in (
+                "seed",
+                "lr",
+                "ac_batch_size",
+                "ac_gamma",
+                "ac_tau",
+                "ac_bc_weight",
+                "ac_residual_limit",
+                "replay_stride",
+                "validation_fraction",
+                "mixed_precision",
+                "tf32",
+            )
         }
         start = 0
         if resume:
             path = last.resolve(strict=True)
             saved, _ = read_stage_weights(path / "pretrained_model")
-            state = torch.load(path / "training_state/state.pt", map_location="cpu", weights_only=True)
-            if (saved["contract"] != contract or saved["token_sha256"] != token_sha
-                    or state["identity"] != identity or saved["split"] != split
-                    or state["replay_sha256"] != signature.hexdigest()):
-                raise ValueError("Resume requires the original replay, base, token and training settings")
+            state = torch.load(
+                path / "training_state/state.pt", map_location="cpu", weights_only=True
+            )
+            if (
+                saved["contract"] != contract
+                or saved["token_sha256"] != token_sha
+                or state["identity"] != identity
+                or saved["split"] != split
+                or state["replay_sha256"] != signature.hexdigest()
+            ):
+                raise ValueError(
+                    "Resume requires the original replay, base, token and training settings"
+                )
             start = state["step"]
             if config.ac_steps <= start:
                 raise ValueError("Resume requires ac_steps greater than the saved step")
@@ -222,16 +243,33 @@ def train_ac(config, *, resume=False):
                     print(f"AC update {step} {metrics}", flush=True)
                 if step == config.ac_steps or step % config.save_freq == 0:
                     log.flush()
-                    training = dict(identity=identity, replay_sha256=signature.hexdigest(),
-                                    log_bytes=log.buffer.tell(), sampler_rng=rng.get_state())
+                    training = dict(
+                        identity=identity,
+                        replay_sha256=signature.hexdigest(),
+                        log_bytes=log.buffer.tell(),
+                        sampler_rng=rng.get_state(),
+                    )
                     for name in models:
                         training["target_" + name] = getattr(learner, "target_" + name).state_dict()
-                        training[name + "_optimizer"] = getattr(learner, name + "_optimizer").state_dict()
+                        training[name + "_optimizer"] = getattr(
+                            learner, name + "_optimizer"
+                        ).state_dict()
                     save_stage_checkpoint(
-                        root, step, models,
-                        dict(format=AC_FORMAT, contract=contract, token_sha256=token_sha,
-                             residual_limit=config.ac_residual_limit, actor_updates=learner.actor_updates,
-                             critic_updates=learner.updates, split=split, metrics=metrics),
-                        settings, training=training, aliases=("actor",),
+                        root,
+                        step,
+                        models,
+                        dict(
+                            format=AC_FORMAT,
+                            contract=contract,
+                            token_sha256=token_sha,
+                            residual_limit=config.ac_residual_limit,
+                            actor_updates=learner.actor_updates,
+                            critic_updates=learner.updates,
+                            split=split,
+                            metrics=metrics,
+                        ),
+                        settings,
+                        training=training,
+                        aliases=("actor",),
                     )
         return checkpoint

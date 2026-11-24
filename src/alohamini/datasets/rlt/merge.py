@@ -9,6 +9,7 @@ from alohamini.datasets.record import _write_json
 
 class ScoredEpisodeMerge:
     key = "alohamini_rlt"
+    action_validity_fields = ("rlt.action_valid", "rlt.applied_mask")
 
     def __init__(self, sources):
         self.ids = []

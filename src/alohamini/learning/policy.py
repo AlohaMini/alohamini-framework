@@ -514,6 +514,12 @@ class NativePolicy:
             )
         return self._query_language_batch(batch, kind=kind, question=question, camera=camera)
 
+    def prepare_snapshot(self, snapshot, *, rgb_images=None):
+        """Prepare a bound Host observation, optionally using already-decoded RGB frames."""
+        if not self._robot_bound:
+            self.bind_robot(snapshot)
+        return self._observation_batch(snapshot, rgb_images=rgb_images)
+
     def _observation_batch(
         self, snapshot, *, history=True, preprocess=True, language_control=True, rgb_images=None,
     ):
