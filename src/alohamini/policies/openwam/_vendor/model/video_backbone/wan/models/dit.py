@@ -315,6 +315,25 @@ class Head(nn.Module):
         return x
 
 
+class WanPatchEmbedding(nn.Conv3d):
+    """Project non-overlapping video patches using the checkpoint's Conv3d weights."""
+
+    def __init__(self, in_channels, out_channels, patch_size):
+        super().__init__(in_channels, out_channels, kernel_size=patch_size, stride=patch_size)
+
+    def forward(self, x):
+        if x.device.type != "cpu" or (
+            x.dtype != torch.bfloat16 and not torch.is_autocast_enabled("cpu")
+        ):
+            return super().forward(x)
+        # oneDNN BF16 Conv3d can corrupt small patch grids on Xeon. The equivalent
+        # per-patch linear projection preserves weight layout, autocast and gradients.
+        pt, ph, pw = self.kernel_size
+        patches = x.unfold(2, pt, pt).unfold(3, ph, ph).unfold(4, pw, pw)
+        patches = patches.permute(0, 2, 3, 4, 1, 5, 6, 7).flatten(4)
+        return F.linear(patches, self.weight.flatten(1), self.bias).movedim(-1, 1)
+
+
 class WanModel(torch.nn.Module):
     def __init__(
         self,
@@ -349,7 +368,7 @@ class WanModel(torch.nn.Module):
         self.require_clip_embedding = require_clip_embedding
         self.fuse_vae_embedding_in_latents = fuse_vae_embedding_in_latents
 
-        self.patch_embedding = nn.Conv3d(in_dim, dim, kernel_size=patch_size, stride=patch_size)
+        self.patch_embedding = WanPatchEmbedding(in_dim, dim, patch_size)
         self.text_embedding = nn.Sequential(nn.Linear(text_dim, dim), nn.GELU(approximate="tanh"), nn.Linear(dim, dim))
         self.time_embedding = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))

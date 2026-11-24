@@ -245,5 +245,39 @@ class NativeNetworkTests(unittest.TestCase):
             component.config_class(**{**options, "camera_layout": ["unknown", None, None]})
 
 
+def test_openwam_bfloat16_patch_embedding_matches_convolution():
+    from torch.nn import functional as F
+
+    from alohamini.policies.openwam._vendor.model.video_backbone.wan.models.dit import (
+        WanPatchEmbedding,
+    )
+
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(42)
+        reference = torch.nn.Conv3d(48, 32, (1, 2, 2), stride=(1, 2, 2)).bfloat16()
+        layer = WanPatchEmbedding(48, 32, (1, 2, 2)).bfloat16()
+        layer.load_state_dict(reference.state_dict())
+        for batch in (1, 2):
+            x = torch.randn(batch, 48, 2, 6, 2, dtype=torch.bfloat16, requires_grad=True)
+            # Accumulate a reference convolution in FP32 on the exact BF16 inputs.
+            expected = F.conv3d(
+                x.float(), layer.weight.float(), layer.bias.float(), stride=layer.stride
+            )
+            actual = layer(x)
+            assert actual.dtype == torch.bfloat16
+            torch.testing.assert_close(actual.float(), expected, rtol=0.008, atol=0.008)
+            params = (x, layer.weight, layer.bias)
+            delta = torch.randn_like(actual)
+            expected_grad = torch.autograd.grad(expected, params, delta.float())
+            actual_grad = torch.autograd.grad(actual, params, delta)
+            for result, target in zip(actual_grad, expected_grad, strict=True):
+                torch.testing.assert_close(result, target, rtol=0.01, atol=0.02)
+
+            with torch.autocast("cpu", dtype=torch.bfloat16):
+                amp_result = layer.float()(x.float())
+            torch.testing.assert_close(amp_result, actual)
+            layer.bfloat16()
+
+
 if __name__ == "__main__":
     unittest.main()
