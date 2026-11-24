@@ -6,6 +6,9 @@ on:
     paths:
       - "env/*win-64.*"
       - "src/alohamini/environment.py"
+      - "src/alohamini/filesystem.py"
+      - "src/alohamini/datasets/**"
+      - "src/alohamini/learning/**"
       - "src/alohamini/feature_environment.py"
       - ".github/workflows/windows-pc.yml"
   workflow_dispatch:

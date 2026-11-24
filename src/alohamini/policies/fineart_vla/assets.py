@@ -1,6 +1,5 @@
 """Train-only FAST fitting with deterministic sampling and atomic local cache publication."""
 
-import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +11,7 @@ import numpy as np
 import scipy
 import tokenizers
 
+from alohamini.filesystem import lock_file
 from alohamini.learning.processor import Processor
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.pi05.fast_fitting import fit_fast, validate_fast
@@ -76,7 +76,7 @@ def prepare_fast_assets(options, samples, stats):
     root.mkdir(parents=True, exist_ok=True)
     destination = root / fingerprint
     with (root / f"{fingerprint}.lock").open("a+b") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, blocking=True)
         if destination.exists():
             report = json.loads((destination / "fit_report.json").read_text())
             if report.get("fingerprint") != fingerprint or report.get("files") != file_hashes(

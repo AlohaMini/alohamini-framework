@@ -7,6 +7,8 @@ import shutil
 import tempfile
 from collections import OrderedDict
 from pathlib import Path
+
+from alohamini.filesystem import lock_file
 from threading import RLock
 
 import torch
@@ -87,7 +89,6 @@ def prepare_features(root, signature, keys, producer, *, batch_size=8):
     Keys are exact canonical strings. ``producer`` returns one immutable tensor
     for each requested key; model-specific tokenization stays outside this module.
     """
-    import fcntl
 
     if type(batch_size) is not int or batch_size < 1:
         raise ValueError("Frozen feature batch size must be a positive integer")
@@ -107,7 +108,7 @@ def prepare_features(root, signature, keys, producer, *, batch_size=8):
     root.mkdir(parents=True, exist_ok=True)
     path = root / digest
     with (root / (digest + ".lock")).open("a+b") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, blocking=True)
         if path.exists():
             report = _load_manifest(path)
             if report["identity"] != identity:

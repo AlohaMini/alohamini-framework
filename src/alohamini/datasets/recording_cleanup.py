@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from alohamini.datasets.recording_index import _path, read_recording_index
+from alohamini.filesystem import sync_directory
 
 _GLOBALS = {
     f"meta/{name}" for name in ("info.json", "stats.json", "tasks.parquet", "alohamini.json")
@@ -283,11 +284,7 @@ def _sync_parents(paths):
     for parent in {path.parent for path in paths}:
         if not parent.is_dir():
             continue
-        descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        sync_directory(parent)
 
 
 def discard_interrupted_recording(root, source_info):

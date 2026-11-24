@@ -8,7 +8,6 @@ dataset_tools._keep_episodes_from_video_with_av. No capture or control work runs
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import logging
@@ -23,6 +22,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from alohamini.filesystem import lock_file
 from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import _write_json
 from alohamini.datasets.recording_video import encoder_settings
@@ -464,7 +464,7 @@ def generate_previews(root: Path, output: Path | None = None) -> dict:
             }
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / ".lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock)
             generated = reused = 0
             for index in range(checker.num_episodes):
                 episode = root / "episodes" / f"episode_{index:06d}"

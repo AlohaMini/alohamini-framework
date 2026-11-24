@@ -7,7 +7,6 @@ Accelerate DDP/AMP, accumulation and resumable per-rank state. Dataset/policy fa
 use AlohaMini interfaces; no Hub or robot connection.
 """
 
-import fcntl
 import json
 import logging
 import os
@@ -32,6 +31,7 @@ import numpy as np
 import torch
 from accelerate import __version__ as accelerate_version
 
+from alohamini.filesystem import lock_file
 from alohamini.learning.checkpoint import (
     initialize_policy,
     read_checkpoint,
@@ -456,7 +456,7 @@ def _train(settings, execution, *, interaction=None):
     with (output / "training.lock").open("a+b") if execution.main else nullcontext() as run_lock:
         try:
             if execution.main:
-                fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(run_lock)
         except BlockingIOError as exc:
             raise RuntimeError("Another trainer is using this output directory") from exc
         if interaction is not None:

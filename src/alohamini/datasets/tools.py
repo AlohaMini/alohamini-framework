@@ -9,7 +9,6 @@ and journals, not LeRobot v3 metadata or video ranges.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import re
@@ -25,6 +24,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
+from alohamini.filesystem import lock_file
 from alohamini.datasets.images import (
     IMAGE_COLOR,
     IMAGE_FORMAT,
@@ -56,7 +56,7 @@ def _read_lock(root: Path):
     # Do not create files during inspection or read a changing recording.
     with (root / "recording.lock").open("rb") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            lock_file(lock, exclusive=False)
         except BlockingIOError as exc:
             raise RuntimeError(
                 "Dataset is in use; stop recording before offline operations"

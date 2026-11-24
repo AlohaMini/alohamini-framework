@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import time
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from alohamini.filesystem import lock_file
 from alohamini.paths import WorkspacePaths
 
 
@@ -123,7 +123,7 @@ def main(argv=None):
         if (root / "recording.lock").is_file():
             lock = stack.enter_context((root / "recording.lock").open("rb"))
             try:
-                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                lock_file(lock, exclusive=False)
             except BlockingIOError as exc:
                 raise RuntimeError("数据集正在录制/编辑，请结束后分析") from exc
         from .comparison import prepare
@@ -165,7 +165,7 @@ def main(argv=None):
                 raise ValueError("分析结果必须保存在训练数据集之外")
             if (reference_root / "recording.lock").is_file() and reference_root != root:
                 reference_lock = stack.enter_context((reference_root / "recording.lock").open("rb"))
-                fcntl.flock(reference_lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                lock_file(reference_lock, exclusive=False)
             reference_data = load_episode(
                 reference_root,
                 reference_index,

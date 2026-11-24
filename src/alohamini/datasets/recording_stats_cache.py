@@ -19,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
+from alohamini.filesystem import sync_directory
+
 _CACHE = "meta/recording_stats.npz"
 _METADATA = ("meta/info.json", "meta/alohamini.json", "meta/stats.json")
 _MAX_MANIFEST_BYTES = 16 * 1024**2
@@ -321,11 +323,7 @@ def _save_recording_statistics(root, stats):
         if recording_statistics_binding(root) != binding:
             raise ValueError("Recording changed while saving its statistics cache")
         os.replace(temporary, root / _CACHE)
-        directory = os.open(root / "meta", os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        sync_directory(root / "meta")
         stats._recording_source_binding = binding
         stats._recording_cache_checkpoint = incremental.checkpoint(
             root, stats.frames, features, info["fps"]

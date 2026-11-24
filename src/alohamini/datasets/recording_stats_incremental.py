@@ -13,6 +13,7 @@ from pathlib import PurePosixPath
 import numpy as np
 
 from alohamini.datasets import recording_stats_cache as cache
+from alohamini.filesystem import sync_directory
 
 
 def compact_binding(binding):
@@ -107,11 +108,7 @@ def preserve_parent(root, previous):
     if not unchanged:
         raise ValueError("Recording cache changed while preserving its parent")
     for path in (directory, root / "meta"):
-        descriptor = os.open(path, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        sync_directory(path)
     return {"path": relative, "frames": previous["frames"]}
 
 

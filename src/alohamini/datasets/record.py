@@ -27,6 +27,7 @@ from alohamini.datasets.images import (
     image_type,
     prepare_recording_image,
 )
+from alohamini.filesystem import lock_file
 from alohamini.model import get_robot_model
 
 # Per-frame action is a submitted request, including values saturated by Host.
@@ -358,8 +359,6 @@ class _EpisodeWriter:
         _source_info=None,
         _discard_interrupted=False,
     ):
-        import fcntl
-
         from alohamini.datasets.recording_video import validate_video_options
 
         validate_video_options(video_encoder, background_video_encoding, video_encoding_memory_mib)
@@ -450,7 +449,7 @@ class _EpisodeWriter:
             self.root.mkdir(parents=True, exist_ok=False)
         self._file_lock = (self.root / "recording.lock").open("a")
         try:
-            fcntl.flock(self._file_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(self._file_lock)
             meta = self.root / "meta"
             if resume:
                 stored_info = json.loads((meta / "info.json").read_text())
@@ -893,8 +892,6 @@ class LocalDataset:
         profile_timing=False,
         discard_interrupted=True,
     ):
-        import fcntl
-
         from alohamini.datasets.recording_video import validate_video_options
 
         validate_video_options(video_encoder, background_video_encoding, video_encoding_memory_mib)
@@ -927,7 +924,7 @@ class LocalDataset:
         self._v3_stats = None
         self._resume_statistics = False
         try:
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(self._lock)
             staging = self.root / ".recording"
             _path(self.root.resolve(), ".recording/meta/info.json")
             _path(self.root.resolve(), ".recording/recording.lock")

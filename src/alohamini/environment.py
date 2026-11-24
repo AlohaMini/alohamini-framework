@@ -15,6 +15,8 @@ import tempfile
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
+from alohamini.filesystem import lock_file, unlock_file
+
 _WARNED = set()
 
 
@@ -162,36 +164,6 @@ def inferred_role():
 
 
 @contextmanager
-def _windows_environment_lock(stream, exclusive):
-    import ctypes
-    import msvcrt
-    from ctypes import wintypes
-
-    class Overlapped(ctypes.Structure):
-        _fields_ = [("internal", ctypes.c_size_t), ("internal_high", ctypes.c_size_t),
-                    ("offset", wintypes.DWORD), ("offset_high", wintypes.DWORD),
-                    ("event", wintypes.HANDLE)]
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
-                                  wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
-    kernel.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD,
-                                    wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
-    handle = msvcrt.get_osfhandle(stream.fileno())
-    offset = Overlapped()
-    flags = 0x01 | (0x02 if exclusive else 0)
-    if not kernel.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(offset)):
-        error = ctypes.get_last_error()
-        if error == 33:
-            raise RuntimeError("环境正在使用或同步；请等待当前任务结束后重试。")
-        raise ctypes.WinError(error)
-    try:
-        yield
-    finally:
-        kernel.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(offset))
-
-
-@contextmanager
 def environment_lock(exclusive=False, prefix=None):
     key = hashlib.sha256(os.path.normcase(str(Path(prefix or sys.prefix).resolve())).encode()).hexdigest()
     directory = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -199,20 +171,14 @@ def environment_lock(exclusive=False, prefix=None):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{key}.lock"
     with path.open("a+b") as stream:
-        if os.name == "nt":
-            with _windows_environment_lock(stream, exclusive):
-                yield
-            return
-        import fcntl
-
         try:
-            fcntl.flock(stream, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            lock_file(stream, exclusive=exclusive)
         except BlockingIOError as exc:
             raise RuntimeError("环境正在使用或同步；请等待当前任务结束后重试。") from exc
         try:
             yield
         finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+            unlock_file(stream)
 
 
 @contextmanager
