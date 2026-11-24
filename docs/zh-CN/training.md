@@ -284,13 +284,21 @@ python -m alohamini.learning.train --config /path/to/train.json \
 `--stats` 只接受带 `--config` 生成的统计；数据或样本配置不匹配时须重新生成。
 省略 `--stats` 时训练自动计算。新训练均保存 `runs/<名称>/statistics.json`，checkpoint 保留实际使用的统计；恢复训练沿用 checkpoint。
 
-### 日志与配置
+### 训练监控
 
-打开[本地训练监控](training-monitor.md)可跟踪实时指标与控制台输出、对比多次训练或导入评估数据。
+在浏览器中查看实时指标和日志。可用 `--runs-dir PATH` 指定训练目录，用 `--datasets-dir PATH` 指定评估数据集目录。
 
 ```bash
 alohamini train monitor --open
 ```
+
+云端训练时，在训练机运行 `alohamini train monitor`。在本机执行以下命令，然后打开 `http://127.0.0.1:7861/`。
+
+```bash
+ssh -N -L 127.0.0.1:7861:127.0.0.1:7860 user@training-host
+```
+
+### 日志与配置
 
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_01.log

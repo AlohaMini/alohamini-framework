@@ -284,13 +284,21 @@ python -m alohamini.learning.train --config /path/to/train.json \
 `--stats` accepts only statistics generated with `--config`; regenerate them if the data or sample configuration changes.
 Without `--stats`, training computes statistics automatically. New runs save `runs/<NAME>/statistics.json`; checkpoints retain the statistics actually used, and resumed training reuses checkpoint statistics.
 
-### Logs and configuration
+### Training monitor
 
-Open the [local training monitor](training-monitor.md) to follow metrics and console output, compare runs, or import evaluation data.
+View live metrics and logs in the browser. Use `--runs-dir PATH` for a specific run and `--datasets-dir PATH` for evaluation data.
 
 ```bash
 alohamini train monitor --open
 ```
+
+For remote training, run `alohamini train monitor` on the training host. Run the following on your computer and open `http://127.0.0.1:7861/`.
+
+```bash
+ssh -N -L 127.0.0.1:7861:127.0.0.1:7860 user@training-host
+```
+
+### Logs and configuration
 
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_01.log
