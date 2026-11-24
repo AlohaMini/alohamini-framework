@@ -19,6 +19,7 @@ import math
 import os
 import random
 import shutil
+import subprocess
 import tempfile
 import time
 from collections.abc import Iterator
@@ -224,13 +225,48 @@ def restore_rng(state):
         torch.mps.set_rng_state(state["mps"])
 
 
+def _checkpoint_pointer(path):
+    return path.is_symlink() or (os.name == "nt" and path.is_junction())
+
+
 def _link(target, destination):
-    """Replace only our pointer, never a real checkpoint directory."""
-    if destination.exists() and not destination.is_symlink():
+    """只替换断点入口，保留真正的训练目录。"""
+    previous_pointer = _checkpoint_pointer(destination)
+    if destination.exists() and not previous_pointer:
         raise FileExistsError(destination)
     pending = destination.with_name(f".{destination.name}.pending-{time.time_ns()}")
-    pending.symlink_to(os.path.relpath(target, destination.parent))
-    pending.replace(destination)
+    if os.name != "nt":
+        pending.symlink_to(os.path.relpath(target, destination.parent))
+        pending.replace(destination)
+        return
+
+    # 使用普通 Windows 账户也能创建目录联接。编号断点保存后才更新入口。
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         "New-Item -ItemType Junction -Path . -Name $env:ALOHAMINI_CHECKPOINT_ENTRY "
+         "-Target $env:ALOHAMINI_CHECKPOINT_TARGET -ErrorAction Stop | Out-Null"],
+        env={**os.environ, "ALOHAMINI_CHECKPOINT_ENTRY": pending.name,
+             "ALOHAMINI_CHECKPOINT_TARGET": str(target.resolve())},
+        cwd=destination.parent, check=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    previous = pending.with_name(pending.name + ".previous")
+    try:
+        if previous_pointer:
+            destination.rename(previous)
+        try:
+            pending.rename(destination)
+        except OSError:
+            if previous_pointer:
+                previous.rename(destination)
+            raise
+        if previous_pointer:
+            if previous.is_symlink():
+                previous.unlink()
+                return
+            previous.rmdir()
+    finally:
+        if pending.is_junction():
+            pending.rmdir()
 
 
 def save_training_checkpoint(
@@ -337,7 +373,7 @@ def prune_checkpoints(output, keep):
             for path in directory.iterdir()
             if path.name.isdecimal()
             and path.is_dir()
-            and not path.is_symlink()
+            and not _checkpoint_pointer(path)
             and (path / "training_state/state.pt").is_file()
             and (path / "pretrained_model/policy.json").is_file()
         ),
@@ -347,7 +383,7 @@ def prune_checkpoints(output, keep):
     protected = {
         path.resolve()
         for path in (directory / "last", output / "checkpoint", output / "checkpoint-ema")
-        if path.is_symlink()
+        if _checkpoint_pointer(path)
     }
     for path in completed[keep:]:
         absolute = path.resolve()

@@ -65,7 +65,6 @@ class RecordingVideoEncoder:
         self.process = None
         self._stop = threading.Event()
         self._monitor = None
-        self._parent_pipe = None
         self._reason = None
         self._warned = False
         self._memory_bytes = memory_mib * 1024**2
@@ -90,22 +89,22 @@ class RecordingVideoEncoder:
             env[key] = "1"
         # Also work from an uninstalled checkout and under tests using PYTHONPATH.
         env["PYTHONPATH"] = os.pathsep.join(str(p) for p in sys.path if p)
-        parent_read = None
         try:
-            parent_read, self._parent_pipe = os.pipe()
-            config["parent_fd"] = parent_read
             _write(self.directory / "config.json", config)
+            process_options = (
+                {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+                if os.name == "nt"
+                else {"start_new_session": True}
+            )
             with (self.directory / "worker.log").open("wb") as log:
                 self.process = subprocess.Popen(
                     [sys.executable, "-m", __name__, str(self.directory / "config.json")],
                     env=env,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=log,
                     stderr=log,
-                    # Terminal Ctrl+C belongs to the recorder. Its cleanup
-                    # publishes finished.json so the encoder can drain normally.
-                    start_new_session=True,
-                    pass_fds=(parent_read,),
+                    # 把中断交给录制进程处理，编码器可以读完已经提交的帧。
+                    **process_options,
                 )
             self._monitor = threading.Thread(
                 target=self._watch, name="AlohaMiniVideoMemory", daemon=True
@@ -115,9 +114,6 @@ class RecordingVideoEncoder:
             self._reason = f"could not start encoder: {exc}"
             self.cancel()
             self._warning()
-        finally:
-            if parent_read is not None:
-                os.close(parent_read)
 
     def _warning(self):
         if not self._warned:
@@ -184,16 +180,15 @@ class RecordingVideoEncoder:
     def cancel(self):
         """Stop readers/writers before deleting or moving the pending directory."""
         self._stop.set()
-        if self._parent_pipe is not None:
-            os.close(self._parent_pipe)
-            self._parent_pipe = None
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
+        if self.process is not None:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+            self.process.stdin.close()
         if self._monitor is not None and self._monitor.ident is not None:
             self._monitor.join(timeout=1)
 
@@ -300,7 +295,6 @@ def _encode_camera(episode, camera, config, encoder):
 def _worker(config_path):
     """Entry point deliberately imports numerical/native libraries after limits."""
     import ctypes
-    import resource
     import signal
     from concurrent.futures import ThreadPoolExecutor
 
@@ -308,22 +302,24 @@ def _worker(config_path):
     directory, episode = config_path.parent, config_path.parent.parent
     try:
         config = json.loads(config_path.read_text())
-        watch_parent(config["parent_fd"], config["parent_pid"])
+        watch_parent(sys.stdin.fileno(), config["parent_pid"])
         if sys.platform.startswith("linux"):
             # Do not leave an orphan encoder writing after a crashed recorder.
             if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM, 0, 0, 0):
                 raise OSError(ctypes.get_errno(), "Could not set encoder parent-death signal")
             if os.getppid() != config["parent_pid"]:
                 return 1
-        budget = config["memory_mib"] * 1024**2
-        # DATA bounds writable allocations without blocking CUDA's large virtual
-        # address reservations. RLIMIT_RSS is not enforced on modern Linux.
-        if sys.platform.startswith("linux"):
-            _, hard = resource.getrlimit(resource.RLIMIT_DATA)
-            budget = budget if hard == resource.RLIM_INFINITY else min(budget, hard)
-            resource.setrlimit(resource.RLIMIT_DATA, (budget, budget))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        os.nice(5)
+        if os.name != "nt":
+            import resource
+
+            if sys.platform.startswith("linux"):
+                # DATA 约束可写分配，允许 CUDA 保留大的虚拟地址空间。
+                budget = config["memory_mib"] * 1024**2
+                _, hard = resource.getrlimit(resource.RLIMIT_DATA)
+                budget = budget if hard == resource.RLIM_INFINITY else min(budget, hard)
+                resource.setrlimit(resource.RLIMIT_DATA, (budget, budget))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            os.nice(5)
         from alohamini.datasets.video import _encode_frames
 
         encoder, warning = config["encoder"], None
