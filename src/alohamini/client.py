@@ -362,14 +362,20 @@ class HostClient:
                 _software_label(remote),
             )
 
-    def read(self, *, include_images: bool = False) -> HostSnapshot:
+    def read(
+        self, *, include_images: bool = False, timeout_s: float | None = None
+    ) -> HostSnapshot:
         """Return the newest matching reply in a bounded ready batch, or raise.
 
         The deadline bounds this receive call, not time spent prefetched or sensor age. Host clocks
         and telemetry validity remain explicitly available in the returned payload.
         No cached state is returned here. Recording cursors retain ordered reads.
         """
-        return self._read(include_images=include_images, timeout_s=self._timeout_s)
+        if timeout_s is None:
+            timeout_s = self._timeout_s
+        elif type(timeout_s) not in (float, int) or not 0 < timeout_s <= 60:
+            raise ValueError("timeout_s must be in (0, 60]")
+        return self._read(include_images=include_images, timeout_s=timeout_s)
 
     def read_recording(self, *, include_images: bool = False) -> HostSnapshot:
         """Consume the oldest reply and refill before decoding, as in AlohaMiniClient.

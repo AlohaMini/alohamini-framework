@@ -200,7 +200,19 @@ def test_official_model_small_forward_and_sampling(monkeypatch):
     assert accumulator.result()["metrics"]["loss_flow"] == pytest.approx(actual.item())
     assert accumulator.result()["metric_totals"]["loss_flow"]["count"] == 1
     model.eval()
-    predicted = model.sample_actions(torch.device("cpu"), obs, num_steps=2)
+    noise = torch.randn_like(actions)
+    predicted = model.sample_actions(torch.device("cpu"), obs, noise=noise, num_steps=2)
+    with_readout, features, mask = model.sample_actions(
+        torch.device("cpu"), obs, noise=noise, num_steps=2, return_features=True
+    )
+    torch.testing.assert_close(with_readout, predicted, rtol=0, atol=0)
+    with torch.no_grad():
+        _, _, _, cached_features, cached_mask = model.encode_prefix(obs)
+    torch.testing.assert_close(cached_features, features, rtol=0, atol=0)
+    torch.testing.assert_close(cached_mask, mask)
+    assert features.shape[:2] == mask.shape
+    assert mask.dtype == torch.bool and mask.any()
+    assert features.shape[-1] == 64
     assert predicted.shape == (1, 2, 32)
     assert torch.isfinite(predicted).all()
     # Local transformer definitions must not replace the official classes globally.

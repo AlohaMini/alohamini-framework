@@ -36,7 +36,11 @@ class BimanualLeader:
         left_port: str = "/dev/am_arm_leader_left",
         right_port: str = "/dev/am_arm_leader_right",
         active_sides: tuple[str, ...] = ("left", "right"),
+        interactive_calibration: bool = True,
     ) -> None:
+        if type(interactive_calibration) is not bool:
+            raise ValueError("interactive_calibration must be a boolean")
+        self.interactive_calibration = interactive_calibration
         model = get_robot_model(robot_model)
         if len(set(active_sides)) != len(active_sides) or set(active_sides) - {"left", "right"}:
             raise ValueError("Invalid active leader sides")
@@ -133,7 +137,10 @@ class BimanualLeader:
                     self._resources.callback(device.disable_torque)
                 for device in self.devices.values():
                     device.disable_torque()
-                if ensure_calibration(self.devices, self.calibrations, self._calibration_paths):
+                if not self.interactive_calibration:
+                    for side, device in self.devices.items():
+                        device.verify_calibration(self.calibrations[side])
+                elif ensure_calibration(self.devices, self.calibrations, self._calibration_paths):
                     self.close()
                     for side, device in list(self.devices.items()):
                         self._load_device(side, self._ports[side], device.actuators)

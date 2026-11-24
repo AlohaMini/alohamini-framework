@@ -16,6 +16,7 @@ Control, data collection, and algorithm development for AlohaMini dual-arm mobil
 - [Simulation](docs/simulation.md): viewing, scenes, and replay with MuJoCo, ManiSkill, and RoboTwin.
 - [LeRobot](docs/lerobot.md): dataset and model compatibility.
 - [Training and deployment](docs/training.md): dataset selection and conversion, policy training, offline checks, remote inference, and hardware evaluation.
+- [RLT (π0.5 human-in-the-loop collection, RL token, stage gate & residual AC)](docs/rlt.md)
 - [Notebooks](docs/notebook.md): optional data analysis and experiment tools.
 
 ## Daily startup

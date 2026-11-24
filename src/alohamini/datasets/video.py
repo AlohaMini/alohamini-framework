@@ -8,7 +8,6 @@ dataset_tools._keep_episodes_from_video_with_av. No capture or control work runs
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import logging
@@ -464,6 +463,8 @@ def generate_previews(root: Path, output: Path | None = None) -> dict:
             }
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / ".lock").open("a") as lock:
+            import fcntl
+
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             generated = reused = 0
             for index in range(checker.num_episodes):

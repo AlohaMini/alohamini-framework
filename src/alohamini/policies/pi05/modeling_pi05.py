@@ -418,42 +418,29 @@ class PI0Pytorch(nn.Module):
     @torch.no_grad()
     def sample_actions(
         self, device, observation, noise=None, num_steps=10, *, rtc_processor=None,
-        prev_chunk_left_over=None, inference_delay=None,
-    ) -> Tensor:
+        prev_chunk_left_over=None, inference_delay=None, return_features=False,
+    ) -> Tensor | tuple[Tensor, Tensor, Tensor]:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
 
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # Compute image and language key value cache
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
+        state, prefix_pad_masks, past_key_values, features, feature_mask = self.encode_prefix(
+            observation
         )
 
         if rtc_processor is not None:
             from alohamini.policies.flow_matching import euler_integrate
 
-            return euler_integrate(
+            actions = euler_integrate(
                 lambda latent, t: self.denoise_step(
                     state, prefix_pad_masks, past_key_values, latent, t
                 ),
                 noise, num_steps, rtc_processor=rtc_processor, rtc_enabled=True,
                 prev_chunk_left_over=prev_chunk_left_over, inference_delay=inference_delay,
             )
+            return (actions, features, feature_mask) if return_features else actions
 
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
@@ -473,7 +460,29 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
-        return x_t
+        return (x_t, features, feature_mask) if return_features else x_t
+
+    def encode_prefix(self, observation):
+        """Final image-token states and the same KV cache used by action sampling.
+
+        Image tokens retain language/state conditioning from the full prefix.
+        This explicit readout avoids mutable forward hooks and a second VLM pass.
+        """
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(
+            observation, train=False
+        )
+        embeddings, padding, attention = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        mask = self._prepare_attention_masks_4d(make_att_2d_masks(padding, attention))
+        positions = torch.cumsum(padding, dim=1) - 1
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
+        outputs, cache = self.paligemma_with_expert.forward(
+            attention_mask=mask, position_ids=positions, past_key_values=None,
+            inputs_embeds=[embeddings, None], use_cache=True,
+        )
+        image_count = embeddings.shape[1] - lang_tokens.shape[1]
+        return state, padding, cache, outputs[0][:, :image_count], padding[:, :image_count]
 
     def denoise_step(
         self,

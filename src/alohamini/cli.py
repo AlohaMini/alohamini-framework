@@ -56,6 +56,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["rlt"]:
+        from alohamini.rlt.cli import main as rlt_main
+
+        return rlt_main(argv[1:])
     if argv[:2] == ["train", "check"]:
         from alohamini.learning.resource_cli import main as check_training
 
@@ -88,6 +92,7 @@ def _main(argv: list[str] | None = None) -> int:
             return 1
     parser = argparse.ArgumentParser(prog="alohamini", description="AlohaMini 机器人接口")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("rlt", help="训练 RL token，或用主臂干预 π0.5 并采集示教")
     commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
     commands.add_parser("train", help="训练策略；train check --config FILE 输出资源检查 JSON")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
