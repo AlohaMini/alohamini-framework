@@ -221,7 +221,7 @@ See each policy directory for training commands, weight preparation, and policy-
 | <a id="leworldmodel"></a>[LeWorldModel](../src/alohamini/policies/lewm/README.md) | `lewm` |
 | <a id="smolvla"></a>[SmolVLA](../src/alohamini/policies/smolvla/README.md) | `smolvla` |
 | <a id="π05"></a>[π0.5](../src/alohamini/policies/pi05/README.md) | `pi05` |
-| [RLT (offline residual actor)](../src/alohamini/policies/rlt/README.md) | `alohamini rlt` |
+| [RLT (offline residual actor)](../src/alohamini/policies/rlt/README.md) | `alohamini train rlt` |
 | [π0](../src/alohamini/policies/pi0/README.md) | `pi0` |
 | [π0-FAST](../src/alohamini/policies/pi0_fast/README.md) | `pi0_fast` |
 | [EO-1](../src/alohamini/policies/eo1/README.md) | `eo1` |
@@ -599,36 +599,7 @@ When moving between machines, copy the complete checkpoint directory, not only s
 See [Client API](host-protocol.md#python-policy-evaluation) for custom policies and `examples/learning/custom_policy.py` for an example.
 See [Notebooks](notebook.md) for notebooks and [LeRobot](lerobot.md) for LeRobot weights.
 
-### DAgger corrections and retraining
-
-Add `--dagger --dataset task_corrections` to evaluation and connect calibrated leader arms; keyboard input requires X11.
-Space pauses and holds the follower arms; Tab begins manual alignment. Enable hold on each leader joint after it settles into position;
-once all joints align, support the leader arms and press Tab again to release hold and start corrections. Tab ends and saves the segment; Space returns control to the policy; Esc exits.
-Handing control back clears old actions and interpolation caches, restarting inference from the current observation.
-
-Only human corrections are recorded, each as a separate episode; pauses and alignment are excluded from training sequences.
-Align gripper openings too. During correction, the base stops and lift holds. The default leader hold output limit is `0.2`,
-adjustable with `--dagger.hold_output_limit`; joint alignment tolerance defaults to 3 degrees (`--dagger.alignment_tolerance_deg`).
-Holding depends on actual power and manual support. Faults, feedback interruption, or alignment timeout release leader hold.
-Slow synchronous inference responds to pause after the current computation returns; the asynchronous mode below is recommended. Fixed arm dimensions are unsupported.
-
-Merge demonstrations and corrections, then begin a new fine-tuning run:
-
-```bash
-alohamini dataset edit --operation.type merge \
-  --operation.roots '["~/Alohamini_workspace/datasets/task_demo", "~/Alohamini_workspace/datasets/task_corrections"]' \
-  --output ~/Alohamini_workspace/datasets/task_merged
-
-python -m alohamini.learning.train \
-  --policy.path ~/Alohamini_workspace/runs/act_01/checkpoint \
-  --dataset.root ~/Alohamini_workspace/datasets/task_merged \
-  --output_dir ~/Alohamini_workspace/runs/act_dagger_01 \
-  --policy.device cuda --steps 10000 --batch_size 8 --background
-```
-
-Both datasets must share fields, cameras, calibration, and FPS. Select an independent validation set using merged episode indices.
-Do not add `--resume=true` for new fine-tuning. Logs are at `~/Alohamini_workspace/logs/training/act_dagger_01.log`;
-after training, point evaluation's `--policy.path` to the new checkpoint and continue collecting.
+See [Policy Post-Training](post-training.md) for correction-based fine-tuning, scored collection and offline RL with RLT.
 
 ### Inference modes
 

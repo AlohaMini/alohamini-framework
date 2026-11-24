@@ -1,38 +1,62 @@
 # RLT
 
-RLT learns a residual action policy on top of a frozen reference policy. The supported base is a native π0.5 checkpoint using recorded joint coordinates. Training runs on one device. The robot collector supports a passive left leader.
+RLT trains a residual actor on a frozen native π0.5 policy using recorded joint coordinates. Training runs on one device. Create the example `run.json` from [Policy post-training](../../../../docs/post-training.md#offline-rl-with-rlt) · [中文操作步骤](../../../../docs/zh-CN/post-training.md#rlt-离线强化学习). Run these commands from its directory.
 
-Use a separate output directory for each stage. Paths in a JSON configuration are relative to the configuration file. A minimal configuration is:
+```bash
+alohamini train rlt token --config run.json --steps 5000 --batch_size 4
 
-```json
-{
-  "checkpoint": "/path/to/base/pretrained_model",
-  "dataset": "/path/to/demonstrations",
-  "output_dir": "/path/to/runs/token",
-  "task": "Place the block in the tray"
-}
+alohamini collect rlt --config run.json --output-dir round-1 --policy.n_action_steps 5
+
+alohamini train rlt ac --config run.json --dataset round-1/lerobot_v3 \
+  --token-checkpoint token-run/token --output-dir ac-run --steps 5000
+
+alohamini collect rlt --config run.json --output-dir round-2 --policy.n_action_steps 5 \
+  --token-checkpoint token-run/token --actor-checkpoint ac-run/actor
 ```
 
-| Stage | Command |
-| --- | --- |
-| Train the visual token on demonstrations | `alohamini rlt train-token --config run.json --steps 5000 --batch_size 4 --lr 0.0003` |
-| Collect and score robot episodes | `alohamini rlt collect --config run.json --host HOST --left-port PORT --output-dir rollouts --chunk-size 10 --policy.n_action_steps 5` |
-| Export scored episodes or retry an interrupted export | `alohamini rlt export-v3 --output-dir rollouts` |
-| Train the actor and critic | `alohamini rlt train-ac --config run.json --dataset rollouts/lerobot_v3 --token-checkpoint /path/to/runs/token/token --output-dir actor-run --steps 5000 --save_freq 1000` |
-| Resume actor and critic | Repeat the same training command with `--resume` and a larger total `--steps`. |
-| Train an optional phase classifier | `alohamini rlt train-gate --config run.json --dataset rollouts/lerobot_v3 --intervals intervals.json --token-checkpoint /path/to/runs/token/token --output-dir gate-run` |
-| Deploy the residual actor | Add `--token-checkpoint /path/to/runs/token/token --actor-checkpoint actor-run/actor` to collection. Add `--gate-checkpoint gate-run/gate` for automatic phase changes. |
+| Stage | Input | Output to use |
+|---|---|---|
+| `train rlt token` | Base checkpoint and demonstrations with recorded task labels | `token-run/token`, the token with lowest validation loss. See `token-metrics.jsonl` in the run directory. |
+| `collect rlt` | Base policy, calibrated leaders for the selected arms, optional token and actor | Scored episodes in `round-1/`, automatically published to `round-1/lerobot_v3/` |
+| `train rlt ac` | Matching token and scored RLT data (raw collection or complete v3 directory) | `ac-run/actor` for deployment, `ac-run/ac-metrics.jsonl` for training metrics |
+| `train rlt gate` (optional) | Token, scored data and reviewed phase intervals | `gate-run/gate` for automatic phase switching, `gate-run/gate-validation.json` for held-out results |
 
-Use the same RL chunk length, base checkpoint and learned coordinate names for collection, replay and deployment. Set `learned_action_names` to select named action and proprioception coordinates. The collector defaults to the left arm. `--policy.n_action_steps` sets how many actions from a prediction can execute before replanning. Collection FPS must match the base checkpoint. Token training preserves recorded task labels and the base sampling rate.
+## Collection and replay settings
 
-During collection, **H** takes over or hands control back, **C** switches the correction phase, **Space** pauses, and **→** ends the episode. Score it with **1** or **0** once the robot has returned and the scene is ready. Unscored episodes remain pending. The optional gripper-release rule for left-arm placement is configured with `--gripper-exit` or `--no-gripper-exit`.
+- Set `learned_action_names` in `run.json` to coordinate names or arm groups, e.g. `["arm_left"]`. A new run defaults to arm joints and grippers present in both checkpoint state and action, excluding fixed targets. A saved token, resumed collection or scored token-training dataset supplies its recorded selection. Use the same base, coordinates and `chunk_size` throughout.
+- Collection uses the checkpoint FPS. `--policy.n_action_steps` sets how many steps may execute before replanning (1 through `chunk_size`). Token training preserves the recorded task labels and base sampling rate.
+- Set `--left-port` or `--right-port` for the selected leaders. Relative takeover limits joint speed to 60°/s by default (`--max-joint-velocity-deg-s`) and gripper opening to 50 percentage points/s. Space pauses or resumes. Use `--return-to-start` to return controlled joints to their initial positions before scoring.
+- `--gripper-exit` enables phase exit on a measured gripper opening. If multiple learned grippers are available, specify e.g. `--gripper-exit-field arm_right_gripper.pos`.
+- Token and gate support `--mixed_precision none|bfloat16|float16` on compatible devices. AC uses FP32. AC samples acknowledged learned coordinates and accounts for intervening control steps. Standard action training requires fully acknowledged targets. When copying or merging v3 data, keep the whole dataset including `meta/rlt/`. Use `alohamini dataset edit --operation.type merge` to merge datasets.
 
-The portable v3 dataset includes `meta/rlt` with operator scores, command outcomes and terminal observations. Copy the whole dataset. Standard action training uses windows with valid, fully acknowledged targets. AC replay uses acknowledged learned coordinates and accounts for intervening control steps. Merge scored datasets with the platform dataset merge command.
+## Resume or recover
 
-Token and gate support `--mixed_precision none|bfloat16|float16` subject to device support. AC uses FP32. The `token`, `actor` and `gate` paths select deployment weights. AC saves optimizers, target networks and sampling state under `checkpoints/<step>/training_state`.
+Append to an existing collection by repeating its command with `--resume`. To resume AC, use the same data, token, base, output directory and training settings. Set `--steps` to the new total. The optimizer, target networks and sampling state are restored from `ac-run/checkpoints/last/training_state/`.
 
-Gate interval files use episode IDs from the scored dataset and half-open frame ranges. Supply at least three reviewed episodes covering both classes for training, selection and held-out evaluation.
+```bash
+alohamini train rlt ac --config run.json --dataset round-1/lerobot_v3 \
+  --token-checkpoint token-run/token --output-dir ac-run --steps 10000 --resume
+```
+
+To score a sealed episode, use its 32-character hexadecimal ID from `round-1/pending/`. Retry export only if publication was interrupted.
+
+```bash
+alohamini collect score --output-dir round-1 --episode EPISODE_ID --reward 1
+alohamini dataset export round-1 --format lerobot-v3 --output round-1/lerobot_v3
+```
+
+## Automatic phase switching
+
+For hands-free phase selection, create `intervals.json` with the collection FPS and reviewed episode IDs. Label each phase from its first frame (inclusive) to its end (exclusive). The entry below shows one episode. Include at least three reviewed episodes with phase and non-phase frames so training, checkpoint selection and held-out evaluation each cover both classes.
 
 ```json
-{"version":1,"fps":30,"episodes":[{"episode_id":"<episode ID>","segments":[{"name":"placement","start_frame":20,"end_frame_exclusive":45,"reward":1}]}]}
+{"version":1,"fps":30,"episodes":[{"episode_id":"EPISODE_ID","segments":[{"name":"phase_1","start_frame":20,"end_frame_exclusive":45,"reward":1}]}]}
+```
+
+```bash
+alohamini train rlt gate --config run.json --dataset round-1/lerobot_v3 \
+  --intervals intervals.json --token-checkpoint token-run/token --output-dir gate-run
+
+alohamini collect rlt --config run.json --output-dir round-gate --policy.n_action_steps 5 \
+  --token-checkpoint token-run/token --actor-checkpoint ac-run/actor --gate-checkpoint gate-run/gate
 ```

@@ -10,6 +10,7 @@
 - [Simulation](simulation.md): MuJoCo, ManiSkill, RoboTwin, scenes, replay, and collection.
 - [LeRobot Compatibility](lerobot.md): Dataset and checkpoint compatibility.
 - [Training and Deployment](training.md): Data preparation, policies, training, evaluation, and local/cloud inference.
+- [Policy Post-Training](post-training.md): Fine-tuning from human corrections, scored collection and offline RL.
 - [Notebooks](notebook.md): Optional data inspection and experiments.
 
 [Project home](../README.md)

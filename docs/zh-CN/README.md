@@ -10,6 +10,7 @@
 - [仿真](simulation.md)：MuJoCo、ManiSkill、RoboTwin、场景、回放与采集。
 - [LeRobot 兼容](lerobot.md)：数据集与模型权重的兼容范围。
 - [训练与部署](training.md)：数据整理、策略、训练、评估与本地／云端推理。
+- [策略后训练](post-training.md)：人工纠错微调、评分回合采集和离线强化学习。
 - [Notebook](notebook.md)：可选的数据检查与实验入口。
 
 [项目主页](../../README.zh-CN.md)
