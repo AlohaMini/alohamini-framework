@@ -514,8 +514,14 @@ class NativePolicy:
             )
         return self._query_language_batch(batch, kind=kind, question=question, camera=camera)
 
+    def prepare_snapshot(self, snapshot, *, rgb_images=None):
+        """Prepare a bound Host observation, optionally using already-decoded RGB frames."""
+        if not self._robot_bound:
+            self.bind_robot(snapshot)
+        return self._observation_batch(snapshot, rgb_images=rgb_images)
+
     def _observation_batch(
-        self, snapshot, *, history=True, preprocess=True, language_control=True,
+        self, snapshot, *, history=True, preprocess=True, language_control=True, rgb_images=None,
     ):
         """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
@@ -543,11 +549,13 @@ class NativePolicy:
                         or not 0 <= now - row["motor_feedback.sample_finished_s"][index] <= 0.25
                     ):
                         raise ValueError("Selected motor feedback is stale")
+        images = snapshot.images if rgb_images is None else rgb_images
         for camera in self.manifest["cameras"]:
-            if camera not in snapshot.images:
+            if camera not in images:
                 raise ValueError(f"Missing policy camera: {camera}")
+            rgb = decode_host_image(images[camera]) if rgb_images is None else images[camera]
             observation[f"observation.images.{camera}"] = image_tensor(
-                decode_host_image(snapshot.images[camera]),
+                rgb,
                 self.manifest["image_size"],
                 resize_mode=self.manifest.get("image_resize_mode", "stretch"),
                 pad_value=self.manifest.get("image_pad_value", 0.0),

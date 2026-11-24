@@ -19,6 +19,7 @@ from alohamini.datasets.lerobot_tools import (
 )
 from alohamini.datasets.lerobotv3 import DATA_PATH, EPISODE_PATH, VIDEO_PATH, _Stats
 from alohamini.datasets.record import _recording_contract, _write_json
+from alohamini.datasets.v3_extensions import action_validity_fields, merge_handlers
 from alohamini.datasets.tools import _read_lock
 
 
@@ -45,6 +46,8 @@ def merge_v3(roots, output):
             for key in ("fps", "features", "robot_type"):
                 if source.info.get(key) != first.get(key):
                     raise ValueError(f"Cannot merge datasets with different {key}")
+            if action_validity_fields(source.info) != action_validity_fields(first):
+                raise ValueError("Cannot merge different action validity rules")
             if (annotation is None) != (annotations[0] is None):
                 raise ValueError("Cannot mix known and unknown robot calibration")
             if annotation is not None:
@@ -55,6 +58,7 @@ def merge_v3(roots, output):
                 for key in ("robot_metadata", "features", "fixed_dimensions"):
                     if _recording_contract(a).get(key) != _recording_contract(b).get(key):
                         raise ValueError(f"Cannot merge datasets with different {key}")
+        extensions = merge_handlers(sources)
         features = first["features"]
         numeric = {
             key: value
@@ -163,6 +167,8 @@ def merge_v3(roots, output):
                         row.update(
                             {f"stats/{key}/{name}": value.tolist() for name, value in stats.items()}
                         )
+                    for extension in extensions:
+                        extension.copy_episode(source, old, row, stage)
                     episode_rows.append(row)
                     if annotation is not None:
                         safety = source.root / "meta/safety" / f"episode_{old:06d}.jsonl"
@@ -208,6 +214,9 @@ def merge_v3(roots, output):
                 video_path=VIDEO_PATH if videos else None,
                 splits={"train": f"0:{episode_offset}"},
             )
+            for extension in extensions:
+                info.update(extension.metadata())
+            (stage / "recording.lock").touch()
             _write_json(meta / "info.json", info)
             stats = global_stats.result()
             if complete_histograms:

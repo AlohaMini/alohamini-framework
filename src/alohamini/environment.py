@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import importlib.metadata as metadata
 import json
@@ -105,6 +104,14 @@ def command_packages(argv):
     if not argv or "--help" in argv or "-h" in argv or argv[0] in {"env", "paths", "inspect"}:
         return set()
     command = argv[0]
+    if command == "rlt":
+        if argv[1:2] == ["export-v3"]:
+            # Deployment locks apply to Linux. The offline dataset codec also runs on Windows.
+            return {"numpy", "pandas", "pyarrow", "pillow", "av"} if platform.system() == "Linux" else set()
+        packages = command_packages(["train"])
+        if argv[1:2] == ["collect"]:
+            packages |= {"pyzmq", "pyserial", "feetech-servo-sdk", "opencv-python-headless"}
+        return packages
     if command == "host":
         return {"numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"}
     if command in {"train", "evaluate"} or argv[:2] == ["inference", "serve"]:
@@ -145,6 +152,8 @@ def inferred_role():
 
 @contextmanager
 def environment_lock(exclusive=False, prefix=None):
+    import fcntl
+
     key = hashlib.sha256(str(Path(prefix or sys.prefix).resolve()).encode()).hexdigest()
     directory = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     directory = directory / "alohamini" / "environments"

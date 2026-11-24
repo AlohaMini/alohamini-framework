@@ -15,6 +15,8 @@ class PI0TrainModel(PI05TrainModel):
 
 
 class PI0Algorithm(PI05Algorithm):
+    reference_features = None
+
     asset_fields = ("tokenizer_path",)
     config_class = PI0TrainingConfig
 

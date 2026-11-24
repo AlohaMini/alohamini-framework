@@ -9,7 +9,6 @@ and journals, not LeRobot v3 metadata or video ranges.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import re
@@ -53,6 +52,8 @@ class Issue:
 
 @contextmanager
 def _read_lock(root: Path):
+    import fcntl
+
     # Do not create files during inspection or read a changing recording.
     with (root / "recording.lock").open("rb") as lock:
         try:

@@ -221,6 +221,7 @@ TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理
 | <a id="leworldmodel"></a>[LeWorldModel](../../src/alohamini/policies/lewm/README.md) | `lewm` |
 | <a id="smolvla"></a>[SmolVLA](../../src/alohamini/policies/smolvla/README.md) | `smolvla` |
 | <a id="π05"></a>[π0.5](../../src/alohamini/policies/pi05/README.md) | `pi05` |
+| [RLT（离线残差策略）](../../src/alohamini/policies/rlt/README.md) | `alohamini rlt` |
 | [π0](../../src/alohamini/policies/pi0/README.md) | `pi0` |
 | [π0-FAST](../../src/alohamini/policies/pi0_fast/README.md) | `pi0_fast` |
 | [EO-1](../../src/alohamini/policies/eo1/README.md) | `eo1` |

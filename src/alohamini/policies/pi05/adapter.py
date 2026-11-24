@@ -306,6 +306,8 @@ class PI05TrainModel(torch.nn.Module):
 
 
 class PI05Algorithm(ResourceAlgorithm):
+    from .reference import PI05ReferenceFeatures as reference_features
+
     training_parameter_fields = {"chunk_size": "network.action_horizon"}
     visual_backbone_modules = ("network.paligemma_with_expert.paligemma.model.vision_tower",)
 

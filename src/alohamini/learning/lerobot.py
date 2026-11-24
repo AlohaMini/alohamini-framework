@@ -129,7 +129,11 @@ class LeRobotSource:
             for c in self.cameras
         ):
             raise ValueError("LeRobot v3 training requires image or video cameras")
+        from alohamini.datasets.v3_extensions import action_validity_fields
+
         self.info = deepcopy(source_info)
+        if validity := action_validity_fields(info):
+            self.info["action_validity_fields"] = validity
         self.info.update(features=deepcopy(info["features"]), cameras=self.cameras)
         self.episodes = {}
         self.metadata_paths = [root / "meta/info.json"]
