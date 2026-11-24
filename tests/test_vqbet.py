@@ -5,6 +5,7 @@ import torch
 from test_native_learning import recording as recording
 
 from alohamini.learning.data import AlohaMiniDataset
+from alohamini.learning.metrics import MetricAccumulator
 from alohamini.learning.policy import NativePolicy, save_checkpoint
 from alohamini.policies.registry import algorithm
 
@@ -54,8 +55,21 @@ def test_stage_counter_changes_only_after_success_and_survives_reload(recording,
     quantizer = model.vqbet.action_head.vqvae_model
     optimizer = torch.optim.Adam(model.get_optim_params(), lr=1e-4)
     # Multiple forwards and validation do not count as optimizer updates.
+    specs = recipe.metric_specs(model.config)
     for _ in range(2):
-        model(batch)[0].backward()
+        loss, outputs = model(batch)
+        accumulator = MetricAccumulator(specs)
+        accumulator.add(outputs, batch, recipe.loss_counts(batch))
+        quantizer_metrics = accumulator.result()["metrics"]
+        assert loss.item() == pytest.approx(
+            quantizer_metrics["loss_vq_reconstruction"]
+            + 5 * quantizer_metrics["loss_vq_commitment"]
+        )
+        assert (
+            "mean_batch_distinct_codes" in quantizer_metrics
+            and "loss_offset" not in quantizer_metrics
+        )
+        loss.backward()
     assert quantizer.optimized_steps.item() == 0
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
@@ -79,6 +93,18 @@ def test_stage_counter_changes_only_after_success_and_survives_reload(recording,
     assert counter.optimized_steps.item() == 2 and counter.discretized.item()
     clone.zero_grad(set_to_none=True)
     loss, diagnostics = clone(batch)
+    accumulator = MetricAccumulator(specs)
+    accumulator.add(diagnostics, batch, recipe.loss_counts(batch))
+    policy_metrics = accumulator.result()["metrics"]
+    assert loss.item() == pytest.approx(
+        policy_metrics["loss_code_classification"]
+        + clone.config.offset_loss_weight * policy_metrics["loss_offset"]
+    )
+    assert (
+        "loss_vq_reconstruction" not in policy_metrics
+        and "mean_batch_max_action_error" in policy_metrics
+    )
+    assert 0 <= policy_metrics["equal_primary_code_rate"] <= 1
     loss.backward()
     assert torch.isfinite(loss) and "classification_loss" in diagnostics
     assert clone.vqbet.policy.lm_head.weight.grad is not None

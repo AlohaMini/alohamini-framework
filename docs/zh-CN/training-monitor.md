@@ -20,13 +20,27 @@ alohamini train monitor --runs-dir /path/to/runs --datasets-dir /path/to/dataset
 | `--port N`、`--open` | 指定回环端口，`0` 自动选择。用 `--open` 打开浏览器。 |
 | `--allow-origin ORIGIN` | 允许指定 Studio 浏览器来源读取 API，可重复指定。 |
 
+## 云端训练，本地查看
+
+训练机上启动监控，指定实际训练输出目录。使用自定义控制台目录时加 `--logs-dir /path/to/logs`。
+
+```bash
+alohamini train monitor --runs-dir /path/to/runs --port 7860
+```
+
+本机打开 SSH 隧道，再访问 `http://127.0.0.1:7861/`。将 `user@training-host` 换为可登录训练机的 SSH 地址。查看期间保持两个命令运行。本机只需 SSH 和浏览器。
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:7861:127.0.0.1:7860 user@training-host
+```
+
 ## 查看训练
 
 - 首次打开使用英文。右上角切换中英文，也可指定 `?lang=zh` 或 `?lang=en`。桌面侧栏可收起，勾选其他任务可叠加对比。
-- **指标**按策略已记录的损失项和参数组选择曲线。悬停指标名查看定义。浅线为单步值，实线趋势为完整记录窗口的算术均值，虚线为验证。点击图例显隐曲线。长区间按指标保留首尾、分桶极值及缺口。
+- **指标**按任务展示总损失、全部已记录的策略分项与学习率，曲线每页最多八张。用“选择指标”搜索字段并组合曲线。“显示设置”可调整横轴、趋势窗口和桌面图宽。浅线为单步值，趋势线为完整记录窗口的算术均值，虚线为验证。点击图例显隐，悬停或聚焦指标名查看定义。
 - **放大曲线**可独立拖选区间、前移或后移、撤销、恢复全程，以及切换自适应或包含零点的纵轴。放大后重新读取所选区间。总览横轴可选择已记录的步数、样本数或经过时间。
-- **诊断**显示最近窗口的分布、P50/P95、波动、每步斜率、分项前后窗口均值、学习率、裁剪和耗时。输入验证损失阈值可查看首次达标的实测记录。旧日志按裁剪前范数和明确阈值推算的裁剪比例会注明来源。
-- 展开顶部的**训练设置**可查看启动时的冻结模块、参数量、优化器参数组及预检。支持当前 `train check` 报告和历史 `RUN.preflight.json`，也可在此导入文件。旧控制台若仅有参数总数与可训练数，则展示汇总。**配置**可按参数名或值搜索，**日志**可切换原始 JSONL 和控制台。
+- **诊断**对比前后两个训练窗口的均值、有效记录数和分项变化。验证区显示最近与全程最低的验证损失，输入目标上限可查首次达标步数。展开查看分布、梯度裁剪、学习率、耗时和已采样的模块更新。
+- **配置**可搜索分词器、基座、初始化权重、冻结参数和优化器设置。展开资源查看记录的路径、版本或哈希，也可导入当前任务的预检 JSON。**日志**可切换实时训练控制台与原始 JSONL。
 - **评估**支持导入本地录制或离线报告（JSON，最大 4 MiB）。录制按回合和通道查看原始帧轨迹；报告按实际字段展示各通道 MAE、偏差、RMSE 及预测偏移的 MAE。数据来源与 checkpoint 清单匹配状态随数据展示。导入选择保存在当前浏览器中。
 
 ## 可选训练诊断
@@ -46,7 +60,7 @@ alohamini train monitor --runs-dir /path/to/runs --datasets-dir /path/to/dataset
 
 | 路径 | 参数与返回值 |
 | --- | --- |
-| `/runs`、`/runs/{id}` | 列表含 `id`、`version`、`metadata_version`。详情含阶段、配置、`schema.runtime`、`preflight`、`launch_preflight`、控制台计数及离线报告。`brief=1` 只取动态摘要。 |
+| `/runs`、`/runs/{id}` | 列表含 `id`、`version`、`metadata_version`。详情含各阶段已记录的 `policy_metrics`、配置、`schema.runtime`、`preflight`、`launch_preflight`、控制台计数及离线报告。`brief=1` 只取动态摘要。 |
 | `/runs/{id}/series` | 最多 32 个 `metric`，`axis=step\|samples\|elapsed_s`，闭区间 `min/max`，每条曲线 `points=16..4096`（默认 800）。`mean_window=0..4096`，默认关闭。 |
 | `/runs/{id}/diagnostics` | `metric`、`window=2..4096`、可选验证目标 `target`。返回基于原始训练记录的窗口统计、优化器诊断与验证记录。 |
 | `/runs/{id}/records`、`/runs/{id}/console` | 原始记录使用 `phase=train\|validation`、`limit=1..1000`、`cursor`、可选 `tail=1`。控制台使用日志名 `name` 和字节游标。 |

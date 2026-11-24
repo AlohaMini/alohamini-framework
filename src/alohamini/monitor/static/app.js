@@ -18,7 +18,7 @@ import { accents, colors, Plot } from "./plot.js";
 import { Evaluation } from "./evaluation.js";
 import { inspectChart } from "./inspector.js";
 import { Diagnostics } from "./diagnostics.js";
-import { renderResources } from "./resources.js";
+import { configurationFacts, factCell, reportControls } from "./resources.js";
 
 let runs = [],
   selected = [],
@@ -27,18 +27,20 @@ let runs = [],
   range = null,
   live = true,
   metrics = null,
-  trend = 100;
+  trend = 100,
+  chartPage = 0;
 let request,
   timer,
   runListKey = "",
   configKey = "",
+  configCache,
   evalKey = "",
   logState = {},
   axisKey = "";
 const info = new Map(),
   snapshots = new Map(),
   charts = new Map();
-const preferred = ["loss", "grad_norm", "lr", "loss_action", "loss_video", "loss_l1", "update_s"];
+const chartsPerPage = 8;
 const evaluation = new Evaluation(() => {
   evalKey = "";
   switchTab("evaluation");
@@ -52,11 +54,20 @@ const selection = () => selected.map((id) => info.get(id)).filter(Boolean);
 const unionMetrics = () => [
   ...new Set(selection().flatMap((r) => Object.values(r.phases).flatMap((p) => p.metrics))),
 ];
-function sortedKeys(keys) {
-  return [...keys].sort((a, b) => {
-    const rank = (k) => (preferred.includes(k) ? preferred.indexOf(k) : preferred.length);
-    return rank(a) - rank(b) || a.localeCompare(b);
-  });
+function policyMetrics(r) {
+  const phases = Object.values(r.phases);
+  const available = new Set(phases.flatMap((p) => p.metrics));
+  const specs = r.schema?.components || [];
+  return [
+    ...new Set([
+      ...specs.filter((s) => s.console).map((s) => s.name),
+      ...specs.map((s) => s.name),
+      ...phases.flatMap((p) => p.policy_metrics || []),
+      ...[...available].filter(
+        (k) => k.startsWith("loss_") || k.endsWith("_loss") || k.startsWith("losses_after_"),
+      ),
+    ]),
+  ].filter((k) => available.has(k) && k !== "loss");
 }
 function metricSpec(r, k) {
   return r?.schema?.components?.find((s) => s.name === k);
@@ -64,31 +75,20 @@ function metricSpec(r, k) {
 function metricDescription(key) {
   const descriptions = selection()
     .filter((r) => Object.values(r.phases).some((p) => p.metrics.includes(key)))
-    .map((r) => [runName(r), explain(key, metricSpec(r, key), r)]);
-  if (new Set(descriptions.map(([, text]) => text)).size <= 1) return descriptions[0]?.[1] || explain(key);
+    .map((r) => [runName(r), [explain(key, metricSpec(r, key), r), key].filter(Boolean).join("\n")]);
+  if (new Set(descriptions.map(([, text]) => text)).size <= 1)
+    return descriptions[0]?.[1] || explain(key);
   return descriptions.map(([name, text]) => name + " · " + text).join("\n");
 }
 function defaultMetrics() {
-  const r = primary();
-  if (!r) return [];
-  const available = [...new Set(Object.values(r.phases).flatMap((p) => p.metrics))];
-  const specs = r.schema?.components || [];
-  const isComponent = (k) => k.startsWith("loss_") || k.endsWith("_loss");
-  const policy = [
-    ...new Set([
-      ...specs.filter((s) => s.console).map((s) => s.name),
-      ...specs.map((s) => s.name).filter(isComponent),
-      ...available.filter(isComponent),
-    ]),
-  ]
-    .filter((k) => available.includes(k))
-    .slice(0, 6);
+  const available = unionMetrics();
+  const policy = selection().flatMap(policyMetrics);
   const groupRates = available.filter((k) => k.startsWith("lr/"));
   const defaults = [
     "loss",
     ...policy,
     "grad_norm",
-    ...(groupRates.length > 1 ? groupRates.slice(0, 3) : ["lr"]),
+    ...(groupRates.length > 1 || !available.includes("lr") ? groupRates : ["lr"]),
   ];
   const recorded = [...new Set(defaults)].filter((k) => available.includes(k));
   return recorded.length ? recorded : available.slice(0, 5);
@@ -164,6 +164,7 @@ function selectRun(id, compare = false) {
     metrics = null;
     logState = {};
   }
+  chartPage = 0;
   runListKey = "";
   lastHeader = "";
   setUrl();
@@ -212,7 +213,7 @@ function renderList() {
   if (!list.childElementCount) list.append(el("p", "side-note", filter ? t("noMatches") : t("noRuns")));
 }
 function renderHead(r) {
-  $("primary-name").textContent = runName(r);
+  $("primary-name").textContent = $("primary-name").title = runName(r);
   $("policy-badge").textContent = r.policy || "";
   $("policy-badge").hidden = !r.policy;
   const train = r.phases.train.latest,
@@ -323,18 +324,51 @@ function rangeDialog() {
 }
 function metricDialog() {
   const body = modal(t("chooseMetrics")),
-    keys = sortedKeys(unionMetrics()),
+    all = unionMetrics(),
+    policy = new Set(selection().flatMap(policyMetrics)),
     chosen = new Set(metrics || defaultMetrics());
+  const filter = el("input", "input");
+  filter.type = "search";
+  filter.placeholder = t("findMetric");
+  filter.setAttribute("aria-label", filter.placeholder);
+  body.append(filter);
   const options = el("div");
-  for (const key of keys) {
-    const label = el("label", "metric-choice"),
-      input = el("input");
-    input.type = "checkbox";
-    input.checked = chosen.has(key);
-    input.onchange = () => (input.checked ? chosen.add(key) : chosen.delete(key));
-    label.append(input, document.createTextNode(t(key)));
-    options.append(label);
+  function group(title, keys) {
+    if (!keys.length) return;
+    const field = el("fieldset", "metric-group");
+    field.append(el("legend", null, t(title)));
+    for (const key of keys) {
+      const label = el("label", "metric-choice"),
+        input = el("input");
+      input.type = "checkbox";
+      input.checked = chosen.has(key);
+      input.onchange = () => (input.checked ? chosen.add(key) : chosen.delete(key));
+      label.append(input, document.createTextNode(t(key)));
+      label.dataset.search = (key + " " + t(key)).toLowerCase();
+      field.append(label);
+    }
+    options.append(field);
   }
+  group(
+    "policyMetrics",
+    [...new Set(["loss", ...policy])].filter((k) => all.includes(k)),
+  );
+  group(
+    "trainingMetrics",
+    all.filter((k) => k !== "loss" && !policy.has(k) && !k.startsWith("module/")),
+  );
+  group(
+    "probe",
+    all.filter((k) => k.startsWith("module/") && !policy.has(k)),
+  );
+  filter.oninput = () => {
+    const needle = filter.value.trim().toLowerCase();
+    for (const field of options.children) {
+      for (const label of field.querySelectorAll("label"))
+        label.hidden = !label.dataset.search.includes(needle);
+      field.hidden = !field.querySelector("label:not([hidden])");
+    }
+  };
   body.append(options);
   const message = el("p", "notice", t("maxMetrics"));
   message.hidden = true;
@@ -343,17 +377,19 @@ function metricDialog() {
   actions.append(
     btn(t("byPolicy"), () => {
       metrics = null;
+      chartPage = 0;
       $("dialog").close();
       refresh();
     }),
     btn(
       t("apply"),
       () => {
-        if (!chosen.size || chosen.size > 32) {
+        if (!chosen.size) {
           message.hidden = false;
           return;
         }
-        metrics = sortedKeys(chosen);
+        metrics = [...chosen];
+        chartPage = 0;
         $("dialog").close();
         refresh();
       },
@@ -441,50 +477,78 @@ function drawCharts(keys) {
       plot.destroy();
       charts.delete(key);
     }
+  const runs = selection(),
+    policy = new Set(runs.flatMap(policyMetrics));
+  const groups = new Map();
+  for (const [index, key] of keys.entries()) {
+    let group = "trainingMetrics";
+    if (key === "loss" || policy.has(key)) group = "policyMetrics";
+    else if (/^(lr($|\/)|grad_|skipped_updates$)/.test(key)) group = "optimizer";
+    else if (key.startsWith("module/")) group = "probe";
+    else if (["generalization_gap", "train_eval_loss", "train_eval_samples"].includes(key))
+      group = "paired";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push([key, index]);
+  }
+  for (const section of [...box.children]) if (!groups.has(section.dataset.group)) section.remove();
   if (!keys.length) {
     box.append(el("div", "empty-state", t("noneYet")));
     return;
   }
-  keys.forEach((key, index) => {
-    let plot = charts.get(key);
-    if (!plot) {
-      plot = new Plot(box, chooseRange, () => {
-        const runs = selection(),
-          currentTrend = trend,
-          currentIndex = [...box.children].indexOf(plot.card);
-        inspectChart({
-          key,
-          description: metricDescription(key),
-          runs,
-          axis,
-          bounds: extent(),
-          initial: range,
-          trend: currentTrend,
-          linesFor: (phases) => seriesLines(key, currentIndex, runs, phases, currentTrend),
-          accent: accents[currentIndex % accents.length],
-        });
-      });
-      charts.set(key, plot);
+  let groupIndex = 0;
+  for (const [group, items] of groups) {
+    let section = box.querySelector('[data-group="' + group + '"]');
+    if (!section) {
+      section = el("section", "chart-section");
+      section.dataset.group = group;
+      section.append(el("h2", "section-bar"), el("div", "chart-grid"));
     }
-    if (box.children[index] !== plot.card) box.insertBefore(plot.card, box.children[index] || null);
-    const runs = selection(),
-      lines = seriesLines(
+    if (box.children[groupIndex] !== section)
+      box.insertBefore(section, box.children[groupIndex] || null);
+    groupIndex++;
+    section.firstChild.textContent = t(group);
+    const grid = section.lastChild;
+    items.forEach(([key, index], position) => {
+      let plot = charts.get(key);
+      if (!plot) {
+        plot = new Plot(grid, chooseRange, () => {
+          const index = plot.seriesIndex,
+            currentTrend = trend,
+            runs = selection();
+          inspectChart({
+            key,
+            description: metricDescription(key),
+            runs,
+            axis,
+            bounds: extent(),
+            initial: range,
+            trend: currentTrend,
+            linesFor: (phases) => seriesLines(key, index, runs, phases, currentTrend),
+            accent: accents[index % accents.length],
+          });
+        });
+        charts.set(key, plot);
+      }
+      if (grid.children[position] !== plot.card)
+        grid.insertBefore(plot.card, grid.children[position] || null);
+      plot.seriesIndex = index;
+      const lines = seriesLines(
         key,
         index,
         runs,
         runs.map((r) => snapshots.get(r.id)?.phases),
         trend,
       );
-    plot.update({
-      title: t(key),
-      description: metricDescription(key),
-      axis,
-      lines,
-      featured: index === 0,
-      accent: accents[index % accents.length],
-      range,
+      plot.update({
+        title: t(key),
+        description: metricDescription(key),
+        axis,
+        lines,
+        accent: accents[index % accents.length],
+        range: range || extent(),
+      });
     });
-  });
+  }
 }
 function flatten(object, prefix = "", map = new Map()) {
   for (const [key, value] of Object.entries(object)) {
@@ -498,7 +562,8 @@ function flatten(object, prefix = "", map = new Map()) {
 function renderConfig() {
   const filter = $("config-filter").value.toLowerCase(),
     list = selection();
-  const stamp = signature([lang, filter, list.map((r) => [r.id, r.metadata_version])]);
+  const meta = signature([lang, list.map((r) => [r.id, r.metadata_version])]);
+  const stamp = signature([meta, filter]);
   if (stamp === configKey) return;
   configKey = stamp;
   const table = $("config-table");
@@ -506,28 +571,54 @@ function renderConfig() {
   const head = table.createTHead().insertRow();
   head.append(el("th", null, t("configKey")));
   list.forEach((r) => head.append(el("th", null, runName(r))));
-  const data = list.map((r) => flatten(r.config || {})),
-    keys = new Set(data.flatMap((d) => [...d.keys()]));
+  if (configCache?.meta !== meta) {
+    const data = list.map((r) => flatten(r.config || {})),
+      facts = list.map(configurationFacts);
+    facts.forEach((map, i) => {
+      for (const item of map.values()) for (const alias of item.aliases) data[i].delete(alias);
+    });
+    configCache = { meta, data, facts };
+    reportControls(list[0], () => {
+      configKey = "";
+      configCache = null;
+      renderConfig();
+    });
+  }
+  const { data, facts } = configCache;
+  const keys = new Set([...facts.flatMap((m) => [...m.keys()]), ...data.flatMap((m) => [...m.keys()])]);
   const body = table.createTBody();
   for (const k of keys) {
-    if (
-      filter &&
-      !k.toLowerCase().includes(filter) &&
-      !data.some((d) => d.get(k)?.toLowerCase().includes(filter))
-    )
+    const fact = facts.map((m) => m.get(k)).find(Boolean);
+    const label = fact?.label || k;
+    const searchable = [
+      k,
+      label,
+      ...data.map((d) => d.get(k)),
+      ...facts.flatMap((m) => {
+        const item = m.get(k);
+        return item ? [item.value, ...item.details.flat(), ...item.aliases] : [];
+      }),
+    ];
+    if (filter && !searchable.some((v) => v != null && String(v).toLowerCase().includes(filter)))
       continue;
     const row = body.insertRow(),
-      name = el("td", null, k);
-    const explanation = explain(k);
-    describe(name, explanation);
+      name = el("td", null, label);
+    if (fact) name.title = k;
+    else describe(name, explain(k));
     row.append(name);
-    data.forEach((d) => row.append(el("td", "config-value", d.get(k) ?? "—")));
+    data.forEach((d, i) => {
+      const value = facts[i].get(k),
+        cell = el("td", "config-value");
+      if (value) cell.append(factCell(value));
+      else cell.textContent = d.get(k) ?? "—";
+      row.append(cell);
+    });
   }
   if (!body.rows.length) body.insertRow().insertCell().textContent = t("noConfig");
 }
 async function renderLogs(r, signal) {
   const sources = [
-    ...r.logs.map((name) => [name, name]),
+    ...r.logs.filter((name) => !name.endsWith(".preflight.log")).map((name) => [name, name]),
     ["train", t("rawTrain")],
     ["validation", t("rawVal")],
   ];
@@ -538,7 +629,7 @@ async function renderLogs(r, signal) {
     selector.replaceChildren(...sources.map(([k, label]) => opt(k, label)));
     selector.value = sources.some(([k]) => k === logState.key)
       ? logState.key
-      : r.logs.includes(preferredLog)
+      : sources.some(([k]) => k === preferredLog)
         ? preferredLog
         : "train";
     logState = { sources: sig };
@@ -562,6 +653,10 @@ async function renderLogs(r, signal) {
 }
 function switchTab(next) {
   tab = next;
+  const url = new URL(location.href);
+  if (next === "metrics") url.searchParams.delete("view");
+  else url.searchParams.set("view", next);
+  history.replaceState(null, "", url);
   document.querySelectorAll("[data-tab]").forEach((n) => {
     if (n.dataset.tab === tab) n.setAttribute("aria-current", "page");
     else n.removeAttribute("aria-current");
@@ -580,9 +675,10 @@ function showLive() {
   $("live-icon").setAttribute("href", live ? "#icon-pause" : "#icon-play");
   showSidebar();
   $("trend").replaceChildren(
-    ...[0, 20, 100, 500].map((n) => opt(n, n ? n + " " + t("recordsUnit") : t("off"))),
+    ...[0, 20, 100, 500].map((n) => opt(n, n ? fmt(n) + " " + t("recordsUnit") : t("off"))),
   );
   $("trend").value = trend;
+  $("live").setAttribute("aria-label", $("live").title);
   $("language-label").textContent = lang === "zh" ? "English" : "中文";
 }
 let lastPaint = "",
@@ -623,7 +719,12 @@ async function sync(signal) {
       // The catalog revision precedes these reads. A write during a read must
       // still invalidate the next poll, even if it was the last training step.
       if (!signal.aborted)
-        info.set(id, { ...prev, ...value, version: item.version, metadata_version: item.metadata_version });
+        info.set(id, {
+          ...prev,
+          ...value,
+          version: item.version,
+          metadata_version: item.metadata_version,
+        });
     }),
   );
   if (signal.aborted) return;
@@ -634,7 +735,6 @@ async function sync(signal) {
     renderHead(r);
     lastHeader = headerSig;
   }
-  renderResources(selection(), refresh);
   const notices = [];
   for (const run of selection())
     for (const [phase, p] of Object.entries(run.phases)) {
@@ -657,8 +757,16 @@ async function sync(signal) {
     renderAxes();
     const all = unionMetrics();
     $("metrics-view").querySelector(".toolbar").hidden = !all.length;
-    const keys = (metrics || defaultMetrics()).filter((k) => all.includes(k)),
+    const chosen = (metrics || defaultMetrics()).filter((k) => all.includes(k));
+    chartPage = Math.max(0, Math.min(chartPage, Math.ceil(chosen.length / chartsPerPage) - 1));
+    const offset = chartPage * chartsPerPage;
+    const keys = chosen.slice(offset, offset + chartsPerPage),
       budget = getBudget();
+    $("chart-pages").hidden = chosen.length <= chartsPerPage;
+    $("charts-prev").disabled = chartPage === 0;
+    $("charts-next").disabled = offset + keys.length >= chosen.length;
+    $("chart-page-status").textContent =
+      offset + 1 + "–" + (offset + keys.length) + " / " + chosen.length;
     const queryKey = signature([axis, range, keys, budget, trend]);
     const changed = await Promise.all(
       selection().map((run) => fetchSeries(run, keys, queryKey, budget, signal)),
@@ -721,7 +829,37 @@ $("trend").onchange = () => {
   trend = Number($("trend").value);
   refresh();
 };
+const settings = $("display-settings");
+document.addEventListener("click", (e) => {
+  if (settings.open && !settings.contains(e.target)) settings.open = false;
+});
+settings.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    settings.open = false;
+    settings.querySelector("summary").focus();
+  }
+});
+const chartWidth = $("chart-width");
+const storedWidth = Number(localStorage.getItem("am:chart-width"));
+if (storedWidth >= 240 && storedWidth <= 720) chartWidth.value = storedWidth;
+function sizeCharts() {
+  const width = chartWidth.valueAsNumber;
+  $("charts").style.setProperty("--chart-width", width + "px");
+  $("width-value").textContent = width + " px";
+  chartWidth.setAttribute("aria-valuetext", width + " px");
+}
+chartWidth.oninput = sizeCharts;
+chartWidth.onchange = () => localStorage.setItem("am:chart-width", chartWidth.value);
+sizeCharts();
 $("metrics-btn").onclick = metricDialog;
+$("charts-prev").onclick = () => {
+  chartPage--;
+  refresh();
+};
+$("charts-next").onclick = () => {
+  chartPage++;
+  refresh();
+};
 $("range-btn").onclick = rangeDialog;
 $("reset-range").onclick = () => {
   range = null;
@@ -763,4 +901,9 @@ new ResizeObserver(() => {
 }).observe($("metrics-view"));
 translate();
 showLive();
-switchTab("metrics");
+const initialView = new URL(location.href).searchParams.get("view");
+switchTab(
+  [...document.querySelectorAll("[data-tab]")].some((n) => n.dataset.tab === initialView)
+    ? initialView
+    : "metrics",
+);

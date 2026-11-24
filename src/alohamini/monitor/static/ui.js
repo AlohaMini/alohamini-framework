@@ -1,7 +1,5 @@
 // Shared display strings, metric definitions and DOM helpers.
 const words = {
-  importShort: ["Import data", "导入评估"],
-  configuredScope: ["Configured training scope", "配置中声明的训练范围"],
   setting: ["Value", "配置值"],
   toggleSeries: ["Show or hide series", "显示或隐藏此曲线"],
   compareHint: ["Select a run to inspect. Tick others to compare.", "点击查看任务，勾选叠加对比。"],
@@ -20,11 +18,14 @@ const words = {
   views: ["Run views", "运行视图"],
   metrics: ["Metrics", "指标"],
   evaluation: ["Evaluation", "评估"],
+  evaluationData: ["Evaluation data", "评估数据"],
   config: ["Configuration", "配置"],
   logs: ["Logs", "日志"],
   axis: ["X axis", "横轴"],
   range: ["Range", "区间"],
-  chooseMetrics: ["Metrics", "选择指标"],
+  chooseMetrics: ["Select metrics", "选择指标"],
+  display: ["Display", "显示设置"],
+  chartWidth: ["Minimum chart width", "最小图宽"],
   resetRange: ["Full history", "完整历史"],
   savedConfig: ["Run configuration", "训练配置"],
   filterConfig: ["Filter parameters", "筛选参数"],
@@ -66,7 +67,10 @@ const words = {
   sampled: ["Extrema retained", "保留极值"],
   raw: ["Raw points", "原始点"],
   points: ["points", "点"],
-  selectHint: ["Drag to zoom. Use ← and → to inspect points.", "拖动选择区间，使用左右方向键查看记录点。"],
+  selectHint: [
+    "Drag to zoom. Use ← and → to inspect points.",
+    "拖动选择区间，使用左右方向键查看记录点。",
+  ],
   lower: ["From", "起点"],
   upper: ["To", "终点"],
   apply: ["Apply", "应用"],
@@ -127,7 +131,40 @@ const words = {
   scale: ["Scale", "倍率"],
   denominator: ["Denominator", "分母"],
   reduction: ["Reduction", "聚合"],
-  maxMetrics: ["Select 1–32 metrics.", "请选择 1 至 32 项指标。"],
+  maxMetrics: ["Select at least one metric.", "请至少选择一项指标。"],
+  findMetric: ["Find a metric or field name", "搜索指标或字段名"],
+  previousPage: ["Previous charts", "上一组曲线"],
+  nextPage: ["Next charts", "下一组曲线"],
+  policyMetrics: ["Policy metrics", "策略指标"],
+  trainingMetrics: ["Training and system metrics", "训练与系统指标"],
+  windowComparison: ["Training window comparison", "训练窗口对比"],
+  trainMetric: ["Training metric", "训练指标"],
+  componentChanges: ["Loss components", "损失分项变化"],
+  targetMax: ["Target ≤", "目标上限 ≤"],
+  optional: ["Optional", "选填"],
+  currentWindow: ["Current window mean", "本窗口均值"],
+  previousWindow: ["Previous window mean", "上一窗口均值"],
+  currentMean: ["Current", "本窗均值"],
+  earlierMean: ["Previous", "上窗均值"],
+  change: ["Change", "变化量"],
+  observations: ["valid records", "条有效记录"],
+  noEarlierWindow: ["No earlier records", "尚无更早记录"],
+  noObservations: ["Waiting for training records", "等待训练记录"],
+  noComponents: ["No component values in this window.", "此窗口暂无分项记录。"],
+  noValidation: ["No validation loss recorded.", "尚无验证损失记录。"],
+  lowest: ["Lowest observed", "全程最低"],
+  sincePreviousVal: ["Change since previous evaluation", "较上次验证"],
+  meanRose: ["Mean increased", "均值上升"],
+  meanFell: ["Mean decreased", "均值下降"],
+  meanUnchanged: ["Mean unchanged", "均值持平"],
+  variation: ["Variation and distribution", "波动与分布"],
+  histCount: ["Bar height counts observations in each value range.", "柱高表示该数值区间内的记录数。"],
+  median: ["Median (P50)", "中位数（P50）"],
+  percentile95: ["95th percentile", "第 95 百分位"],
+  optimizerTiming: ["Gradients, learning rates and timing", "梯度、学习率与训练耗时"],
+  gradP95: ["Gradient norm (P95)", "梯度范数（P95）"],
+  threshold: ["threshold", "阈值"],
+  sampleUnit: ["samples", "个样本"],
   weights: ["Weights", "权重"],
   unnamed: ["Run", "任务"],
   source: ["Source", "来源"],
@@ -186,22 +223,79 @@ const words = {
   numerator: ["Numerator", "分子"],
   count: ["Count", "计数"],
   phase: ["Phase", "阶段"],
-  launchCheck: ["Launch preflight", "启动预检"],
-  cpuOnly: ["CPU-only check", "仅 CPU 预检"],
   yes: ["Yes", "是"],
-  gpuTest: ["GPU test", "GPU 测试"],
   console: ["Training console", "训练控制台"],
   stage: ["Stage", "阶段"],
   train_episodes: ["Training episodes", "训练回合"],
   val_episodes: ["Validation episodes", "验证回合"],
   resources: ["Resource preflight", "资源预检"],
-  importCheck: ["Open preflight JSON", "导入预检 JSON"],
+  importCheck: ["Import resource report", "导入资源报告"],
+  baseModel: ["Base model", "基座模型"],
+  modelWeights: ["Model weights", "模型权重"],
+  initialWeights: ["Initialization weights", "初始化权重"],
+  tokenizer: ["Tokenizer", "分词器"],
+  processor: ["Processor", "预处理器"],
+  revision: ["Revision", "版本"],
+  path: ["Path", "路径"],
+  headerHash: ["Checkpoint header SHA-256", "权重文件头 SHA-256"],
+  requestedPath: ["Requested path", "配置路径"],
+  resolvedFiles: ["Resolved files", "解析到的文件"],
+  reportNote: ["Resource note", "资源说明"],
+  allParameters: ["Total parameters", "总参数量"],
+  frozenParams: ["Frozen parameters", "冻结参数"],
+  loss_diffusion: ["Diffusion loss", "扩散损失"],
+  loss_flow: ["Flow matching loss", "流匹配损失"],
+  loss_flow_matching: ["Flow matching loss", "流匹配损失"],
+  flow_loss: ["Flow matching loss", "流匹配损失"],
+  fm_loss: ["Flow matching loss", "流匹配损失"],
+  ce_loss: ["Token cross-entropy", "词元交叉熵"],
+  action_loss: ["Action loss", "动作损失"],
+  video_loss: ["Video loss", "视频损失"],
+  loss_video_weighted: ["Weighted video loss", "加权视频损失"],
+  loss_action_weighted: ["Weighted action loss", "加权动作损失"],
+  loss_classification: ["Classification loss", "分类损失"],
+  loss_classification_weighted: ["Weighted classification loss", "加权分类损失"],
+  prediction_loss: ["Latent prediction loss", "潜表示预测损失"],
+  sigreg_loss: ["SIGReg regularizer", "SIGReg 正则项"],
+  latent_loss: ["Latent loss", "潜表示损失"],
+  wm_loss: ["World model loss", "世界模型损失"],
+  loss_text: ["Text token loss", "文本词元损失"],
+  loss_fast: ["FAST action-token loss", "FAST 动作词元损失"],
+  loss_vlm: ["Vision-language token loss", "视觉语言词元损失"],
+  loss_mse: ["Flow MSE", "流预测均方误差"],
+  loss_freq: ["Frequency loss", "频域损失"],
+  loss_score: ["Candidate score loss", "候选评分损失"],
+  joints_loss: ["Joint prediction loss", "关节预测损失"],
+  seq_wise_loss: ["Router load-balancing loss", "路由负载均衡损失"],
+  router_z_loss: ["Router Z-loss", "路由 Z 损失"],
+  depth_loss: ["Depth alignment loss", "深度对齐损失"],
+  future_depth_loss: ["Future depth loss", "未来深度损失"],
+  future_video_loss: ["Future video loss", "未来视频损失"],
+  current_video_loss: ["Current video loss", "当前视频损失"],
+  losses_after_forward: ["Loss before episode masking", "回合掩码前损失"],
+  losses_after_in_ep_bound: ["Loss after episode masking", "回合掩码后损失"],
+  losses_after_rm_padding: ["Loss after action-dimension trimming", "裁去填充动作维后的损失"],
+  active_action_dims: ["Valid action coordinates per sample", "每样本有效动作坐标数"],
+  loss_vq_reconstruction: ["Quantizer reconstruction L1", "量化器重建 L1"],
+  loss_vq_commitment: ["Quantizer commitment loss", "量化承诺损失"],
+  loss_code_classification: ["Code classification loss", "编码分类损失"],
+  loss_primary_code: ["Primary code focal loss", "一级编码焦点损失"],
+  loss_secondary_code: ["Secondary code focal loss", "二级编码焦点损失"],
+  loss_offset: ["Offset L1 loss", "偏移动作 L1 损失"],
+  equal_primary_code_rate: ["Primary code match rate", "一级编码匹配率"],
+  equal_secondary_code_rate: ["Secondary code match rate", "二级编码匹配率"],
+  mean_batch_distinct_codes: ["Distinct codes per microbatch", "每微批次不同编码数"],
+  mean_batch_distinct_combinations: ["Distinct code pairs per microbatch", "每微批次不同编码组合数"],
+  mean_batch_max_action_error: ["Mean of microbatch peak action errors", "微批次最大动作误差的均值"],
+  vq_action_error: ["Decoded action MAE", "解码动作平均绝对误差"],
+  offset_action_error: ["Corrected action MAE", "偏移修正后动作平均绝对误差"],
+  action_mse_error: ["Action MSE", "动作均方误差"],
+  "policy/loss": ["Policy-reported loss", "策略返回的损失"],
+  l1_loss: ["Action L1 loss", "动作 L1 损失"],
+  kld_loss: ["KL divergence", "KL 散度"],
+  kld_loss_weighted: ["Weighted KL loss", "加权 KL 损失"],
   recorded: ["Trainer report", "训练器报告"],
   supplied: ["Imported report", "导入的报告"],
-  noCheck: ["No recorded preflight", "暂无预检记录"],
-  successfulCheck: ["Checks passed", "检查通过"],
-  incompleteCheck: ["Incomplete checks", "检查未齐"],
-  failedCheck: ["Checks failed", "检查失败"],
   badCheck: [
     "Choose a resource or launch preflight JSON for this run (up to 4 MiB).",
     "请选择当前任务的资源或启动预检 JSON（最大 4 MiB）。",
@@ -209,13 +303,10 @@ const words = {
   kind: ["Kind", "类型"],
   status: ["Status", "状态"],
   paths: ["Paths and details", "路径与详情"],
-  checkMode: ["Check", "检查方法"],
-  rawReport: ["Full report JSON", "完整报告 JSON"],
   runtime: ["Training setup", "训练设置"],
   flags: ["Parameter trainability at startup", "启动时参数冻结状态"],
   frozen: ["Frozen", "已冻结"],
   trainable: ["Trainable", "可训练"],
-  flagMissing: ["Module freeze snapshot was not recorded.", "此任务未记录逐模块冻结快照。"],
   training_samples: ["Training samples", "训练样本"],
   validation_samples: ["Validation samples", "验证样本"],
   effective_batch_size: ["Effective batch", "有效批大小"],
@@ -231,6 +322,50 @@ const words = {
   noConfig: ["No saved parameters match.", "没有匹配的已保存参数。"],
 };
 const help = {
+  loss_flow: [
+    "Error between the predicted flow and its training target at sampled noise levels.",
+    "在采样噪声水平下，预测流与训练目标之间的误差。",
+  ],
+  loss_diffusion: [
+    "Error against the configured diffusion target at sampled denoising steps.",
+    "在采样的去噪步上，相对于配置扩散目标的误差。",
+  ],
+  losses_after_forward: [
+    "Mean forward error before masking timesteps at episode boundaries.",
+    "按回合边界屏蔽时间步之前的平均预测误差。",
+  ],
+  losses_after_in_ep_bound: [
+    "Mean after zeroing padded timesteps, including the zeros in the denominator.",
+    "将回合外时间步置零后的均值，分母仍包含这些位置。",
+  ],
+  losses_after_rm_padding: [
+    "Mean after trimming action dimensions; masked timesteps still enter the denominator.",
+    "裁去填充动作维后的均值，分母仍包含已屏蔽的时间步。",
+  ],
+  loss_vq_reconstruction: [
+    "Mean absolute error between an action chunk and its quantized reconstruction.",
+    "动作块与量化重建结果之间的平均绝对误差。",
+  ],
+  loss_vq_commitment: [
+    "Sum of the residual quantizer commitment terms before their objective multiplier.",
+    "残差量化各级承诺损失之和，按乘入总目标前的尺度记录。",
+  ],
+  mean_batch_distinct_codes: [
+    "Distinct code indices counted per quantizer level and summed within each microbatch, then averaged across microbatches and ranks.",
+    "各量化级分别计数不同编码并在微批次内相加，再跨微批次和进程取均值。",
+  ],
+  mean_batch_distinct_combinations: [
+    "Number of different code tuples in each local microbatch, averaged across microbatches and ranks.",
+    "每个本地微批次中不同编码组合的数量，再跨微批次和进程取均值。",
+  ],
+  mean_batch_max_action_error: [
+    "Largest absolute action-coordinate error in each local microbatch, averaged across microbatches and ranks.",
+    "先取各本地微批次最大的动作坐标绝对误差，再跨微批次和进程取均值。",
+  ],
+  active_action_dims: [
+    "Number of unmasked action coordinates across the predicted timesteps of one sample, averaged over samples.",
+    "对每个样本统计整个预测时段的有效动作坐标数，再按样本平均。",
+  ],
   loss_l1: [
     "Absolute action reconstruction error in the policy’s training representation.",
     "在策略训练表示下计算的动作绝对重建误差。",
@@ -243,14 +378,8 @@ const help = {
     "KL term after applying its configured objective weight.",
     "KL 项乘以配置权重后对目标损失的贡献。",
   ],
-  loss_action: [
-    "Action prediction term emitted by the policy. OpenWAM includes its action weight.",
-    "策略输出的动作预测损失项。OpenWAM 的记录已含动作损失权重。",
-  ],
-  loss_video: [
-    "Video prediction term emitted by the policy. OpenWAM includes its video weight.",
-    "策略输出的视频预测损失项。OpenWAM 的记录已含视频损失权重。",
-  ],
+  loss_action: ["Action prediction term emitted by the policy.", "策略返回的动作预测损失项。"],
+  loss_video: ["Video prediction term emitted by the policy.", "策略返回的视频预测损失项。"],
   policy: ["Policy implementation used in this attempt.", "本次训练使用的策略实现。"],
   dataset: ["Dataset root resolved by the trainer.", "训练器解析的数据集根目录。"],
   train_episodes: ["Episode indices included in the training split.", "纳入训练集的回合索引。"],
@@ -293,8 +422,8 @@ const help = {
     "最近一次成功更新的全局目标损失，包含策略设定的损失权重。",
   ],
   valLoss: [
-    "Latest held-out evaluation using policy-defined denominators. ACT validation excludes the KL term.",
-    "最近一次留出集评估，分母由策略定义。ACT 验证不含 KL 项。",
+    "Latest held-out evaluation using the policy's validation objective and denominators.",
+    "最近一次留出集评估的损失，使用该策略的验证目标与分母。",
   ],
   grad_norm: [
     "Global gradient norm before clipping, after mixed-precision unscaling.",
@@ -347,7 +476,10 @@ const help = {
     "训练计算采用的自动混合精度模式。",
   ],
   steps: ["Target number of successful optimizer updates.", "目标成功优化器更新次数。"],
-  eval_steps: ["Successful optimizer updates between validation passes.", "两次验证之间的成功更新步数。"],
+  eval_steps: [
+    "Successful optimizer updates between validation passes.",
+    "两次验证之间的成功更新步数。",
+  ],
   save_freq: ["Optimizer steps between checkpoints.", "保存 checkpoint 的优化器步数间隔。"],
   log_freq: ["Interval for console summaries, in optimizer steps.", "控制台汇总的步数间隔。"],
 };
@@ -360,7 +492,25 @@ export function toggleLang() {
   localStorage.setItem("am:lang", lang);
 }
 export function t(key) {
-  return words[key]?.[lang === "zh" ? 1 : 0] ?? key;
+  const zh = lang === "zh";
+  if (Object.hasOwn(words, key)) return words[key][zh ? 1 : 0];
+  let m = /^classification_confusion_dim_(\d+)_(\d+)_(\d+)$/.exec(key);
+  if (m)
+    return zh
+      ? `维度 ${m[1]} · 实际 ${m[2]} → 预测 ${m[3]}`
+      : `Dim ${m[1]} · actual ${m[2]} → predicted ${m[3]}`;
+  m = /^classification_dim_(\d+)_class_(\d+)_(recall|support)$/.exec(key);
+  if (m)
+    return zh
+      ? `维度 ${m[1]} · 类别 ${m[2]} ${m[3] === "recall" ? "召回率" : "样本数"}`
+      : `Dim ${m[1]} · class ${m[2]} ${m[3]}`;
+  m = /^classification_dim_(\d+)_macro_recall$/.exec(key);
+  if (m) return zh ? `维度 ${m[1]} · 宏平均召回率` : `Dim ${m[1]} · macro recall`;
+  m = /^loss_classification_dim_(\d+)$/.exec(key);
+  if (m) return t("loss_classification") + " · " + (zh ? "维度 " : "dim ") + m[1];
+  if (key.startsWith("loss_l1_")) return t("loss_l1") + " · " + key.slice(8);
+  if (key.startsWith("lr/")) return t("lr") + " · " + (zh ? "参数组 " : "group ") + key.slice(3);
+  return key;
 }
 export function fmt(v, compact = false) {
   if (!Number.isFinite(v)) return "—";
@@ -371,7 +521,35 @@ export function fmt(v, compact = false) {
 }
 export function explain(key, spec, run) {
   const i = lang === "zh" ? 1 : 0;
-  let text = help[key]?.[i] || "";
+  const alias = {
+    flow_loss: "loss_flow",
+    fm_loss: "loss_flow",
+    loss_flow_matching: "loss_flow",
+    video_loss: "loss_video",
+    action_loss: "loss_action",
+    kld_loss: "loss_kl",
+    l1_loss: "loss_l1",
+  };
+  let text = help[key]?.[i] || help[alias[key]]?.[i] || "";
+  if (run?.policy === "openwam" && ["loss_action", "loss_video"].includes(key))
+    text += [" Includes the configured objective weight.", " 已包含该项的配置权重。"][i];
+  if (key.endsWith("_macro_recall"))
+    text = [
+      "Mean recall across classes that have observed targets.",
+      "在出现过真实目标的类别上，对各类别召回率取平均。",
+    ][i];
+  else if (key.endsWith("_recall"))
+    text = [
+      "Fraction of observed targets of this class that were correctly predicted.",
+      "该类别的真实目标中被正确预测的比例。",
+    ][i];
+  else if (key.endsWith("_support"))
+    text = ["Number of observed targets of this class.", "该类别出现的有效目标数。"][i];
+  else if (key.startsWith("classification_confusion_"))
+    text = [
+      "Count for the displayed actual and predicted class pair.",
+      "真实类别与预测类别构成的这一组合的出现次数。",
+    ][i];
   if (key === "loss" && run?.policy === "openwam") {
     text = [
       "OpenWAM objective = weighted video loss + weighted action loss.",
@@ -420,9 +598,16 @@ export function explain(key, spec, run) {
   if (spec) {
     const parts = [
       spec.source !== key && spec.source,
-      spec.reduction && t("reduction") + " " + spec.reduction,
+      spec.reduction &&
+        t("reduction") +
+          " " +
+          (spec.reduction === "mean"
+            ? t("mean")
+            : spec.reduction === "sum"
+              ? ["sum", "求和"][i]
+              : spec.reduction),
       spec.denominator && t("denominator") + " " + spec.denominator,
-      spec.scale != null && t("scale") + " " + spec.scale,
+      spec.scale != null && spec.scale !== 1 && t("scale") + " " + spec.scale,
     ];
     return [text, parts.filter(Boolean).join(" · ")].filter(Boolean).join("\n");
   }
@@ -466,16 +651,6 @@ export function iconButton(id, label, action) {
   svg.append(use);
   button.append(svg);
   return button;
-}
-export function facts(parent, entries) {
-  const row = el("div", "small-facts");
-  for (const [label, value] of entries) {
-    if (value == null) continue;
-    const item = el("span", null, t(label));
-    item.append(el("strong", null, value));
-    row.append(item);
-  }
-  if (row.childElementCount) parent.append(row);
 }
 export function table(parent, headings, rows) {
   if (!rows.length) return;
@@ -548,7 +723,8 @@ function hideHelp() {
   $("help").hidden = true;
 }
 for (const event of ["pointerover", "focusin"]) document.addEventListener(event, showHelp);
-for (const event of ["pointerout", "focusout", "scroll"]) document.addEventListener(event, hideHelp, true);
+for (const event of ["pointerout", "focusout", "scroll"])
+  document.addEventListener(event, hideHelp, true);
 $("close-dialog").onclick = () => $("dialog").close();
 $("dialog").onclick = (e) => {
   if (e.target === $("dialog") && !e.target.closest("#dialog-body")) {

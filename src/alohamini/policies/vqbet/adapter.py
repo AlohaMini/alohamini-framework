@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
 from alohamini.policies.diffusion.adapter import DiffusionAlgorithm
 
@@ -98,9 +99,38 @@ class VQBeTAlgorithm(DiffusionAlgorithm):
 
     @staticmethod
     def metric_specs(config):
-        # The available diagnostics change at the stage boundary. The total
-        # objective is always logged by the shared trainer; do not fill missing terms.
-        return []
+        # Windows and chunk sizes are fixed within a run. Sample weighting
+        # therefore preserves the model's coordinate and action-token means.
+        per_sample = loss_count("_loss_weight")
+        specs = [
+            MetricSpec(name, source, "samples", per_sample, console=console, optional=True)
+            for name, source, console in (
+                ("loss_vq_reconstruction", "recon_l1_error", "recon"),
+                ("loss_vq_commitment", "vq_loss", None),
+                ("loss_code_classification", "classification_loss", "code"),
+                ("loss_primary_code", "primary_code_loss", None),
+                ("loss_secondary_code", "secondary_code_loss", None),
+                ("loss_offset", "offset_loss", "offset"),
+                ("equal_primary_code_rate", "equal_primary_code_rate", None),
+                ("equal_secondary_code_rate", "equal_secondary_code_rate", None),
+                ("vq_action_error", "vq_action_error", None),
+                ("offset_action_error", "offset_action_error", None),
+                ("action_mse_error", "action_mse_error", None),
+            )
+        ]
+        # Rank-local distinct counts and maxima cannot be summed into a global
+        # unique count or averaged by sample. Report a mean across microbatches.
+        for name, source in (
+            ("mean_batch_distinct_codes", "n_different_codes"),
+            ("mean_batch_distinct_combinations", "n_different_combinations"),
+            ("mean_batch_max_action_error", "action_error_max"),
+        ):
+            specs.append(
+                MetricSpec(
+                    name, source, "rank_microbatches", lambda batch, counts: 1, optional=True
+                )
+            )
+        return specs
 
     @staticmethod
     def statistics(samples, options=None):

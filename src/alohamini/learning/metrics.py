@@ -26,13 +26,14 @@ class MetricSpec:
     reduction: str = "mean"
     count_source: str | None = None
     macro_group: str | None = None
+    optional: bool = False  # Some models change objectives at an optimizer-step boundary.
 
     def __post_init__(self):
         if self.reduction not in {"mean", "sum"} or not math.isfinite(self.scale):
             raise ValueError("Metrics require mean or sum reduction and a finite scale")
 
     def schema(self):
-        return {
+        spec = {
             key: getattr(self, key)
             for key in (
                 "name",
@@ -46,6 +47,9 @@ class MetricSpec:
                 "macro_group",
             )
         }
+        if self.optional:
+            spec["optional"] = True
+        return spec
 
 
 class MetricAccumulator:
@@ -66,6 +70,8 @@ class MetricAccumulator:
     def add(self, outputs, batch, counts):
         with torch.no_grad():
             for index, spec in enumerate(self.specs):
+                if spec.optional and spec.source not in outputs:
+                    continue
                 count = (
                     outputs[spec.count_source]
                     if spec.count_source
@@ -97,6 +103,8 @@ class MetricAccumulator:
         for spec, (numerator, count) in zip(self.specs, totals.tolist(), strict=True):
             if not math.isfinite(numerator) or not math.isfinite(count) or count < 0:
                 raise RuntimeError(f"{spec.name}: non-finite diagnostic metric")
+            if spec.count_source and (count or not spec.optional):
+                values[spec.count_source] = count
             if count:
                 values[spec.name] = numerator if spec.reduction == "sum" else numerator / count
                 statistics[spec.name] = {"sum": numerator, "count": count}

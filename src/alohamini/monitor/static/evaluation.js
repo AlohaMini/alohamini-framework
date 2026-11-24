@@ -126,7 +126,7 @@ export class Evaluation {
     this.clear();
     this.controller = new AbortController();
     const signal = this.controller.signal;
-    const view = $("evaluation-view");
+    const view = $("evaluation-results");
     view.replaceChildren();
     const saved = stored(run.id);
     if (saved.datasets.length) {
@@ -164,13 +164,17 @@ export class Evaluation {
       horizon.setAttribute("aria-label", t("horizon"));
       const offsets = [
         ...new Set(
-          reports.flatMap((r) => (r.by_horizon || []).filter((h) => h.offset != null).map((h) => h.offset)),
+          reports.flatMap((r) =>
+            (r.by_horizon || []).filter((h) => h.offset != null).map((h) => h.offset),
+          ),
         ),
       ].sort((a, b) => a - b);
       // Index-based horizons with undeclared offsets are kept distinct from physical frame offsets.
       const indices = [
         ...new Set(
-          reports.flatMap((r) => (r.by_horizon || []).filter((h) => h.offset == null).map((h) => h.index)),
+          reports.flatMap((r) =>
+            (r.by_horizon || []).filter((h) => h.offset == null).map((h) => h.index),
+          ),
         ),
       ].sort((a, b) => a - b);
       horizon.replaceChildren(

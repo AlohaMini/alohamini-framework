@@ -199,6 +199,21 @@ def test_disabled_vae_has_no_kl_specs():
         assert [s.name for s in recipe.metric_specs(config)] == ["loss_l1"]
 
 
+def test_sparse_stage_console_means_and_observed_class_support():
+    progress = TrainingProgress(
+        SimpleNamespace(main=True, world_size=1), frames=2, episodes=1, steps=2
+    )
+    for metrics in ({"stage_one": 4}, {"stage_two": 6}):
+        progress.update({"dataloading_s": 1, "update_s": 1, "metrics": metrics}, 1)
+    assert progress.summary(2)["metrics"] == {"stage_one": 4, "stage_two": 6}
+    spec = MetricSpec("recall", "recall", "class_targets", None, count_source="support")
+    counts = MetricAccumulator([spec])
+    counts.add({"support": 0, "recall": 0}, {}, {})
+    assert counts.result()["metrics"] == {"support": 0}
+    counts.add({"support": 2, "recall": 0.5}, {}, {})
+    assert counts.result()["metrics"] == {"support": 2, "recall": 0.5}
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
 def test_cuda_diagnostics_detach_and_pack_python_and_tensor_values():
     specs = [MetricSpec(name, name, "samples", loss_count("n")) for name in ("tensor", "float")]

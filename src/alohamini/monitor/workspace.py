@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections import OrderedDict
@@ -72,7 +73,10 @@ class Attempt:
         # Use attempt-specific files to order runs and display their update time.
         own_files = [*configuration, *phases]
         metadata_version = identifier(
-            *configuration, stamp(self.root / "offline-evaluation.json"), tuple(self.logs)
+            *configuration,
+            stamp(self.root / "offline-evaluation.json"),
+            tuple(self.logs),
+            None if self.suffix else stamp(self.root / "statistics.json"),
         )
         cfg = (
             previous
@@ -224,6 +228,30 @@ class IndexedAttempt:
         self.phases = {p: History(run.metric_path(p)) for p in ("train", "validation")}
 
 
+@lru_cache(maxsize=128)
+def recorded_asset_paths(path, signature, policy):
+    """Keep only resolved model locators from a legacy initial run's data contract."""
+    if not signature:
+        return {}
+    try:
+        with path.open("rb") as stream:
+            artifact = json.load(stream)
+    except (OSError, ValueError, RecursionError):
+        return {}
+    contract = artifact.get("contract") if isinstance(artifact, dict) else None
+    if not isinstance(contract, dict) or contract.get("policy") != policy:
+        return {}
+    model = contract.get("model")
+    if not isinstance(model, dict):
+        return {}
+    return {
+        k: v
+        for k, v in model.items()
+        if isinstance(v, str)
+        and (k.endswith(("_path", "_model_id", "_model_name", "_name_or_path")) or "tokenizer" in k)
+    }
+
+
 class Monitor:
     """One shared, lazily refreshed index per recently viewed attempt."""
 
@@ -253,10 +281,17 @@ class Monitor:
                 phases[name] = history.summary()
         result["phases"] = phases
         if not brief:
+            report = document(run.resources_path) or None
+            stats = run.root / "statistics.json"
             result.update(
                 config=run.config(),
                 schema=document(run.schema_path),
-                preflight=document(run.resources_path) or None,
+                preflight=report,
+                recorded_asset_paths=(
+                    recorded_asset_paths(stats, stamp(stats), result["policy"])
+                    if not run.suffix and not report
+                    else {}
+                ),
                 launch_preflight=document(run.launch_report) if run.launch_report else None,
                 console_parameters=console_parameters(run),
                 logs=list(run.logs),

@@ -119,7 +119,13 @@ class Evo1Algorithm(ChunkAlgorithm):
                 "loss",
                 "valid_action_elements",
                 loss_count("_loss_weight", config.action_feature.shape[0]),
-            )
+            ),
+            MetricSpec(
+                "active_action_dims",
+                "active_action_dims",
+                "samples",
+                lambda batch, counts: len(batch["action"]),
+            ),
         ]
 
     def build(self, options, stats=None):

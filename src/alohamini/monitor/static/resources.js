@@ -1,103 +1,251 @@
-import { $, btn, disclosure, el, facts, fmt, lang, t, table } from "./ui.js";
+import { $, btn, el, fmt, t } from "./ui.js";
 
-let version = "",
-  revision = 0;
-function stored(run) {
+function saved(run) {
   try {
     return JSON.parse(localStorage.getItem("am:preflight:" + run.id));
   } catch {
     return null;
   }
 }
-function check(report, run) {
+function matches(report, run) {
   if (typeof report?.passed === "boolean")
     return (
-      typeof report.dataset === "string" && (!run.config?.dataset || report.dataset === run.config.dataset)
+      typeof report.dataset === "string" &&
+      (!run.config?.dataset || report.dataset === run.config.dataset)
     );
   return (
     report?.schema_version === 1 &&
     typeof report.ok === "boolean" &&
-    typeof report.complete === "boolean" &&
     (!report.policy || !run.policy || report.policy === run.policy) &&
+    (!report.resolved_settings?.dataset ||
+      !run.config?.dataset ||
+      report.resolved_settings.dataset === run.config.dataset) &&
     Array.isArray(report.resources) &&
-    report.resources.every((r) => r && typeof r.name === "string" && typeof r.status === "string") &&
-    Array.isArray(report.errors)
+    report.resources.every((r) => r && typeof r.name === "string" && typeof r.kind === "string")
   );
 }
-function showReport(parent, report, source) {
-  if (typeof report.passed === "boolean") {
-    const detail = disclosure(
-      parent,
-      t("launchCheck") + " · " + t(report.passed ? "successfulCheck" : "failedCheck") + " · " + source,
-    );
-    const values = [
-      ["episodes", report.episodes],
-      ["frames", report.frames],
-      ["train_episodes", report.train_episodes?.length],
-      ["val_episodes", report.val_episodes?.length],
-      ["training_samples", report.train_samples],
-      ["validation_samples", report.val_samples],
-      ["precision", report.checkpoint_dtypes && Object.keys(report.checkpoint_dtypes).join(" / ")],
-      ["torch", report.torch],
-      ["CUDA", report.cuda_version],
-      ["cpuOnly", report.cpu_only_preflight === true ? t("yes") : null],
-      ["gpuTest", report.gpu_training_test],
-      ["stage", report.stage],
-    ];
-    facts(
-      detail,
-      values.map(([k, v]) => [k, typeof v === "number" ? fmt(v) : v]),
-    );
-    disclosure(detail, t("rawReport")).append(el("pre", null, JSON.stringify(report, null, 2)));
-    return;
-  }
-  const state = !report.ok ? "failedCheck" : !report.complete ? "incompleteCheck" : "successfulCheck";
-  const detail = disclosure(parent, t("resources") + " · " + t(state) + " · " + source);
-  const rows = report.resources.map((r) => {
-    const path = el(
-      "span",
-      "path",
-      [...new Set([r.requested_path, ...(Array.isArray(r.paths) ? r.paths : [])])]
-        .filter(Boolean)
-        .join("\n"),
-    );
-    if (r.reason || r.error)
-      path.append(el("p", null, r.reason || r.error?.message || JSON.stringify(r.error)));
-    return [r.name, r.kind, r.status, r.validation, path];
-  });
-  table(detail, ["module", "kind", "status", "checkMode", "paths"], rows);
-  for (const err of report.errors)
-    detail.append(el("p", "notice", [err.stage, err.message].filter(Boolean).join(" · ")));
-  disclosure(detail, t("rawReport")).append(el("pre", null, JSON.stringify(report, null, 2)));
+function shortPath(path) {
+  const parts = path.replaceAll("\\", "/").replace(/\/+$/, "").split("/").filter(Boolean);
+  if (!parts.length) return path;
+  const end = parts.at(-1);
+  if (parts.length < 4) return parts.join("/");
+  return parts.slice(/^(assets|pretrained_model|model\.safetensors)$/i.test(end) ? -3 : -2).join("/");
 }
-function addReport(parent, run, redraw) {
-  const file = el("input", "report-input");
+
+// Values retain their recorded origin. Configuration fallbacks never query a live model or filesystem.
+export function configurationFacts(run) {
+  const rows = new Map(),
+    cfg = run.config || {},
+    rt = run.schema?.runtime || {};
+  function add(key, label, value, details = [], aliases = []) {
+    if (value == null || value === "" || rows.has(key)) return;
+    rows.set(key, {
+      label: t(label) + (key.startsWith("import.") ? " · " + t("supplied") : ""),
+      value: String(value),
+      details: details.filter(([, v]) => v != null && v !== ""),
+      aliases,
+    });
+  }
+  function read(report, source, imported = false) {
+    if (!report || !matches(report, run)) return;
+    const prefix = imported ? "import." : "";
+    const origin = [t("source"), source];
+    const base = report.initialization;
+    if (typeof base?.repository === "string") {
+      add(prefix + "base.model", "baseModel", base.repository, [
+        [t("revision"), base.revision],
+        [t("weights"), base.file],
+        ["SHA-256", base.sha256],
+        [t("path"), report.base_path],
+        origin,
+      ]);
+    }
+    if (typeof report.checkpoint === "string") {
+      add(prefix + "weights.policy", "initialWeights", shortPath(report.checkpoint), [
+        [t("path"), report.checkpoint],
+        [t("headerHash"), report.checkpoint_header_sha256],
+        origin,
+      ]);
+    }
+    const resources = Array.isArray(report.resources)
+      ? report.resources.filter((r) => r && typeof r.name === "string" && r.status !== "not_required")
+      : [];
+    for (const r of resources) {
+      let kind = r.kind;
+      if (!["tokenizer", "processor", "weights"].includes(kind)) {
+        if (/tokenizer/i.test(r.name)) kind = "tokenizer";
+        else if (/backbone|base_model/i.test(r.name)) kind = "weights";
+        else continue;
+      }
+      const paths = Array.isArray(r.paths) ? r.paths.filter((p) => typeof p === "string") : [];
+      const chosen = paths.length === 1 ? paths[0] : r.requested_path || paths[0];
+      const label =
+        kind === "weights" && r.name === "policy"
+          ? "initialWeights"
+          : kind === "weights"
+            ? "modelWeights"
+            : kind;
+      const value = typeof chosen === "string" ? shortPath(chosen) : r.name;
+      const detail = [
+        [t("configKey"), r.name],
+        [t("requestedPath"), r.requested_path],
+        [t("resolvedFiles"), paths.join("\n")],
+        [t("reportNote"), r.error?.message || r.reason],
+        origin,
+      ];
+      const aliases = [];
+      if (!imported && r.requested_path) {
+        if (cfg.model?.[r.name] === r.requested_path) aliases.push("model." + r.name);
+        if (r.name === "policy" && cfg.pretrained_path === r.requested_path)
+          aliases.push("pretrained_path");
+      }
+      const shared = resources.some((other) => other !== r && other.kind === r.kind);
+      add(
+        prefix + kind + "." + r.name,
+        shared && r.name !== "policy" ? t(label) + " · " + r.name : label,
+        value,
+        detail,
+        aliases,
+      );
+    }
+  }
+  read(run.preflight, t("recorded"));
+  read(run.launch_preflight, run.name + ".preflight.json");
+  const checked = [...rows.keys()];
+  const model = {
+    ...run.recorded_asset_paths,
+    ...run.preflight?.resolved_settings?.model,
+    ...cfg.model,
+  };
+  for (const [field, value] of Object.entries(model)) {
+    if (typeof value !== "string" || !value) continue;
+    let kind;
+    if (/tokenizer/.test(field) && /(path|name|model|_id)$/.test(field)) kind = "tokenizer";
+    else if (field === "assets_path" && run.policy === "openwam") kind = "tokenizer";
+    else if (/(base_model|backbone|vlm_model).*(name|path|id)$/.test(field)) kind = "baseModel";
+    else continue;
+    if (
+      checked.includes(kind + "." + field) ||
+      checked.includes("processor." + field) ||
+      checked.includes("weights." + field) ||
+      (kind === "baseModel" && rows.has("base.model"))
+    )
+      continue;
+    const key = kind + "." + field;
+    const source = cfg.model?.[field]
+      ? "model." + field
+      : run.preflight?.resolved_settings?.model?.[field]
+        ? "resolved_settings.model." + field
+        : "statistics.json · contract.model." + field;
+    add(
+      key,
+      kind,
+      shortPath(value),
+      [
+        [t("path"), value],
+        [t("source"), source],
+      ],
+      cfg.model?.[field] === value ? ["model." + field] : [],
+    );
+  }
+  if (!run.attempt && !cfg.resume && typeof cfg.pretrained_path === "string" && !rows.has("base.model"))
+    add(
+      "weights.policy",
+      "initialWeights",
+      shortPath(cfg.pretrained_path),
+      [
+        [t("path"), cfg.pretrained_path],
+        [t("source"), "pretrained_path"],
+      ],
+      ["pretrained_path"],
+    );
+  const imported = saved(run);
+  if (imported) read(imported.report, t("supplied") + " · " + imported.name, true);
+
+  const flags = rt.trainability,
+    old = run.console_parameters;
+  if (flags || old) {
+    const total = flags ? flags.trainable + flags.frozen : old.num_total_params;
+    const trained = flags ? flags.trainable : old.num_learnable_params,
+      frozen = total - trained;
+    const breakdown = [
+      [t("trainable"), fmt(trained)],
+      [t("allParameters"), fmt(total)],
+      [t("source"), flags ? t("flags") : t("console")],
+    ];
+    for (const m of flags?.modules || [])
+      breakdown.push([
+        m.name,
+        t("trainable") + " " + fmt(m.trainable) + " · " + t("frozen") + " " + fmt(m.frozen),
+      ]);
+    add(
+      "parameters.frozen",
+      "frozenParams",
+      fmt(frozen) + (total ? " (" + fmt((100 * frozen) / total, true) + "%)" : ""),
+      breakdown,
+    );
+  }
+  for (const key of [
+    "effective_batch_size",
+    "training_samples",
+    "validation_samples",
+    "excluded_samples",
+    "torch",
+    "accelerate",
+  ])
+    if (rt[key] != null && cfg[key] == null)
+      add("runtime." + key, key, typeof rt[key] === "number" ? fmt(rt[key]) : rt[key]);
+  for (const [i, group] of (rt.optimizer_groups || []).entries()) {
+    add(
+      "optimizer.group." + i,
+      t("rates") + " " + i,
+      group.lr != null ? t("lr") + " " + fmt(group.lr) : "#" + i,
+      Object.entries(group).map(([k, v]) => [k, JSON.stringify(v)]),
+    );
+  }
+  return rows;
+}
+export function factCell(item) {
+  if (!item.details.length) return document.createTextNode(item.value);
+  const node = el("details", "config-fact");
+  node.append(el("summary", null, item.value));
+  node.ontoggle = () => {
+    if (!node.open || node.children.length > 1) return;
+    const dl = el("dl");
+    for (const [k, v] of item.details) dl.append(el("dt", null, k), el("dd", null, v));
+    node.append(dl);
+  };
+  return node;
+}
+
+export function reportControls(run, onChange) {
+  const root = $("config-import");
+  root.replaceChildren();
+  if (!run) return;
+  const file = el("input");
   file.type = "file";
   file.accept = ".json,application/json";
-  file.setAttribute("aria-label", t("importCheck"));
   file.hidden = true;
-  const info = el("div", "resource-tools"),
-    action = btn(t("importCheck"), () => file.click(), "quiet");
-  const error = el("span", "detail");
-  error.setAttribute("role", "status");
-  const imported = stored(run);
-  if (!run.preflight && !run.launch_preflight && !imported) info.append(el("span", "detail", t("noCheck")));
-  info.append(action, file, error);
+  file.setAttribute("aria-label", t("importCheck"));
+  const message = el("span", "detail");
+  message.setAttribute("role", "status");
+  const imported = saved(run);
   if (imported)
-    info.append(
+    root.append(
       btn(
         t("remove") + " · " + imported.name,
         () => {
           localStorage.removeItem("am:preflight:" + run.id);
-          revision++;
-          redraw();
+          onChange();
         },
         "quiet",
       ),
     );
-  parent.append(info);
+  const action = btn(t("importCheck"), () => file.click(), "quiet");
+  action.title = run.name;
+  root.append(action, file, message);
   file.onchange = async () => {
-    const selected = file.files?.[0];
+    const selected = file.files[0];
     if (!selected) return;
     try {
       if (selected.size > 4 * 1024 * 1024) throw Error(t("badCheck"));
@@ -107,121 +255,13 @@ function addReport(parent, run, redraw) {
       } catch {
         throw Error(t("badCheck"));
       }
-      if (!check(report, run)) throw Error(t("badCheck"));
+      if (!matches(report, run)) throw Error(t("badCheck"));
       localStorage.setItem("am:preflight:" + run.id, JSON.stringify({ name: selected.name, report }));
-      revision++;
-      redraw();
+      onChange();
     } catch (e) {
-      error.textContent = e.message;
+      message.textContent = e.message;
     } finally {
       file.value = "";
     }
   };
-  if (run.preflight && check(run.preflight, run)) showReport(parent, run.preflight, t("recorded"));
-  if (run.launch_preflight) showReport(parent, run.launch_preflight, run.name + ".preflight.json");
-  if (imported) showReport(parent, imported.report, t("supplied") + " · " + imported.name);
-}
-export function renderResources(runs, redraw) {
-  const sig = JSON.stringify([lang, revision, runs.map((r) => [r.id, r.metadata_version])]);
-  if (version === sig) return;
-  version = sig;
-  const root = $("run-resources");
-  root.replaceChildren();
-  for (const run of runs) {
-    const cfg = run.config || {},
-      rt = run.schema?.runtime || {},
-      flags = rt.trainability;
-    const old = run.console_parameters;
-    const frozen = flags?.frozen ?? (old ? old.num_total_params - old.num_learnable_params : null);
-    const total = flags ? flags.trainable + flags.frozen : old?.num_total_params;
-    const report = run.preflight || run.launch_preflight;
-    const checkLabel = report
-      ? t(run.preflight ? "resources" : "launchCheck") +
-        " · " +
-        t(
-          (report.ok ?? report.passed) === false
-            ? "failedCheck"
-            : report.complete === false
-              ? "incompleteCheck"
-              : "successfulCheck",
-        )
-      : null;
-    const parent = disclosure(
-      root,
-      [
-        runs.length > 1 ? run.name : null,
-        t("runtime"),
-        cfg.optimizer?.type,
-        frozen != null && total ? t("frozen") + " " + fmt((100 * frozen) / total, true) + "%" : null,
-        checkLabel,
-      ]
-        .filter(Boolean)
-        .join("  ·  "),
-    );
-    facts(parent, [
-      ["optimizer", cfg.optimizer?.type],
-      ["precision", cfg.mixed_precision],
-      ...[
-        "training_samples",
-        "validation_samples",
-        "effective_batch_size",
-        "excluded_samples",
-        "torch",
-        "accelerate",
-      ]
-        .filter((k) => rt[k] != null)
-        .map((k) => [k, typeof rt[k] === "number" ? fmt(rt[k]) : rt[k]]),
-    ]);
-    if (flags) {
-      const d = disclosure(
-        parent,
-        t("flags") +
-          " · " +
-          t("frozen") +
-          " " +
-          fmt(flags.frozen) +
-          " / " +
-          fmt(flags.trainable + flags.frozen),
-      );
-      table(
-        d,
-        ["module", "trainable", "frozen"],
-        flags.modules.map((m) => [m.name, fmt(m.trainable), fmt(m.frozen)]),
-      );
-    } else {
-      if (old)
-        facts(parent, [
-          ["trainable", fmt(old.num_learnable_params)],
-          ["frozen", fmt(frozen)],
-          ["source", t("console")],
-        ]);
-      parent.append(el("p", "detail", t("flagMissing")));
-      const scope = [
-        ...Object.entries(cfg.model || {}).filter(([k]) =>
-          /freez|frozen|unfreeze|train_only|finetune_/i.test(k),
-        ),
-        ...Object.entries(cfg.paper_preset?.reference_recipe || {})
-          .filter(([, v]) => typeof v === "string" && /\b(frozen|freeze)\b/i.test(v))
-          .map(([k, v]) => ["paper_preset.reference_recipe." + k, v]),
-      ];
-      if (scope.length) {
-        const d = disclosure(parent, t("configuredScope"));
-        table(
-          d,
-          ["configKey", "setting"],
-          scope.map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]),
-        );
-      }
-    }
-    if (rt.optimizer_groups?.length) {
-      const d = disclosure(parent, t("rates"));
-      const keys = [...new Set(rt.optimizer_groups.flatMap((g) => Object.keys(g)))];
-      table(
-        d,
-        ["configKey", ...rt.optimizer_groups.map((_, i) => "#" + i)],
-        keys.map((k) => [k, ...rt.optimizer_groups.map((g) => JSON.stringify(g[k]) ?? "—")]),
-      );
-    }
-    addReport(parent, run, redraw);
-  }
 }

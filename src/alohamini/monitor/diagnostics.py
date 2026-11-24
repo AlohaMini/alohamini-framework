@@ -68,6 +68,12 @@ def validation_results(history, target):
     if index is None:
         return {}
     best = {"loss": loss.values[index], **at(history, rows[index])}
+    recent = []
+    for i in range(len(rows) - 1, -1, -1):
+        if math.isfinite(loss.values[i]):
+            recent.append({"loss": loss.values[i], **at(history, rows[i])})
+            if len(recent) == 2:
+                break
     hit = None
     if target is not None and best["loss"] <= target:
         # Skip full blocks whose minimum could not reach the target.
@@ -82,7 +88,13 @@ def validation_results(history, target):
             if index is not None:
                 hit = {"loss": loss.values[index], **at(history, rows[index])}
                 break
-    return {"best": best, "first_hit": hit, "count": len(rows) - len(loss.gaps)}
+    return {
+        "best": best,
+        "first_hit": hit,
+        "count": len(rows) - len(loss.gaps),
+        "latest": recent[0],
+        "previous": recent[1] if len(recent) == 2 else None,
+    }
 
 
 def analyze(train, validation, config, window, metric, target):
@@ -101,7 +113,21 @@ def analyze(train, validation, config, window, metric, target):
     def recent(key):
         return observations(train, key, start, stop)
 
-    result["distribution"] = distribution(recent(metric), steps)
+    current = recent(metric)
+    result["distribution"] = distribution(current, steps)
+    previous_start = max(0, start - window)
+    prior = observations(train, metric, previous_start, start)
+    result["previous_window"] = (
+        {
+            "records": start - previous_start,
+            "n": len(prior),
+            "from_step": int(steps[previous_start]),
+            "to_step": int(steps[start - 1]),
+            "mean": fmean(v for _, v in prior) if prior else None,
+        }
+        if start
+        else None
+    )
     norm = recent("grad_norm")
     result["gradient"] = distribution(norm, steps)
     threshold = (config.get("optimizer") or {}).get("grad_clip_norm")
@@ -144,13 +170,16 @@ def analyze(train, validation, config, window, metric, target):
     components = {}
     for key in train.series:
         if key != "loss" and loss_metric(key):
-            pairs = recent(key)
+            pairs = current if key == metric else recent(key)
             if pairs:
-                prior = observations(train, key, max(0, start - window), start)
+                prior_values = (
+                    prior if key == metric else observations(train, key, previous_start, start)
+                )
                 components[key] = {
                     "mean": fmean(v for _, v in pairs),
                     "n": len(pairs),
-                    "previous_mean": fmean(v for _, v in prior) if prior else None,
+                    "previous_mean": fmean(v for _, v in prior_values) if prior_values else None,
+                    "previous_n": len(prior_values),
                 }
     result["components"] = components
     result["rates"] = {}

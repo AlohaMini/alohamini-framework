@@ -122,7 +122,11 @@ AXES = ("step", "samples", "elapsed_s")
 
 
 def loss_metric(key):
-    return key == "loss" or key.startswith("loss_") or key.endswith("_loss")
+    return (
+        key in {"loss", "policy/loss"}
+        or key.startswith(("loss_", "losses_after_"))
+        or key.endswith("_loss")
+    )
 
 
 class History:
@@ -139,6 +143,7 @@ class History:
     def _clear(self):
         self.axes = {key: array("d") for key in AXES}
         self.series = {}
+        self.policy_metrics = {}
         self.means = OrderedDict()
         self.offsets = array("Q")
         self.latest = {}
@@ -200,14 +205,26 @@ class History:
             raise ValueError("Invalid optimizer step")
         if self.offsets and step < self.axes["step"][-1]:
             raise ValueError("Steps decreased within one attempt")
-        metrics = {}
+        nested = record.get("metrics")
+        metrics = dict(nested) if isinstance(nested, dict) else {}
+        legacy = record.get("policy_metrics")
+        # Older trainers stored the step summary and the policy output in two
+        # dictionaries. Preserve both when a name (especially "loss") collides.
+        policy_keys = []
+        if isinstance(legacy, dict):
+            for key, value in legacy.items():
+                name = "policy/" + key if key in metrics or key in record else key
+                metrics[name] = value
+                policy_keys.append(name)
+        else:
+            policy_keys = list(metrics)
+        group_rates = record.get("lr_groups")
+        if isinstance(group_rates, dict):
+            metrics.update({"lr/" + key: value for key, value in group_rates.items()})
         for key, value in record.items():
-            if key in (*AXES, "event_time_s", "optimizer_step"):
-                continue
-            if key in ("metrics", "lr_groups") and isinstance(value, dict):
-                prefix = "lr/" if key == "lr_groups" else ""
-                metrics.update({prefix + k: v for k, v in value.items()})
-            elif not isinstance(value, (dict, list)):
+            if key not in (*AXES, "event_time_s", "optimizer_step") and not isinstance(
+                value, (list, dict)
+            ):
                 metrics[key] = value
         row = len(self.offsets)
         for key in list(self.axes):
@@ -230,8 +247,15 @@ class History:
                 if key not in self.series:
                     self.series[key] = Series()
                 self.series[key].append(row, value)
+        for key in policy_keys:
+            if key in self.series:
+                self.policy_metrics[key] = None
         self.offsets.append(self.offset)
-        self.latest = record
+        self.latest = record.copy()
+        if isinstance(legacy, dict) and isinstance(nested, dict):
+            for key in ("loss", "grad_norm", "lr", "gpu_mem_gb"):
+                if key in nested:
+                    self.latest.setdefault(key, nested[key])
 
     @property
     def cursor(self):
@@ -252,6 +276,7 @@ class History:
             "nonfinite": {k: len(s.gaps) for k, s in self.series.items() if s.gaps},
             "axes": list(self.axes) if self.offsets else [],
             "metrics": list(self.series),
+            "policy_metrics": list(self.policy_metrics),
             "latest": json_safe(self.latest),
         }
 

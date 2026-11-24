@@ -224,7 +224,10 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     batch = next(iter(torch.utils.data.DataLoader(data, batch_size=1)))
     prepared = processor(batch)
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=kind == "hyvla05"):
-        loss, _ = model(prepared)
+        loss, outputs = model(prepared)
+    specs = [s for s in recipe.metric_specs(model.config) if "train" in s.phases]
+    assert any(s.source in outputs for s in specs)
+    assert {s.source for s in specs if not s.optional} <= outputs.keys()
     loss.backward()
     assert torch.isfinite(loss)
     assert any(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())

@@ -20,13 +20,27 @@ The workspace defaults to `~/Alohamini_workspace`. Set `ALOHAMINI_WORKSPACE` to 
 | `--port N`, `--open` | Set the loopback port. Use `0` for a free port and `--open` to open a browser. |
 | `--allow-origin ORIGIN` | Permit browser API reads from an exact Studio origin. Repeat for multiple origins. |
 
+## View cloud training locally
+
+Start the monitor on the training host with the actual run directory. Add `--logs-dir /path/to/logs` for a custom console directory.
+
+```bash
+alohamini train monitor --runs-dir /path/to/runs --port 7860
+```
+
+On your computer, forward the port and open `http://127.0.0.1:7861/`. Replace `user@training-host` with your SSH login. Keep both commands running while viewing. The local computer needs only SSH and a browser.
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:7861:127.0.0.1:7860 user@training-host
+```
+
 ## Inspect a run
 
 - The first visit opens in English. Switch languages in the header or use `?lang=en` or `?lang=zh`. Collapse the desktop sidebar to widen the plots. Tick additional runs to compare them.
-- **Metrics** selects recorded components and optimizer groups for the policy. Hover or focus a metric name for its definition. Faint lines show individual updates, trend lines show arithmetic means of complete record windows, and dashed lines show validation. Click a legend entry to toggle it. Long histories retain endpoints, local extrema and gaps per metric.
+- **Metrics** shows the objective, all recorded policy components and learning rates, with up to eight charts per page. Search field names in the metric picker. Open **Display** to adjust the X axis, trend window or desktop chart width. Faint lines show individual updates, trend lines show means of complete record windows, and dashed lines show validation. Click a legend entry to toggle it. Hover or focus a metric name for its definition.
 - **Expand chart** opens an independent interval. Drag to zoom, pan, undo, restore the full range, or include zero on the Y axis. Zooming queries the selected interval again. Available X axes are recorded steps, samples and elapsed seconds.
-- **Diagnostics** shows the recent distribution, P50/P95, standard deviation, slope per step, consecutive window means, learning rates, clipping and timing. Enter a validation loss target to find the first observed checkpoint at or below it. Clipping inferred from a legacy norm and threshold is labelled.
-- Expand **Training setup** for startup freeze flags, parameter counts, optimizer groups and preflight results. Open a current `train check` report or a historical `RUN.preflight.json` here. Older consoles may supply aggregate parameter counts. **Configuration** supports key and value filters. **Logs** displays raw JSONL and available launch consoles.
+- **Diagnostics** compares two consecutive training windows and shows valid counts and component changes. Validation shows the latest and lowest recorded loss. Enter a target to find the first qualifying step. Expand the distribution, clipping, learning rates, timing and sampled module updates for detail.
+- **Configuration** lets you search tokenizers, base models, initialization weights, frozen parameters and optimizer settings. Expand a resource to see recorded paths, revisions or hashes, or import a preflight JSON for the run. **Logs** switches between the live training console and raw JSONL.
 - **Evaluation** accepts local recordings and offline reports (JSON, up to 4 MiB). Select an episode and channel for frame-index trajectories. Reports show per-channel MAE, signed bias, RMSE and per-offset MAE when supplied. The view includes available source and checkpoint manifest information. Imported selections are stored in the current browser.
 
 ## Optional training diagnostics
@@ -46,9 +60,9 @@ Read-only HTTP GET endpoints use the `/api/v1` prefix. Studio can use a same-ori
 
 | Endpoint | Parameters and response |
 | --- | --- |
-| `/runs`, `/runs/{id}` | Listing with `id`, `version` and `metadata_version`. Details include phase summaries, configuration, `schema.runtime`, `preflight`, `launch_preflight`, console parameter counts and the offline report. Use `brief=1` for dynamic summaries. |
+| `/runs`, `/runs/{id}` | Listing with `id`, `version` and `metadata_version`. Details include phase summaries (including observed `policy_metrics`), configuration, `schema.runtime`, `preflight`, `launch_preflight`, console parameter counts and the offline report. Use `brief=1` for dynamic summaries. |
 | `/runs/{id}/series` | Up to 32 repeated `metric` keys, `axis=step\|samples\|elapsed_s`, inclusive `min/max`, and `points=16..4096` per line (default 800). Set `mean_window=0..4096` for loss trends, off by default. |
-| `/runs/{id}/diagnostics` | `metric`, `window=2..4096`, optional validation loss `target`. Returns raw-record window statistics, optimizer diagnostics and observed validation results. |
+| `/runs/{id}/diagnostics` | `metric`, `window=2..4096`, optional validation loss `target`. Returns current and previous window statistics, optimizer diagnostics and latest, previous and best validation observations. |
 | `/runs/{id}/records`, `/runs/{id}/console` | Records accept `phase=train\|validation`, `limit=1..1000`, `cursor` and optional `tail=1`. Console reads use a log `name` and byte cursor. |
 | `/datasets`, `/datasets/{id}`, `/datasets/{id}/trajectory` | Dataset listing, metadata (optional `run` for manifest matching), and frame-index series for `episode`, `field` and `points`. |
 

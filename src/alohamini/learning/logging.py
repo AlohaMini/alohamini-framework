@@ -133,6 +133,7 @@ class TrainingProgress:
         self.window_samples = 0
         self.sums = {}
         self.metric_sums = {}
+        self.metric_counts = {}
 
     def update(self, record, samples):
         previous_step = self.step
@@ -145,12 +146,15 @@ class TrainingProgress:
                 self.sums[key] = self.sums.get(key, 0.0) + record[key]
         for name, value in record.get("metrics", {}).items():
             self.metric_sums[name] = self.metric_sums.get(name, 0.0) + value
+            self.metric_counts[name] = self.metric_counts.get(name, 0) + 1
         if self.bar is not None:
             self.bar.update(self.step - previous_step)
 
     def summary(self, step):
         means = {key: value / self.count for key, value in self.sums.items()}
-        means["metrics"] = {key: value / self.count for key, value in self.metric_sums.items()}
+        means["metrics"] = {
+            key: value / self.metric_counts[key] for key, value in self.metric_sums.items()
+        }
         keys = [key for key in ("dataloading_s", "update_s", "gpu_mem_gb") if key in means]
         if self.execution.world_size > 1:
             values = torch.tensor(

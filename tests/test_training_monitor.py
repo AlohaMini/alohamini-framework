@@ -319,3 +319,65 @@ def test_archived_and_native_preflight_are_attempt_specific(tmp_path):
             }
             assert "archived.log" in detail["logs"]
         assert "preflight" not in monitor.summary(attempt, brief=True)
+
+
+def test_legacy_policy_outputs_and_sparse_window_observations(tmp_path):
+    root = tmp_path / "runs" / "legacy"
+    write_json(root / "train.json", {"policy": "smolvla"})
+    records = [
+        {
+            "step": i,
+            "metrics": {"loss": 9, "grad_norm": 2},
+            "policy_metrics": {"loss": 3, **({"losses_after_forward": i} if i in (1, 4) else {})},
+        }
+        for i in range(1, 5)
+    ]
+    (root / "metrics.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    (root / "validation-metrics.jsonl").write_text(
+        '{"step":1,"loss":3}\n{"step":2,"loss":null}\n{"step":4,"loss":2}\n'
+    )
+    monitor = Monitor(root.parent, tmp_path / "logs", [])
+    run = monitor.catalog.get(monitor.catalog.discover()[0]["id"])
+    phase = monitor.summary(run)["phases"]["train"]
+    assert phase["policy_metrics"] == ["policy/loss", "losses_after_forward"]
+    assert phase["latest"]["loss"] == 9 and phase["latest"]["grad_norm"] == 2
+    keys = ["loss", "policy/loss", "losses_after_forward"]
+    chart = monitor.chart(run, keys, "step", None, None, 16, dict(train=None, validation=None))
+    assert [chart["train"]["series"][k]["points"][-1] for k in keys] == [[4, 9], [4, 3], [4, 4]]
+    assert monitor.records(run, "train", None, 8, False)["records"] == records
+    d = monitor.diagnostics(run, 2, "losses_after_forward", 1)
+    assert d["previous_window"] == {"records": 2, "from_step": 1, "to_step": 2, "n": 1, "mean": 1}
+    assert d["distribution"]["n"] == d["components"]["losses_after_forward"]["previous_n"] == 1
+    assert d["validation"]["latest"]["step"] == 4 and d["validation"]["previous"]["step"] == 1
+    assert d["validation"]["count"] == 2 and d["validation"]["first_hit"] is None
+    d = monitor.diagnostics(run, 8, "unobserved", None)
+    assert d["previous_window"] is None and d["distribution"] is None
+
+
+def test_legacy_asset_locators_belong_to_initial_policy_and_refresh(tmp_path):
+    root = tmp_path / "runs" / "legacy"
+    for name in ("train.json", "resume-1-12.json"):
+        write_json(root / name, {"policy": "openwam"})
+    artifact = root / "statistics.json"
+    write_json(
+        artifact,
+        {
+            "contract": {
+                "policy": "openwam",
+                "model": {"assets_path": "old/tokenizer", "width": 4096},
+            }
+        },
+    )
+    monitor = Monitor(root.parent, tmp_path / "logs", [])
+    runs = {x["attempt"]: monitor.catalog.get(x["id"]) for x in monitor.catalog.discover()}
+    summary = monitor.summary(runs[None])
+    assert summary["recorded_asset_paths"] == {"assets_path": "old/tokenizer"}
+    assert monitor.summary(runs["1-12"])["recorded_asset_paths"] == {}
+    write_json(
+        artifact, {"contract": {"policy": "other", "model": {"assets_path": "another/tokenizer"}}}
+    )
+    changed = monitor.summary(runs[None])
+    assert (
+        changed["recorded_asset_paths"] == {}
+        and changed["metadata_version"] != summary["metadata_version"]
+    )

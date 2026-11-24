@@ -189,14 +189,10 @@ class VQBeTPolicy(ChunkPolicy):
             # loss: total loss of training RVQ
             # n_different_codes: how many of the total possible VQ codes are being used in single batch (how many of them have at least one encoder embedding as a nearest neighbor). This can be at most `vqvae_n_embed * number of layers of RVQ (=2)`.
             # n_different_combinations: how many different code combinations are being used out of all possible combinations in single batch. This can be at most `vqvae_n_embed ^ number of layers of RVQ (=2)` (hint consider the RVQ as a decision tree).
-            loss, n_different_codes, n_different_combinations, recon_l1_error = (
-                self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch[ACTION])
+            loss, metrics = self.vqbet.action_head.discretize(
+                self.config.n_vqvae_training_steps, batch[ACTION], return_metrics=True
             )
-            return loss * batch.get("_loss_weight", 1.0), {
-                "n_different_codes": n_different_codes,
-                "n_different_combinations": n_different_combinations,
-                "recon_l1_error": recon_l1_error,
-            }
+            return loss * batch.get("_loss_weight", 1.0), metrics
         # if Residual VQ is already trained, VQ-BeT trains its GPT and bin prediction head / offset prediction head parts.
         _, loss_dict = self.vqbet(batch, rollout=False)
         loss = loss_dict.pop("loss")
@@ -508,7 +504,7 @@ class VQBeTHead(nn.Module):
         # loss
         self._focal_loss_fn = FocalLoss(gamma=2.0)
 
-    def discretize(self, n_vqvae_training_steps, actions):
+    def discretize(self, n_vqvae_training_steps, actions, *, return_metrics=False):
         # Resize the action sequence data to fit the action chunk size using a sliding window approach.
         actions = torch.cat(
             [
@@ -524,8 +520,14 @@ class VQBeTHead(nn.Module):
             [len(torch.unique(metric[2][:, i])) for i in range(self.vqvae_model.vqvae_num_layers)]
         )
         n_different_combinations = len(torch.unique(metric[2], dim=0))
-        recon_l1_error = metric[0].detach().cpu().item()
-        return loss, n_different_codes, n_different_combinations, recon_l1_error
+        if not return_metrics:
+            return loss, n_different_codes, n_different_combinations, metric[0].item()
+        return loss, {
+            "n_different_codes": n_different_codes,
+            "n_different_combinations": n_different_combinations,
+            "recon_l1_error": metric[0],
+            "vq_loss": metric[1],
+        }
 
     def forward(self, x, **kwargs) -> dict:
         # N is the batch size, and T is number of action query tokens, which are process through same GPT
@@ -695,14 +697,16 @@ class VQBeTHead(nn.Module):
 
         loss_dict = {
             "loss": loss,
-            "classification_loss": cbet_loss.detach().cpu().item(),
-            "offset_loss": offset_loss.detach().cpu().item(),
-            "equal_primary_code_rate": equal_primary_code_rate.detach().cpu().item(),
-            "equal_secondary_code_rate": equal_secondary_code_rate.detach().cpu().item(),
-            "vq_action_error": vq_action_error.detach().cpu().item(),
-            "offset_action_error": offset_action_error.detach().cpu().item(),
-            "action_error_max": action_error_max.detach().cpu().item(),
-            "action_mse_error": action_mse_error.detach().cpu().item(),
+            "classification_loss": cbet_loss.detach(),
+            "primary_code_loss": cbet_loss1.detach(),
+            "secondary_code_loss": cbet_loss2.detach(),
+            "offset_loss": offset_loss.detach(),
+            "equal_primary_code_rate": equal_primary_code_rate.detach(),
+            "equal_secondary_code_rate": equal_secondary_code_rate.detach(),
+            "vq_action_error": vq_action_error.detach(),
+            "offset_action_error": offset_action_error.detach(),
+            "action_error_max": action_error_max.detach(),
+            "action_mse_error": action_mse_error.detach(),
         }
         return loss_dict
 
@@ -926,10 +930,10 @@ class VqVae(nn.Module):
         rep_loss = encoder_loss + vq_loss_state * 5
 
         metric = (
-            encoder_loss.clone().detach(),
-            vq_loss_state.clone().detach(),
+            encoder_loss.detach(),
+            vq_loss_state.detach(),
             vq_code,
-            rep_loss.item(),
+            rep_loss.detach(),
         )
         return rep_loss, metric
 
