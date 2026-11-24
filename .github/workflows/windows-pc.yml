@@ -1,0 +1,50 @@
+name: Windows 采集与训练
+
+on:
+  push:
+    branches: [feat/macos]
+    paths:
+      - "env/*win-64.*"
+      - "src/alohamini/environment.py"
+      - "src/alohamini/feature_environment.py"
+      - ".github/workflows/windows-pc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64 · ${{ matrix.feature }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [recording, training]
+    env:
+      PYTHONUTF8: "1"
+      PYTHONPATH: src
+      HF_HUB_OFFLINE: "1"
+      FEATURE: ${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
+        with:
+          miniforge-version: latest
+          auto-activate-base: false
+      - name: 使用锁文件准备环境并检查功能
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP ("alohamini-" + $env:FEATURE)
+          $env:ALOHAMINI_WORKSPACE = Join-Path $env:RUNNER_TEMP "alohamini-workspace"
+          conda create --yes --prefix $prefix --file env/explicit-pc-win-64.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          conda run --no-capture-output --prefix $prefix python -m alohamini env sync --feature $env:FEATURE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          conda run --no-capture-output --prefix $prefix python -m alohamini env check --feature $env:FEATURE --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:FEATURE -eq "training") {
+            conda run --no-capture-output --prefix $prefix python -m pytest -q tests/test_feature_environment.py tests/test_gui_recording.py tests/test_desktop_training.py
+            exit $LASTEXITCODE
+          }

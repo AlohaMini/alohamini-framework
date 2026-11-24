@@ -8,7 +8,7 @@ import json
 import platform
 import subprocess
 import sys
-from contextlib import nullcontext, redirect_stdout
+from contextlib import redirect_stdout
 
 from alohamini.environment import (
     checkout,
@@ -154,8 +154,7 @@ def sync_feature_environment(root, feature, *, dry_run=False):
     if sys.prefix == sys.base_prefix and not (Path(sys.prefix) / "conda-meta").is_dir():
         raise ValueError("请在此功能的独立 venv 中安装，不在系统 Python 中安装。")
     lock = feature_lock(root, feature)
-    # Windows 的串口和连接环境沿用独立 venv；桌面安装器串行管理这些任务。
-    with environment_lock(exclusive=True) if sys.platform != "win32" else nullcontext():
+    with environment_lock(exclusive=True):
         sources = dependency_snapshot(root, lock)
         command = [sys.executable, "-m", "pip", "install", "--require-hashes", "-r", str(lock)]
         subprocess.run([*command, "--dry-run"] if dry_run else command, check=True)

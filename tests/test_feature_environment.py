@@ -8,15 +8,16 @@ import sys
 
 import pytest
 
+from alohamini import environment
 from alohamini import feature_environment as features
 from env.dependencies import ROOT, requirements
 
 
 def test_lightweight_locks_exclude_training_dependencies():
-    for name in ("connection", "recording-linux-64", "recording-osx-arm64"):
+    for name in ("connection", "recording-linux-64", "recording-osx-arm64", "recording-win-64"):
         locked = requirements(ROOT / f"env/{name}.lock")
         assert not {"torch", "torchvision", "transformers", "torchcodec"} & locked.keys()
-    assert set(requirements(ROOT / "env/connection.lock")) == {"pillow", "pyzmq", "zeroconf", "ifaddr"}
+    assert set(requirements(ROOT / "env/connection.lock")) == {"ifaddr", "pillow", "pyzmq", "zeroconf"}
 
 
 @pytest.mark.parametrize("feature", ["connection", "calibration"])
@@ -53,6 +54,7 @@ def test_missing_dependencies_return_feature_local_details_without_loading_train
 
 def test_platform_support_is_per_feature(monkeypatch):
     monkeypatch.setattr(features.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(features.platform, "machine", lambda: "ARM64")
     assert features.feature_lock(ROOT, "connection").name == "connection.lock"
     assert features.feature_lock(ROOT, "calibration").name == "hardware.lock"
     for feature in ("recording", "training"):
@@ -104,3 +106,24 @@ def test_failed_lock_resolution_preserves_all_existing_feature_locks(tmp_path, m
     with pytest.raises(RuntimeError, match="依赖解析失败"):
         dependencies.refresh_features(tmp_path)
     assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_windows_has_locked_recording_and_training_profiles(monkeypatch):
+    monkeypatch.setattr(environment.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(environment.platform, "machine", lambda: "AMD64")
+    for name in ("recording", "training"):
+        locked = requirements(features.feature_lock(ROOT, name))
+        assert {"numpy", "pyarrow", "av", "pynput", "pyzmq"} <= locked.keys()
+        assert not {"evdev", "torchcodec", "pin"} & locked.keys()
+        assert ("torch" in locked) == (name == "training")
+    assert "torchcodec" not in environment.command_packages(["train"])
+
+
+def test_multiple_tasks_can_share_environment_but_install_requires_exclusive_access(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    with environment.environment_lock(), environment.environment_lock():
+        with pytest.raises(RuntimeError, match="环境正在使用"):
+            with environment.environment_lock(exclusive=True):
+                pytest.fail("安装期间必须独占环境")
+    with environment.environment_lock(exclusive=True):
+        pass

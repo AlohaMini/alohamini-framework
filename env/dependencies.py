@@ -31,6 +31,7 @@ GENERATED = (
 PLATFORMS = {
     "linux-64": "x86_64-unknown-linux-gnu", "linux-aarch64": "aarch64-unknown-linux-gnu",
     "osx-arm64": "aarch64-apple-darwin", "osx-64": "x86_64-apple-darwin",
+    "win-64": "x86_64-pc-windows-msvc",
 }
 
 
@@ -77,7 +78,8 @@ def declared(root, extras, *, architecture="x86_64", system="Linux"):
     name = canonicalize_name(project["name"])
     environment = {
         **default_environment(),
-        "sys_platform": "darwin" if system == "Darwin" else "linux",
+        "sys_platform": {"Darwin": "darwin", "Windows": "win32"}.get(system, "linux"),
+        "os_name": "nt" if system == "Windows" else "posix",
         "platform_system": system,
         "platform_machine": architecture,
         "python_version": policy(root)["python"],
@@ -115,7 +117,8 @@ def declared(root, extras, *, architecture="x86_64", system="Linux"):
 
 def pc_input(root, *, system="Linux", architecture="x86_64"):
     config = policy(root)
-    deps = declared(root, config["pc_extras"], system=system, architecture=architecture)
+    extras = ["pc-windows"] if system == "Windows" else config["pc_extras"]
+    deps = declared(root, extras, system=system, architecture=architecture)
     pins = {canonicalize_name(r.name): r for r in map(Requirement, config["pins"])}
     lines = []
     for name in sorted(deps.keys() | pins.keys()):
@@ -150,6 +153,10 @@ def check(root):
     roles.append(("pc-osx-arm64", declared(
         root, policy(root)["pc_extras"], system="Darwin", architecture="arm64"
     )))
+    windows_input = pc_input(root, system="Windows", architecture="AMD64")
+    if (root / "env/pc-win-64.in").read_text() != windows_input:
+        raise ValueError("env/pc-win-64.in is stale; run python env/dependencies.py windows-lock")
+    roles.append(("pc-win-64", declared(root, ["pc-windows"], system="Windows", architecture="AMD64")))
     for role, deps in roles:
         locked = requirements(root / f"env/{role}.lock")
         for name, (req, line) in locked.items():
@@ -162,12 +169,12 @@ def check(root):
             version = exact_version(locked[name][0])
             if any(version not in req.specifier for req in constraints):
                 raise ValueError(f"{role}: {name}=={version} violates project requirements")
-        if "osx" in role:
+        if role in ("pc-osx-arm64", "pc-win-64"):
             if any(name == "triton" or name.startswith(("nvidia-", "cuda-")) for name in locked):
                 raise ValueError(f"CUDA packages found in {role}")
             for name in locked.keys() & pc.keys():
                 if exact_version(locked[name][0]) != exact_version(pc[name][0]):
-                    raise ValueError(f"Linux/macOS version mismatch: {name}")
+                    raise ValueError(f"Linux/{role} version mismatch: {name}")
         if role.startswith("host-"):
             forbidden = {"torch", "transformers", "pynput", "lerobot", "datasets"}
             if locked.keys() & forbidden:
@@ -184,6 +191,7 @@ def check(root):
         ("connection", "connection", "x86_64", "Linux"),
         ("recording-linux-64", "recording", "x86_64", "Linux"),
         ("recording-osx-arm64", "recording", "arm64", "Darwin"),
+        ("recording-win-64", "recording", "AMD64", "Windows"),
     ):
         locked = requirements(root / f"env/{name}.lock")
         for package, (requirement, line) in locked.items():
@@ -419,6 +427,7 @@ def _refresh(root, *, group=None):
         GENERATED + "-r runtime-linux-64.lock\n" + pc["ruff"][1] + "\n"
     )
     refresh_macos(root)
+    refresh_windows(root)
     refresh_features(root)
     check(root)
 
@@ -441,6 +450,22 @@ def refresh_macos(root):
         raise
 
 
+def refresh_windows(root):
+    """按 Windows x64 可用的发行包生成桌面 PC 锁。"""
+    source = root / "env/pc-win-64.in"
+    output = root / "env/pc-win-64.lock"
+    with tempfile.TemporaryDirectory(prefix="alohamini-windows-lock-") as directory:
+        candidate = Path(directory) / output.name
+        manifest = Path(directory) / source.name
+        manifest.write_text(pc_input(root, system="Windows", architecture="AMD64"))
+        if output.exists():
+            candidate.write_bytes(output.read_bytes())
+        compile_lock(root, manifest, candidate, architecture="win-64",
+                     constraint=root / "env/pc-linux-64.lock")
+        source.write_bytes(manifest.read_bytes())
+        output.write_bytes(candidate.read_bytes())
+
+
 def refresh_features(root):
     """复用 PC 版本和官方解析器生成轻量功能锁，保留所有间接依赖的哈希。"""
     with tempfile.TemporaryDirectory(prefix="alohamini-feature-lock-") as directory:
@@ -449,6 +474,7 @@ def refresh_features(root):
             ("connection", "connection", "linux-64", "Linux", "x86_64"),
             ("recording-linux-64", "recording", "linux-64", "Linux", "x86_64"),
             ("recording-osx-arm64", "recording", "osx-arm64", "Darwin", "arm64"),
+            ("recording-win-64", "recording", "win-64", "Windows", "AMD64"),
         ):
             source, output = directory / f"{name}.in", directory / f"{name}.lock"
             existing = root / f"env/{name}.lock"
@@ -486,7 +512,7 @@ def write_report(before, root, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "inputs", "refresh", "ci-lock", "mac-lock", "feature-locks"))
+    parser.add_argument("command", choices=("check", "inputs", "refresh", "ci-lock", "mac-lock", "windows-lock", "feature-locks"))
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--group", choices=tuple(policy(ROOT)["groups"]))
     parser.add_argument("--output", type=Path)
@@ -501,6 +527,10 @@ def main(argv=None):
         (root / "env/pc-osx-arm64.in").write_text(
             pc_input(root, system="Darwin", architecture="arm64")
         )
+    elif args.command == "windows-lock":
+        refresh_windows(root)
+        refresh_features(root)
+        check(root)
     elif args.command == "feature-locks":
         refresh_features(root)
         check(root)

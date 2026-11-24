@@ -28,7 +28,10 @@ def checkout():
 
 
 def lock_path(root, role):
-    if platform.system() == "Darwin":
+    system, machine = platform.system(), platform.machine()
+    if system == "Windows" and machine.lower() in ("amd64", "x86_64") and role == "pc":
+        return root / "env/pc-win-64.lock"
+    if system == "Darwin":
         arch = {"arm64": "osx-arm64", "x86_64": "osx-64"}.get(platform.machine())
         if role == "host":
             raise ValueError("Robot Host runs on Ubuntu; use the alohamini PC environment on macOS")
@@ -128,8 +131,7 @@ def command_packages(argv):
             "accelerate",
             "safetensors",
             "pyarrow",
-            "torchcodec",
-        }
+        } | ({"torchcodec"} if platform.system() != "Windows" else set())
     if argv[:2] == ["inference", "run"]:
         return {"numpy", "pyzmq", "opencv-python-headless"}
     if command == "dataset":
@@ -160,20 +162,49 @@ def inferred_role():
 
 
 @contextmanager
-def environment_lock(exclusive=False, prefix=None):
-    if os.name == "nt":
-        raise ValueError(
-            "Deployment environment locking is unavailable on Windows. "
-            "For leader calibration, run alohamini calibrate leader."
-        )
-    import fcntl
+def _windows_environment_lock(stream, exclusive):
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
 
-    key = hashlib.sha256(str(Path(prefix or sys.prefix).resolve()).encode()).hexdigest()
+    class Overlapped(ctypes.Structure):
+        _fields_ = [("internal", ctypes.c_size_t), ("internal_high", ctypes.c_size_t),
+                    ("offset", wintypes.DWORD), ("offset_high", wintypes.DWORD),
+                    ("event", wintypes.HANDLE)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                  wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    kernel.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                    wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    handle = msvcrt.get_osfhandle(stream.fileno())
+    offset = Overlapped()
+    flags = 0x01 | (0x02 if exclusive else 0)
+    if not kernel.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(offset)):
+        error = ctypes.get_last_error()
+        if error == 33:
+            raise RuntimeError("环境正在使用或同步；请等待当前任务结束后重试。")
+        raise ctypes.WinError(error)
+    try:
+        yield
+    finally:
+        kernel.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(offset))
+
+
+@contextmanager
+def environment_lock(exclusive=False, prefix=None):
+    key = hashlib.sha256(os.path.normcase(str(Path(prefix or sys.prefix).resolve())).encode()).hexdigest()
     directory = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     directory = directory / "alohamini" / "environments"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{key}.lock"
-    with path.open("a") as stream:
+    with path.open("a+b") as stream:
+        if os.name == "nt":
+            with _windows_environment_lock(stream, exclusive):
+                yield
+            return
+        import fcntl
+
         try:
             fcntl.flock(stream, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -227,6 +258,21 @@ def runtime_environment(argv):
 def active_python_processes(prefix=None, proc=Path("/proc")):
     """Also detect older entry points and notebooks which do not hold our lock."""
     prefix = Path(prefix or sys.prefix).resolve()
+    if platform.system() == "Windows":
+        query = (
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+            "ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process "
+            "-Filter \"Name LIKE 'python%.exe'\" | Select-Object ProcessId,ExecutablePath)"
+        )
+        output = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", query],
+            check=True, capture_output=True, encoding="utf-8", timeout=12,
+        ).stdout
+        return sorted(
+            row["ProcessId"] for row in json.loads(output)
+            if row["ProcessId"] != os.getpid() and row["ExecutablePath"]
+            and Path(row["ExecutablePath"]).is_relative_to(prefix)
+        )
     if not proc.is_dir() and platform.system() == "Darwin":
         # /proc is Linux-specific. Ask ps for executable paths on macOS.
         output = subprocess.run(
@@ -378,8 +424,9 @@ def sync_environment(root, role, *, dry_run=False):
             try:
                 subprocess.run(install, check=True)
                 ensure_snapshot(sources)
+                extra = "pc-windows" if role == "pc" and platform.system() == "Windows" else role
                 subprocess.run(
-                    [*pip, "install", "--no-deps", "--no-build-isolation", "-e", f"{root}[{role}]"],
+                    [*pip, "install", "--no-deps", "--no-build-isolation", "-e", f"{root}[{extra}]"],
                     check=True,
                 )
                 subprocess.run([*pip, "check"], check=True)
