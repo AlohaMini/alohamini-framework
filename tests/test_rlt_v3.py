@@ -1,3 +1,5 @@
+from contextlib import closing
+
 import io
 import json
 from pathlib import Path
@@ -187,3 +189,29 @@ def test_v3_append_recovers_partial_publication_and_is_idempotent(tmp_path, monk
     assert v3.export_v3(tmp_path) == info
     second = pq.read_table(tmp_path / "lerobot_v3/data/chunk-000/file-001.parquet")
     assert second["index"].to_pylist() == list(range(5, 10))
+
+
+def test_platform_merge_and_action_training_use_scored_data(tmp_path):
+    from alohamini.datasets.merge_v3 import merge_v3
+    from alohamini.learning.data import AlohaMiniDataset
+    from alohamini.rlt.ac_training import scored_episodes
+
+    sources = []
+    for number in (1, 2):
+        root = tmp_path / str(number)
+        _episode(root, number)
+        v3.export_v3(root)
+        sources.append(root / "lerobot_v3")
+    merged = tmp_path / "merged"
+    merge_v3(sources, merged)
+    assert (merged / "recording.lock").is_file()
+    for eid, reward, directory in scored_episodes(merged):
+        assert reward == 1
+        with closing(V3Observations(directory)) as observations:
+            snapshot, images = observations.read(4)
+            assert snapshot.payload["left"] == 4.0 and "chest" in images
+    samples = AlohaMiniDataset(
+        merged, cameras=[], state="none", delta_indices={"action": [0]}, episodes=[0, 1]
+    )
+    assert [s["action"][0, 0].item() for s in samples] == [1, 2, 1, 2]
+    assert samples.statistics(keys=["action"])["action"]["mean"][0] == 1.5

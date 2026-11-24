@@ -307,6 +307,7 @@ def _write_episode(root, stage, output, episode, summary, info):
         robot = _json(first / "state.json")["payload"]["_robot_metadata"]
         source = dict(
             features=features,
+            action_validity_field="rlt.action_valid",
             cameras=list(videos),
             robot_metadata=robot,
             fps=summary["fps"],
@@ -390,7 +391,7 @@ def export_v3(root):
     if not (root / "episodes").is_dir() and not (root / "run-contract.json").is_file():
         raise ValueError(f"No RLT recording at {root}")
     stage, output = root / ".rlt-v3-stage", root / "lerobot_v3"
-    with RunLock(stage / "publish.lock"):
+    with RunLock(stage / "publish.lock"), RunLock(output / "recording.lock"):
         info_path = output / "meta/info.json"
         if (
             info_path.exists()
@@ -399,7 +400,7 @@ def export_v3(root):
             raise ValueError(f"Destination contains another dataset: {output}")
         if (
             output.exists()
-            and any(output.iterdir())
+            and any(path.name != "recording.lock" for path in output.iterdir())
             and not info_path.exists()
             and not (stage / "publish/ready.json").exists()
         ):
