@@ -841,7 +841,8 @@ settings.addEventListener("keydown", (e) => {
 });
 const chartWidth = $("chart-width");
 const storedWidth = Number(localStorage.getItem("am:chart-width"));
-if (storedWidth >= 240 && storedWidth <= 720) chartWidth.value = storedWidth;
+if (storedWidth >= Number(chartWidth.min) && storedWidth <= Number(chartWidth.max))
+  chartWidth.value = storedWidth;
 function sizeCharts() {
   const width = chartWidth.valueAsNumber;
   $("charts").style.setProperty("--chart-width", width + "px");

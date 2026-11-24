@@ -490,12 +490,13 @@ main {
   border-bottom: 1px solid #c8d0dc;
 }
 .chart-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--chart-width, 320px)), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   background: #d4dbe5;
   gap: 1px;
 }
 .chart-grid .chart-card {
+  flex: 1 1 var(--chart-width, 100%);
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -641,8 +642,8 @@ main {
   .readouts dd {
     font-size: clamp(1rem, 3.8vw, 1.26rem);
   }
-  .chart-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .chart-grid .chart-card {
+    flex-basis: 100%;
   }
   .width-control {
     display: none;
