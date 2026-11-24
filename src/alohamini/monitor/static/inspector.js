@@ -1,7 +1,18 @@
-import { $, api, btn, el, fmt, modal, opt, t } from "./ui.js";
+import { $, api, btn, el, modal, opt, t } from "./ui.js";
 import { Plot } from "./plot.js";
+import { rangeSlider } from "./range.js";
 
-export function inspectChart({ key, description, runs, axis, bounds, initial, trend, linesFor, accent }) {
+export function inspectChart({
+  key,
+  description,
+  runs,
+  axis,
+  bounds,
+  initial,
+  trend,
+  linesFor,
+  accent,
+}) {
   if (!bounds) return;
   const body = modal(t(key)),
     dialog = $("dialog");
@@ -23,7 +34,10 @@ export function inspectChart({ key, description, runs, axis, bounds, initial, tr
   }
   function set(next, remember = true) {
     const value = normalize(next);
-    if (value[0] === range[0] && value[1] === range[1]) return;
+    if (value[0] === range[0] && value[1] === range[1]) {
+      slider.update(bounds, range, axis);
+      return;
+    }
     if (remember) history.push(range);
     range = value;
     load();
@@ -55,7 +69,9 @@ export function inspectChart({ key, description, runs, axis, bounds, initial, tr
   controls.append(zoomIn, zoomOut, earlier, later, back, full, ylabel);
   body.append(controls);
   const plot = new Plot(body, (lo, hi) => set([lo, hi]));
-  body.append(status);
+  const slider = rangeSlider((lo, hi) => set([lo, hi]));
+  status.setAttribute("role", "status");
+  body.append(slider.element, status);
   function paint() {
     plot.update({ title: t(key), description, axis, lines, accent, range, zeroY: y.value === "zero" });
   }
@@ -70,6 +86,8 @@ export function inspectChart({ key, description, runs, axis, bounds, initial, tr
     earlier.disabled = range[0] <= bounds[0];
     later.disabled = range[1] >= bounds[1];
     back.disabled = !history.length;
+    slider.update(bounds, range, axis);
+    status.hidden = false;
     status.textContent = t("loading");
     const params = new URLSearchParams({
       metric: key,
@@ -86,7 +104,7 @@ export function inspectChart({ key, description, runs, axis, bounds, initial, tr
       if (current.signal.aborted) return;
       lines = linesFor(phases);
       paint();
-      status.textContent = t(axis) + "  " + fmt(range[0]) + " – " + fmt(range[1]);
+      status.hidden = true;
     } catch (e) {
       if (!current.signal.aborted) status.textContent = t("error") + " · " + e.message;
     }

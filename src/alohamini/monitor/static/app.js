@@ -17,6 +17,7 @@ import {
 import { accents, colors, Plot } from "./plot.js";
 import { Evaluation } from "./evaluation.js";
 import { inspectChart } from "./inspector.js";
+import { rangeSlider } from "./range.js";
 import { Diagnostics } from "./diagnostics.js";
 import { configurationFacts, factCell, reportControls } from "./resources.js";
 
@@ -46,6 +47,9 @@ const evaluation = new Evaluation(() => {
   switchTab("evaluation");
 });
 const diagnostics = new Diagnostics(refresh);
+const overviewRange = rangeSlider(chooseRange, rangeDialog);
+overviewRange.readout.id = "range-btn";
+$("interval-tools").prepend(overviewRange.element);
 const primary = () => info.get(selected[0]);
 const attemptName = (r) =>
   r.attempt ? "#" + r.ordinal + " · " + t("resume") + " " + r.attempt.split("-")[0] : t("initial");
@@ -117,6 +121,9 @@ function setUrl() {
   history.replaceState(null, "", url);
 }
 const mobile = matchMedia("(max-width:850px)");
+const topbar = document.querySelector(".topbar"),
+  tabs = topbar.querySelector(".tabs"),
+  topActions = document.querySelector(".top-actions");
 let collapsed = localStorage.getItem("am:sidebarCollapsed") === "1",
   drawer = false;
 function showSidebar() {
@@ -128,17 +135,25 @@ function showSidebar() {
   $("menu").title = t(open ? "hideRuns" : "showRuns");
   $("menu").setAttribute("aria-label", $("menu").title);
   $("menu").setAttribute("aria-expanded", String(open));
+  $("close-sidebar").title = t("hideRuns");
+  $("close-sidebar").setAttribute("aria-expanded", String(open));
+  const host = mobile.matches ? $("sidebar") : topbar;
+  if (topActions.parentElement !== host) host.append(topActions);
+  topbar.inert = document.querySelector("main").inert = mobile.matches && drawer;
 }
 function sidebar(close = false) {
+  const fromSidebar = $("sidebar").contains(document.activeElement);
   if (mobile.matches) {
     drawer = close ? false : !drawer;
-    if (!drawer && $("sidebar").contains(document.activeElement)) $("menu").focus();
   } else if (!close) {
     collapsed = !collapsed;
     localStorage.setItem("am:sidebarCollapsed", collapsed ? "1" : "0");
   }
   showSidebar();
-  if (mobile.matches && drawer) $("search").focus();
+  if (mobile.matches) {
+    if (drawer) $("search").focus();
+    else if (fromSidebar) $("menu").focus();
+  } else if (!close) $(collapsed ? "menu" : "close-sidebar").focus();
 }
 mobile.addEventListener("change", () => {
   drawer = false;
@@ -168,10 +183,7 @@ function selectRun(id, compare = false) {
   runListKey = "";
   lastHeader = "";
   setUrl();
-  if (!compare) {
-    $("run-view").hidden = true;
-    $("primary-name").textContent = t("loading");
-  }
+  if (!compare) $("run-view").hidden = true;
   refresh();
 }
 function renderList() {
@@ -204,6 +216,10 @@ function renderList() {
     box.setAttribute("aria-label", box.title);
     box.onchange = () => selectRun(r.id, true);
     if (i === 0) {
+      const time = el("time");
+      time.id = "last-event";
+      label.append(time);
+      if (primary()) updateRunTime(primary(), time);
       const mark = el("span", "primary-mark", "✓");
       mark.title = t("primary");
       item.append(label, mark);
@@ -212,18 +228,24 @@ function renderList() {
   }
   if (!list.childElementCount) list.append(el("p", "side-note", filter ? t("noMatches") : t("noRuns")));
 }
-function renderHead(r) {
-  $("primary-name").textContent = $("primary-name").title = runName(r);
-  $("policy-badge").textContent = r.policy || "";
-  $("policy-badge").hidden = !r.policy;
-  const train = r.phases.train.latest,
-    val = r.phases.validation.latest;
-  const when = Math.max(train.event_time_s || 0, val.event_time_s || 0);
+function updateRunTime(r, time) {
+  const when = Math.max(
+    r.phases.train.latest.event_time_s || 0,
+    r.phases.validation.latest.event_time_s || 0,
+  );
   const date = new Date(when ? when * 1000 : Number(r.updated_ns) / 1e6);
-  $("last-event").textContent =
+  if (!date.getTime()) return;
+  time.dateTime = date.toISOString();
+  time.textContent =
     (when ? t("lastEvent") : t("fileUpdated")) +
     " " +
     date.toLocaleString(lang, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function renderHead(r) {
+  const time = $("last-event");
+  if (time) updateRunTime(r, time);
+  const train = r.phases.train.latest,
+    val = r.phases.validation.latest;
   const readings = [
     ["step", train.step, r.steps ? " / " + fmt(r.steps) : ""],
     ["trainLoss", train.loss, ""],
@@ -259,10 +281,6 @@ function renderAxes() {
     $("axis").replaceChildren(...available.map((k) => opt(k, t(k))));
     $("axis").value = axis;
   }
-  $("active-range").hidden = !range;
-  if (range)
-    $("active-range").firstElementChild.textContent =
-      t(axis) + "  " + fmt(range[0]) + " – " + fmt(range[1]);
 }
 function chooseRange(low, high) {
   if (axis !== "elapsed_s") {
@@ -270,17 +288,14 @@ function chooseRange(low, high) {
     high = Math.floor(high);
   }
   if (high < low) return;
-  range = [low, high];
+  const full = extent();
+  range = full && low === full[0] && high === full[1] ? null : [low, high];
   refresh();
 }
 function rangeDialog() {
+  const bounds = range || extent();
+  if (!bounds) return;
   const body = modal(t("range") + " · " + t(axis));
-  const extents = selection().flatMap((r) =>
-    Object.values(snapshots.get(r.id)?.phases || {})
-      .map((p) => p.extent)
-      .filter(Boolean),
-  );
-  const bounds = range || [Math.min(...extents.map((e) => e[0])), Math.max(...extents.map((e) => e[1]))];
   const inputs = bounds.map((value, i) => {
     const label = el("label", "field", t(i ? "upper" : "lower")),
       input = el("input", "input");
@@ -651,7 +666,17 @@ async function renderLogs(r, signal) {
   if (stick) output.scrollTop = output.scrollHeight;
   logState = { key, cursor: value.cursor, text, sources: sig };
 }
+function revealTab() {
+  const active = tabs.querySelector('[aria-current="page"]');
+  if (!active || tabs.scrollWidth <= tabs.clientWidth) return;
+  const tabBox = active.getBoundingClientRect(),
+    bar = tabs.getBoundingClientRect();
+  if (tabBox.left < bar.left) tabs.scrollLeft += tabBox.left - bar.left;
+  else if (tabBox.right > bar.right) tabs.scrollLeft += tabBox.right - bar.right;
+}
+new ResizeObserver(revealTab).observe(tabs);
 function switchTab(next) {
+  if (next !== tab) window.scrollTo(0, 0);
   tab = next;
   const url = new URL(location.href);
   if (next === "metrics") url.searchParams.delete("view");
@@ -662,6 +687,7 @@ function switchTab(next) {
     else n.removeAttribute("aria-current");
     $(n.dataset.tab + "-view").hidden = n.dataset.tab !== tab;
   });
+  revealTab();
   if (next !== "evaluation") {
     evaluation.clear();
     evalKey = "";
@@ -680,6 +706,7 @@ function showLive() {
   $("trend").value = trend;
   $("live").setAttribute("aria-label", $("live").title);
   $("language-label").textContent = lang === "zh" ? "English" : "中文";
+  revealTab();
 }
 let lastPaint = "",
   lastHeader = "";
@@ -703,9 +730,6 @@ async function sync(signal) {
   if (empty) {
     lastHeader = "";
     $("run-view").hidden = true;
-    $("policy-badge").hidden = true;
-    $("primary-name").textContent = t("monitor");
-    $("last-event").textContent = "";
     $("feedback").hidden = true;
     return;
   }
@@ -774,6 +798,11 @@ async function sync(signal) {
     if (signal.aborted) return;
     const paint = signature([queryKey, lang, selected, r.version]);
     if (lastPaint !== paint || changed.some(Boolean)) {
+      const full = extent();
+      $("interval-tools").hidden = !full;
+      $("reset-range").hidden = !range;
+      $("reset-range").title = t("resetRange");
+      overviewRange.update(full, range, axis, selected.join("/"));
       drawCharts(keys);
       lastPaint = paint;
     }
@@ -861,7 +890,6 @@ $("charts-next").onclick = () => {
   chartPage++;
   refresh();
 };
-$("range-btn").onclick = rangeDialog;
 $("reset-range").onclick = () => {
   range = null;
   refresh();
@@ -874,7 +902,7 @@ $("log-source").onchange = () => {
   refresh();
 };
 $("menu").onclick = () => sidebar();
-$("close-sidebar").onclick = () => sidebar(true);
+$("close-sidebar").onclick = () => sidebar();
 $("shade").onclick = () => sidebar(true);
 document
   .querySelectorAll("[data-tab]")

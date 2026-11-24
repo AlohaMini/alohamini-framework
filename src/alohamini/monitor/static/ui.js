@@ -23,6 +23,7 @@ const words = {
   logs: ["Logs", "日志"],
   axis: ["X axis", "横轴"],
   range: ["Range", "区间"],
+  editRange: ["Enter exact range", "输入精确区间"],
   chooseMetrics: ["Select metrics", "选择指标"],
   display: ["Display", "显示设置"],
   chartWidth: ["Minimum chart width", "最小图宽"],

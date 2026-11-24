@@ -4,12 +4,18 @@
     "Noto Sans CJK SC",
     system-ui,
     sans-serif;
-  color: #17223b;
-  background: #eef1f5;
-  --muted: #58677f;
-  --line: #cdd4df;
+  color: var(--ink);
+  background: var(--page);
+  --page: #edf1ef;
+  --chrome: #f1f4f3;
+  --panel: #f9fbfa;
+  --hover: #e8eeeb;
+  --selected: #e0e8e5;
+  --ink: #22312e;
+  --muted: #52635e;
+  --control: #475f57;
+  --line: #cdd7d2;
   --blue: #4254ed;
-  --nav: #172039;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 * {
@@ -53,7 +59,7 @@ select {
   outline-offset: 3px;
 }
 :focus-visible {
-  outline: 2px solid #6884ff;
+  outline: 2px solid var(--control);
 }
 h1,
 h2,
@@ -104,7 +110,7 @@ pre,
 }
 .quiet:hover,
 .icon-button:hover {
-  background: #edf0fa;
+  background: var(--hover);
 }
 
 .primary,
@@ -117,28 +123,27 @@ pre,
   font-weight: 600;
 }
 .primary {
-  background: var(--blue);
+  background: var(--control);
   color: white;
-  box-shadow: 0 2px 4px #3748c62b;
 }
 .primary:hover {
-  background: #3544cf;
+  background: #354b44;
 }
 .secondary {
-  background: white;
-  border-color: #d6dce8;
+  background: var(--panel);
+  border-color: var(--line);
 }
 .secondary:hover {
-  background: #f1f3fc;
-  border-color: #b7c1d6;
+  background: var(--hover);
+  border-color: #acbcb5;
 }
 
 select,
 .input {
   padding: 7px 10px;
-  border: 1px solid #cfd6e4;
-  color: #25324a;
-  background-color: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background-color: var(--panel);
   min-width: 0;
   max-width: 100%;
   font-size: 0.87rem;
@@ -158,7 +163,7 @@ select {
 .card,
 .table-wrap,
 .empty-state {
-  background: white;
+  background: var(--panel);
   border: 1px solid var(--line);
   min-width: 0;
 }
@@ -259,24 +264,13 @@ select {
 .swatch.dash {
   border-top-style: dashed;
 }
-#active-range,
 #feedback,
 .notice {
   margin: 12px 0;
   font-size: 0.87rem;
   padding: 8px 12px;
   border-radius: 2px;
-  background: #e9edff;
-  color: #34408a;
   overflow-wrap: anywhere;
-}
-#active-range {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-#feedback,
-.notice {
   background: #fff4de;
   color: #785011;
 }
@@ -292,11 +286,11 @@ table {
 td,
 th {
   padding: 7px 10px;
-  border-bottom: 1px solid #ebedf4;
+  border-bottom: 1px solid var(--line);
   overflow-wrap: anywhere;
 }
 th {
-  background: #f8f9fd;
+  background: var(--chrome);
   font-weight: 650;
   vertical-align: bottom;
 }
@@ -314,8 +308,9 @@ td {
   overflow-y: auto;
   height: min(65vh, 620px);
   padding: 12px;
-  color: #d5e3ff;
-  background: #19233b;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
   border-radius: 2px;
   font: 0.82rem/1.75 var(--mono);
 }
@@ -329,8 +324,8 @@ td {
   width: 32px;
   height: 32px;
   margin: 0 auto 16px;
-  background: #edf0ff;
-  color: var(--blue);
+  background: var(--hover);
+  color: var(--control);
 }
 .tag {
   color: #4b5870;
@@ -345,7 +340,7 @@ p.detail {
 .empty-state code,
 .note-code {
   font-size: 0.82rem;
-  background: #eef1f9;
+  background: var(--hover);
   border-radius: 2px;
   padding: 4px 6px;
   overflow-wrap: anywhere;
@@ -387,6 +382,7 @@ dialog {
   width: min(500px, 92vw);
   max-height: 82dvh;
   color: inherit;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 2px;
   padding: 20px;
@@ -397,7 +393,7 @@ dialog[open] {
   animation: appear 0.15s ease-out;
 }
 dialog::backdrop {
-  background: #121b3655;
+  background: #273a334f;
 }
 .dialog-head {
   margin-bottom: 16px;
@@ -418,7 +414,7 @@ dialog::backdrop {
 .metric-choice input {
   width: 16px;
   height: 16px;
-  accent-color: var(--blue);
+  accent-color: var(--control);
 }
 .dialog-actions {
   display: flex;
@@ -498,8 +494,8 @@ dialog.inspector {
 details.compact {
   margin: 10px 0;
   padding: 7px 12px;
-  border-left: 2px solid #c7d0ea;
-  background: #f0f3fa;
+  border-left: 2px solid var(--line);
+  background: var(--chrome);
   min-width: 0;
 }
 .compact summary {
@@ -534,7 +530,7 @@ details.compact {
 }
 .diag-panel {
   min-width: 0;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 2px;
   padding: 12px 14px;
@@ -576,7 +572,7 @@ details.compact {
 .diag-change,
 .target-result {
   font-size: 0.84rem;
-  color: #374cb4;
+  color: var(--control);
   font-weight: 600;
 }
 .diag-pair {
@@ -601,7 +597,7 @@ details.compact {
   font-variant-numeric: tabular-nums;
 }
 #stat-trends .diag-reading:last-child strong {
-  color: #414fcb;
+  color: var(--ink);
 }
 .diag-reading small {
   font-size: 0.76rem;
@@ -652,7 +648,7 @@ details.compact {
   margin: 0;
 }
 #stat-details summary {
-  color: #40516f;
+  color: var(--control);
 }
 .config-fact summary {
   cursor: pointer;
@@ -719,7 +715,7 @@ button.legend-item {
   border-radius: 2px;
 }
 button.legend-item:hover {
-  background: #eef1fb;
+  background: var(--hover);
 }
 button.legend-item[aria-pressed="false"] {
   opacity: 0.55;
