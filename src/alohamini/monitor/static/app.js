@@ -47,9 +47,11 @@ const evaluation = new Evaluation(() => {
   switchTab("evaluation");
 });
 const diagnostics = new Diagnostics(refresh);
-const overviewRange = rangeSlider(chooseRange, rangeDialog);
-overviewRange.readout.id = "range-btn";
-$("interval-tools").prepend(overviewRange.element);
+const overviewRange = rangeSlider(chooseRange, () => {
+  range = null;
+  refresh();
+});
+$("interval-tools").append(overviewRange.element);
 const primary = () => info.get(selected[0]);
 const attemptName = (r) =>
   r.attempt ? "#" + r.ordinal + " · " + t("resume") + " " + r.attempt.split("-")[0] : t("initial");
@@ -151,7 +153,7 @@ function sidebar(close = false) {
   }
   showSidebar();
   if (mobile.matches) {
-    if (drawer) $("search").focus();
+    if (drawer) $("close-sidebar").focus({ preventScroll: true });
     else if (fromSidebar) $("menu").focus();
   } else if (!close) $(collapsed ? "menu" : "close-sidebar").focus();
 }
@@ -160,7 +162,7 @@ mobile.addEventListener("change", () => {
   showSidebar();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && drawer) sidebar(true);
+  if (e.key === "Escape" && drawer && !e.defaultPrevented && !$("dialog").open) sidebar(true);
 });
 function selectRun(id, compare = false) {
   if (compare) {
@@ -183,7 +185,10 @@ function selectRun(id, compare = false) {
   runListKey = "";
   lastHeader = "";
   setUrl();
-  if (!compare) $("run-view").hidden = true;
+  if (!compare) {
+    $("run-view").hidden = true;
+    $("display-settings").hidden = true;
+  }
   refresh();
 }
 function renderList() {
@@ -199,7 +204,6 @@ function renderList() {
   )) {
     const i = selected.indexOf(r.id),
       item = el("div", "run" + (i >= 0 ? " selected" : "") + (i === 0 ? " primary-run" : ""));
-    if (i >= 0) item.style.setProperty("--ink", colors[i % colors.length]);
     const label = btn("", () => selectRun(r.id), "");
     label.title = runName(r);
     label.append(
@@ -291,51 +295,6 @@ function chooseRange(low, high) {
   const full = extent();
   range = full && low === full[0] && high === full[1] ? null : [low, high];
   refresh();
-}
-function rangeDialog() {
-  const bounds = range || extent();
-  if (!bounds) return;
-  const body = modal(t("range") + " · " + t(axis));
-  const inputs = bounds.map((value, i) => {
-    const label = el("label", "field", t(i ? "upper" : "lower")),
-      input = el("input", "input");
-    input.type = "number";
-    input.step = axis === "elapsed_s" ? "any" : "1";
-    if (Number.isFinite(value)) input.value = value;
-    label.append(input);
-    body.append(label);
-    return input;
-  });
-  const error = el("p", "notice", t("invalidRange"));
-  error.hidden = true;
-  body.append(error);
-  const actions = el("div", "dialog-actions");
-  actions.append(
-    btn(t("resetRange"), () => {
-      range = null;
-      $("dialog").close();
-      refresh();
-    }),
-    btn(
-      t("apply"),
-      () => {
-        const [low, high] = inputs.map((i) => i.valueAsNumber);
-        if (
-          !Number.isFinite(low) ||
-          !Number.isFinite(high) ||
-          low > high ||
-          inputs.some((i) => !i.validity.valid)
-        ) {
-          error.hidden = false;
-          return;
-        }
-        $("dialog").close();
-        chooseRange(low, high);
-      },
-      "primary",
-    ),
-  );
-  body.append(actions);
 }
 function metricDialog() {
   const body = modal(t("chooseMetrics")),
@@ -678,6 +637,7 @@ new ResizeObserver(revealTab).observe(tabs);
 function switchTab(next) {
   if (next !== tab) window.scrollTo(0, 0);
   tab = next;
+  if (tab !== "metrics") $("display-settings").hidden = true;
   const url = new URL(location.href);
   if (next === "metrics") url.searchParams.delete("view");
   else url.searchParams.set("view", next);
@@ -729,6 +689,7 @@ async function sync(signal) {
   $("import").hidden = empty;
   if (empty) {
     lastHeader = "";
+    $("display-settings").hidden = true;
     $("run-view").hidden = true;
     $("feedback").hidden = true;
     return;
@@ -780,7 +741,7 @@ async function sync(signal) {
   if (tab === "metrics") {
     renderAxes();
     const all = unionMetrics();
-    $("metrics-view").querySelector(".toolbar").hidden = !all.length;
+    $("display-settings").hidden = !all.length;
     const chosen = (metrics || defaultMetrics()).filter((k) => all.includes(k));
     chartPage = Math.max(0, Math.min(chartPage, Math.ceil(chosen.length / chartsPerPage) - 1));
     const offset = chartPage * chartsPerPage;
@@ -800,8 +761,6 @@ async function sync(signal) {
     if (lastPaint !== paint || changed.some(Boolean)) {
       const full = extent();
       $("interval-tools").hidden = !full;
-      $("reset-range").hidden = !range;
-      $("reset-range").title = t("resetRange");
       overviewRange.update(full, range, axis, selected.join("/"));
       drawCharts(keys);
       lastPaint = paint;
@@ -858,22 +817,14 @@ $("trend").onchange = () => {
   trend = Number($("trend").value);
   refresh();
 };
-const settings = $("display-settings");
-document.addEventListener("click", (e) => {
-  if (settings.open && !settings.contains(e.target)) settings.open = false;
-});
-settings.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    settings.open = false;
-    settings.querySelector("summary").focus();
-  }
-});
 const chartWidth = $("chart-width");
 const storedWidth = Number(localStorage.getItem("am:chart-width"));
 if (storedWidth >= Number(chartWidth.min) && storedWidth <= Number(chartWidth.max))
   chartWidth.value = storedWidth;
 function sizeCharts() {
   const width = chartWidth.valueAsNumber;
+  const fraction = (width - Number(chartWidth.min)) / (Number(chartWidth.max) - Number(chartWidth.min));
+  chartWidth.style.setProperty("--width-fill", fraction * 100 + "%");
   $("charts").style.setProperty("--chart-width", width + "px");
   $("width-value").textContent = width + " px";
   chartWidth.setAttribute("aria-valuetext", width + " px");
@@ -888,10 +839,6 @@ $("charts-prev").onclick = () => {
 };
 $("charts-next").onclick = () => {
   chartPage++;
-  refresh();
-};
-$("reset-range").onclick = () => {
-  range = null;
   refresh();
 };
 $("search").oninput = renderList;

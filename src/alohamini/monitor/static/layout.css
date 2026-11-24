@@ -1,8 +1,8 @@
 /* Application bar, run navigation, view controls and chart panels. */
 :root {
   --bar-height: 50px;
-  --rail-width: clamp(192px, 16vw, 244px);
-  --gutter: clamp(10px, 1.2vw, 20px);
+  --rail-width: clamp(230px, 19vw, 272px);
+  --gutter: clamp(14px, 1.6vw, 24px);
 }
 body {
   display: grid;
@@ -50,8 +50,7 @@ main {
 .rail-heading {
   justify-content: space-between;
   flex: 0 0 var(--bar-height);
-  padding: 0 9px 0 13px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 12px 0 16px;
 }
 .brand {
   gap: 8px;
@@ -63,7 +62,7 @@ main {
   width: 22px;
   height: 22px;
   stroke-width: 2.1;
-  color: var(--control);
+  color: var(--blue);
 }
 #menu,
 .top-actions .quiet,
@@ -104,10 +103,10 @@ main {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #46765f;
+  background: var(--blue);
 }
 .live-control[aria-pressed="false"] .status-dot {
-  background: #88938f;
+  background: #92959c;
 }
 #sidebar {
   grid-area: rail;
@@ -122,16 +121,21 @@ main {
   background: var(--chrome);
   border-right: 1px solid var(--line);
 }
+.sidebar-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px 16px;
+}
 .run-header {
-  height: 40px;
-  min-height: 40px;
-  padding: 0 12px;
-  gap: 8px;
+  margin: 4px 0 10px;
+  gap: 7px;
 }
 .run-header h2,
+#display-settings h2,
 .section-bar,
 .toolbar h2 {
-  font-size: 0.85rem;
+  font-size: 0.93rem;
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -144,9 +148,10 @@ main {
   align-items: center;
   gap: 6px;
   background: var(--panel);
-  border: 1px solid var(--line);
-  margin: 0 10px;
-  padding: 4px 6px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--control-radius);
+  min-height: var(--field-height);
+  padding: 4px 8px;
   color: var(--muted);
 }
 .search .icon {
@@ -160,34 +165,38 @@ main {
   background: transparent;
   font-size: 0.82rem;
 }
-.compare-hint,
+.search:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.search input:focus {
+  outline: 0;
+}
 .side-note {
-  margin: 5px 12px 7px;
+  margin: 7px 0;
   color: var(--muted);
   font-size: 0.73rem;
   line-height: 1.4;
 }
 #run-list {
-  overflow: auto;
-  padding-bottom: 14px;
+  overflow-y: auto;
+  max-height: max(148px, 32dvh);
+  margin: 8px 0 0;
 }
 .run {
   display: flex;
   align-items: center;
   gap: 5px;
-  border-bottom: 1px solid var(--line);
-  border-left: 3px solid transparent;
-  padding: 0 10px 0 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--control-radius);
+  padding: 0 6px 0 0;
 }
 .run:hover {
   background: var(--hover);
 }
 .run.selected {
-  background: var(--hover);
-  border-left-color: var(--ink);
-}
-.run.primary-run {
   background: var(--selected);
+  border-left-color: var(--blue);
 }
 .run button {
   flex: 1;
@@ -195,7 +204,7 @@ main {
   border: 0;
   background: transparent;
   text-align: left;
-  padding: 8px 0 8px 9px;
+  padding: 8px 0 8px 7px;
 }
 .run strong {
   display: -webkit-box;
@@ -217,19 +226,19 @@ main {
 .run input {
   width: 14px;
   height: 14px;
-  accent-color: var(--ink);
+  accent-color: var(--blue);
   cursor: pointer;
 }
 .primary-mark {
   width: 16px;
   text-align: center;
-  color: var(--control);
+  color: var(--blue);
   font-weight: 650;
 }
 #shade {
   position: fixed;
   inset: 0;
-  background: #283b3442;
+  background: #25282d42;
   z-index: 7;
 }
 .content {
@@ -259,6 +268,9 @@ main {
   font-size: 0.91rem;
   white-space: nowrap;
 }
+.short-tab-name {
+  display: none;
+}
 .tabs button:focus-visible {
   outline-offset: -4px;
 }
@@ -266,9 +278,9 @@ main {
   background: var(--hover);
 }
 .tabs button[aria-current="page"] {
-  color: var(--ink);
+  color: var(--blue);
   font-weight: 650;
-  border-bottom-color: var(--control);
+  border-bottom-color: var(--blue);
 }
 .readouts {
   display: grid;
@@ -276,7 +288,7 @@ main {
   grid-template-rows: auto auto;
   row-gap: 2px;
   margin: 0;
-  padding: 8px var(--gutter) 9px;
+  padding: 12px var(--gutter);
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   font-variant-numeric: tabular-nums;
@@ -320,7 +332,7 @@ main {
   color: var(--muted);
 }
 #run-view > section {
-  margin: 0 var(--gutter) 16px;
+  margin: 14px var(--gutter) 20px;
 }
 .toolbar,
 .dialog-head {
@@ -331,113 +343,123 @@ main {
   flex-wrap: wrap;
 }
 .toolbar {
-  min-height: 40px;
-  margin: 0;
-  padding: 5px 0;
+  min-height: var(--field-height);
+  margin: 0 0 12px;
 }
 .controls {
   flex-wrap: wrap;
   gap: 5px 9px;
 }
-.toolbar select,
-.toolbar .input,
-.toolbar .secondary,
 .toolbar .quiet {
-  min-height: 28px;
-  padding-block: 3px;
-  border-radius: 2px;
-  font-size: 0.8rem;
+  min-height: var(--field-height);
 }
 .toolbar .icon {
   width: 15px;
   height: 15px;
 }
-.plot-commands {
-  gap: 0;
-}
-.plot-commands > .secondary,
-.plot-commands summary {
-  padding: 4px 9px;
-  border-color: var(--line);
-  min-height: 28px;
-  border-radius: 0;
-}
-.plot-commands > * + * {
-  margin-left: -1px;
-}
-.plot-commands .secondary:hover,
-.plot-commands details[open] summary {
-  background: var(--hover);
-  color: var(--ink);
-}
 #display-settings {
-  position: relative;
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
 }
-#display-settings summary {
-  list-style: none;
-  cursor: pointer;
+#display-settings h2 {
+  margin-bottom: 1px;
 }
-#display-settings summary::-webkit-details-marker {
-  display: none;
+.metric-picker {
+  justify-content: flex-start;
+  width: 100%;
 }
-.display-options {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 5;
-  min-width: 242px;
-  padding: 10px 12px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  box-shadow: 0 3px 12px #25354d20;
+.metric-picker .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
 }
-.display-options .axis {
-  justify-content: space-between;
-  margin-bottom: 6px;
-  font-size: 0.83rem;
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(58px, 0.75fr) minmax(0, 1.35fr);
+  align-items: center;
+  gap: 6px;
 }
-.display-options select {
-  max-width: 65%;
+.setting-row,
+.width-control,
+.interval-control {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.setting-row select {
+  width: 100%;
+  text-overflow: ellipsis;
 }
 .width-control {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 5px 8px;
-  font-size: 0.82rem;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
+  gap: 3px 8px;
 }
 .width-control output {
-  font-family: var(--mono);
+  font: 0.79rem var(--mono);
+  color: var(--ink);
 }
 .width-control input {
   grid-column: 1/-1;
   width: 100%;
+  height: 28px;
   margin: 0;
-  accent-color: var(--control);
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: linear-gradient(to right, var(--blue) var(--width-fill), var(--line) var(--width-fill))
+    center / calc(100% - 14px) 4px no-repeat;
   cursor: ew-resize;
 }
-#interval-tools,
 .interval-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-areas: "label" "fields" "slider" "error";
   min-width: 0;
 }
-#interval-tools {
-  flex: 0 1 390px;
-  margin-left: auto;
+.interval-heading {
+  grid-area: label;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 4px;
 }
-.interval-control {
-  flex: 1;
-  color: var(--muted);
-  font-size: 0.81rem;
+.interval-reset {
+  min-height: 22px;
+  padding: 0 3px;
+  font-size: 0.77rem;
+  color: var(--blue);
+}
+.interval-fields {
+  grid-area: fields;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.interval-fields input {
+  width: 100%;
+  font: 0.79rem var(--mono);
+  appearance: textfield;
+}
+.interval-fields input::-webkit-inner-spin-button,
+.interval-fields input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.interval-fields input[aria-invalid="true"] {
+  border-color: var(--blue);
+}
+.field-error {
+  grid-area: error;
+  font-size: 0.77rem;
+  color: var(--ink);
 }
 .interval-rail {
+  grid-area: slider;
   position: relative;
-  flex: 1;
   min-width: 52px;
   height: 28px;
 }
@@ -449,7 +471,7 @@ main {
   background: linear-gradient(
     to right,
     var(--line) var(--low),
-    var(--control) var(--low) var(--high),
+    var(--blue) var(--low) var(--high),
     var(--line) var(--high)
   );
 }
@@ -472,21 +494,27 @@ main {
 .interval-rail input:last-of-type {
   clip-path: inset(0 0 0 var(--split));
 }
+.width-control input::-webkit-slider-thumb,
 .interval-rail input::-webkit-slider-thumb {
   appearance: none;
   width: 14px;
   height: 14px;
   background: var(--panel);
-  border: 2px solid var(--control);
+  border: 2px solid var(--blue);
   border-radius: 50%;
 }
+.width-control input::-moz-range-thumb,
 .interval-rail input::-moz-range-thumb {
   box-sizing: border-box;
   width: 14px;
   height: 14px;
   background: var(--panel);
-  border: 2px solid var(--control);
+  border: 2px solid var(--blue);
   border-radius: 50%;
+}
+.width-control input::-moz-range-track,
+.interval-rail input::-moz-range-track {
+  background: transparent;
 }
 .interval-rail input:focus-visible {
   outline-offset: -3px;
@@ -495,28 +523,20 @@ main {
   cursor: default;
   opacity: 0.55;
 }
-.interval-values {
-  width: calc(var(--value-width) + 16px);
-  max-width: 55%;
-  text-align: center;
-  color: var(--ink);
-  font: 0.78rem var(--mono);
-  overflow-wrap: anywhere;
-}
-button.interval-values {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  padding: 3px 7px;
-  min-height: 26px;
-}
-button.interval-values:hover {
-  background: var(--hover);
-}
 .inspector .interval-control {
-  margin-top: 7px;
+  grid-template-areas: "label slider fields" "error error error";
+  grid-template-columns: auto minmax(0, 1fr) minmax(150px, 230px);
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 12px;
+}
+.inspector .interval-heading {
+  margin: 0;
 }
 #chart-pages {
-  gap: 3px;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 #chart-pages button {
   min-width: 28px;
@@ -527,62 +547,52 @@ button.interval-values:hover {
   font-variant-numeric: tabular-nums;
 }
 .chart-section {
-  border: 1px solid var(--line);
-  margin: 0 0 10px;
-  background: var(--panel);
+  margin: 0 0 18px;
 }
 .section-bar {
-  display: flex;
-  align-items: center;
-  margin: 0;
-  padding: 5px 10px;
-  min-height: 29px;
-  background: var(--hover);
-  color: var(--ink);
-  border-bottom: 1px solid var(--line);
+  margin: 0 0 7px;
+  font-weight: 600;
 }
 .chart-grid {
   display: flex;
   flex-wrap: wrap;
-  background: var(--line);
-  gap: 1px;
+  gap: 12px;
 }
 .chart-grid .chart-card {
   flex: 1 1 var(--chart-width, 100%);
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  padding: 10px 14px 9px;
+  border-radius: var(--control-radius);
 }
 .chart-heading {
-  min-height: 24px;
+  min-height: 25px;
 }
 .chart-heading h3 {
-  font-size: 0.88rem;
+  font-size: 0.94rem;
   font-weight: 600;
 }
 .chart-heading::before {
-  height: 12px;
+  height: 13px;
   width: 3px;
-  border-radius: 0;
+  border-radius: 1px;
 }
 .chart-heading .expand-plot {
-  padding: 3px;
+  padding: 5px;
 }
 .chart-meta {
-  font-size: 0.69rem;
-  line-height: 1.15;
+  font-size: 0.75rem;
+  line-height: 1.25;
 }
 .plot {
-  height: clamp(150px, 19vh, 215px);
-  margin: 3px 0 2px;
+  height: clamp(165px, 21vh, 230px);
+  margin: 5px 0 4px;
 }
 .plot-axis,
 .legend {
-  font-size: 0.71rem;
+  font-size: 0.76rem;
 }
 .legend {
-  min-height: 18px;
-  gap: 1px 10px;
+  min-height: 20px;
+  gap: 2px 10px;
 }
 .section-title {
   justify-content: space-between;
@@ -643,7 +653,6 @@ button.interval-values:hover {
     justify-content: space-between;
     margin: auto 0 0;
     padding: 8px 10px;
-    border-top: 1px solid var(--line);
   }
 }
 @media (max-width: 660px) {
@@ -677,21 +686,21 @@ button.interval-values:hover {
   .width-control {
     display: none;
   }
-  .display-options {
-    left: -58px;
-  }
   .toolbar {
-    gap: 4px;
-    min-height: 37px;
+    gap: 6px;
   }
-  .plot-commands > .secondary,
-  .plot-commands summary {
-    padding-inline: 6px;
+  #run-view > section {
+    margin-top: 10px;
   }
-  #interval-tools {
-    flex: 1 1 100%;
-    order: 1;
-    margin-left: 0;
+  .chart-grid {
+    gap: 8px;
+  }
+  .chart-grid .chart-card {
+    padding: 8px;
+  }
+  .inspector .interval-control {
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 55%);
+    grid-template-areas: "label fields" "slider slider" "error error";
   }
   .chart-meta {
     max-width: 42%;
@@ -707,5 +716,14 @@ button.interval-values:hover {
   }
   .inspector .plot {
     height: 45dvh;
+  }
+}
+
+@media (max-width: 420px) {
+  .full-tab-name {
+    display: none;
+  }
+  .short-tab-name {
+    display: inline;
   }
 }

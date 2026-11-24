@@ -204,7 +204,7 @@ export class Plot {
         }
       }
     ctx.font = '12px "IBM Plex Mono", ui-monospace, monospace';
-    ctx.fillStyle = "#64718a";
+    ctx.fillStyle = "#595f69";
     if (!Number.isFinite(ymin)) {
       this.domain = null;
       this.hide();
@@ -231,7 +231,7 @@ export class Plot {
     const X = (x) => padding.left + ((x - xmin) * width) / (xmax - xmin);
     const Y = (y) => padding.top + ((ymax - y) * height) / (ymax - ymin);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "#e2e7f2";
+    ctx.strokeStyle = "#e1e3e7";
     ctx.textBaseline = "middle";
     ctx.textAlign = "right";
     for (const value of ticks(ymin, ymax, 5)) {

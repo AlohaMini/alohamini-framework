@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#f1f4f3" />
+    <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./monitor.css" />
     <link rel="stylesheet" href="./layout.css" />
@@ -23,12 +23,6 @@
         <rect x="14" y="14" width="7" height="7" rx="2" />
       </symbol>
       <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M4 4v15h17M7 13l4-4 4 3 5-7" /></symbol>
-      <symbol id="icon-settings" viewBox="0 0 24 24">
-        <path d="M3 6h8m5 0h5M3 12h3m5 0h10M3 18h10m5 0h3" />
-        <circle cx="13" cy="6" r="2" />
-        <circle cx="8" cy="12" r="2" />
-        <circle cx="15" cy="18" r="2" />
-      </symbol>
       <symbol id="icon-search" viewBox="0 0 24 24">
         <circle cx="10" cy="10" r="6" />
         <path d="m15 15 5 5" />
@@ -55,9 +49,6 @@
         <rect x="3" y="4" width="18" height="16" rx="2" />
         <path d="M9 4v16" />
       </symbol>
-      <symbol id="icon-reset" viewBox="0 0 24 24">
-        <path d="M4 10a8 8 0 1 1 1 7M4 4v6h6" />
-      </symbol>
     </svg>
     <header class="topbar">
       <button class="icon-button" id="menu" aria-controls="sidebar">
@@ -67,7 +58,10 @@
         <button data-tab="metrics" data-t="metrics"></button>
         <button data-tab="diagnostics" data-t="diagnostics"></button>
         <button data-tab="evaluation" data-t="evaluation"></button>
-        <button data-tab="config" data-t="config"></button>
+        <button data-tab="config" data-label="config">
+          <span class="full-tab-name" data-t="config"></span
+          ><span class="short-tab-name" data-t="shortConfig"></span>
+        </button>
         <button data-tab="logs" data-t="logs"></button>
       </nav>
       <div class="top-actions">
@@ -89,16 +83,45 @@
           <svg class="icon"><use href="#icon-panel" /></svg>
         </button>
       </div>
-      <div class="run-header">
-        <h2 data-t="runs"></h2>
-        <span id="run-count" class="count">0</span>
+      <div class="sidebar-body">
+        <div class="run-header">
+          <h2 data-t="runs"></h2>
+          <span id="run-count" class="count">0</span>
+        </div>
+        <label class="search">
+          <svg class="icon"><use href="#icon-search" /></svg>
+          <input type="search" id="search" data-ph="searchRuns" data-label="searchRuns" />
+        </label>
+        <p id="run-help" class="sr-only" data-t="compareHint"></p>
+        <div id="run-list" aria-describedby="run-help"></div>
+        <section id="display-settings" hidden>
+          <h2 data-t="display"></h2>
+          <button type="button" class="secondary metric-picker" id="metrics-btn" aria-haspopup="dialog">
+            <svg class="icon"><use href="#icon-grid" /></svg><span data-t="chooseMetrics"></span>
+          </button>
+          <label class="setting-row"
+            ><span data-t="axis"></span
+            ><select id="axis"></select
+          ></label>
+          <label class="setting-row"
+            ><span data-t="trend"></span
+            ><select id="trend"></select
+          ></label>
+          <label class="width-control">
+            <span data-t="chartWidth"></span><output for="chart-width" id="width-value"></output>
+            <input
+              id="chart-width"
+              data-label="chartWidth"
+              type="range"
+              min="240"
+              max="1200"
+              step="20"
+              value="640"
+            />
+          </label>
+          <div id="interval-tools" hidden></div>
+        </section>
       </div>
-      <label class="search"
-        ><svg class="icon"><use href="#icon-search" /></svg
-        ><input type="search" id="search" data-ph="searchRuns" data-label="searchRuns"
-      /></label>
-      <p class="compare-hint" data-t="compareHint"></p>
-      <div id="run-list"></div>
     </aside>
     <div id="shade" hidden></div>
     <main>
@@ -115,49 +138,10 @@
         <div id="run-view" hidden>
           <dl class="readouts" id="kpis"></dl>
           <section id="metrics-view">
-            <div class="toolbar plot-toolbar">
-              <div class="controls plot-commands">
-                <button class="secondary" id="metrics-btn">
-                  <svg class="icon"><use href="#icon-grid" /></svg><span data-t="chooseMetrics"></span>
-                </button>
-                <details id="display-settings">
-                  <summary class="secondary">
-                    <svg class="icon"><use href="#icon-settings" /></svg><span data-t="display"></span>
-                  </summary>
-                  <div class="display-options">
-                    <label class="axis"
-                      ><span data-t="axis"></span
-                      ><select id="axis"></select
-                    ></label>
-                    <label class="axis"
-                      ><span data-t="trend"></span
-                      ><select id="trend"></select
-                    ></label>
-                    <label class="width-control"
-                      ><span data-t="chartWidth"></span
-                      ><output for="chart-width" id="width-value"></output
-                      ><input
-                        id="chart-width"
-                        data-label="chartWidth"
-                        type="range"
-                        min="240"
-                        max="1200"
-                        step="20"
-                        value="640"
-                    /></label>
-                  </div>
-                </details>
-              </div>
-              <div id="interval-tools" hidden>
-                <button class="icon-button" id="reset-range" data-label="resetRange" hidden>
-                  <svg class="icon"><use href="#icon-reset" /></svg>
-                </button>
-              </div>
-              <div id="chart-pages" class="controls" hidden>
-                <button class="quiet" id="charts-prev" data-label="previousPage">‹</button
-                ><span id="chart-page-status" class="detail" aria-live="polite"></span
-                ><button class="quiet" id="charts-next" data-label="nextPage">›</button>
-              </div>
+            <div id="chart-pages" class="controls" hidden>
+              <button class="quiet" id="charts-prev" data-label="previousPage">‹</button
+              ><span id="chart-page-status" class="detail" aria-live="polite"></span
+              ><button class="quiet" id="charts-next" data-label="nextPage">›</button>
             </div>
             <div id="charts"></div>
           </section>
