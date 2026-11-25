@@ -10,6 +10,9 @@ set -u
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-181} ROS_LOCALHOST_ONLY=1
 [[ "$ROS_DOMAIN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Set an isolated ROS domain." >&2; exit 2; }
 native=${M3_NATIVE_REPO:-"$repo"}
+if [[ -z "${M3_NATIVE_REPO:-}" && ! -d "$native/ros2/src/alohamini_camera" ]]; then
+    native="$jjy/code/Alohamini_software-lightnav"
+fi
 export PYTHONPATH="$repo/src:$repo/ros2/src/alohamini_bridge:$native/ros2/src/alohamini_camera:$repo/examples/navigation"
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 export M3_CONFIG=${M3_CONFIG:-"$repo/evidence/m3-low-speed-shared.json"}
@@ -51,6 +54,14 @@ cleanup() {
     done
 }
 action=${1:-status}
+session=false
+if [[ "$action" == run ]]; then
+    [[ $# == 2 && -n "$2" ]] || { echo "Usage: bash $0 run 'navigation instruction'" >&2; exit 2; }
+    export M3_INSTRUCTION="$2"
+    session=true
+    action=start
+    set -- start
+fi
 chair=false
 if [[ "$action" == start || "$action" == preflight || "$action" == drive ]]; then
     offset=2
@@ -90,6 +101,13 @@ start)
         if owned "$role"; then echo "$role is already running in $run" >&2; exit 1; fi
     done
     [[ "$M3_CONFIG" = /* && -f "$M3_CONFIG" ]] || { echo "Expected absolute M3_CONFIG" >&2; exit 2; }
+    if "$session" && ! ssh -S "$socket" -O check "$peer" 2>/dev/null; then
+        if [[ -z "${M3_SSH_SOCKET:-}" ]] && ssh -S /tmp/jjy-m34-hw -O check "$peer" 2>/dev/null; then
+            socket=/tmp/jjy-m34-hw
+        else
+            ssh -MNf -S "$socket" -o ConnectTimeout=5 -o ControlPersist=2h -o StrictHostKeyChecking=yes "$peer"
+        fi
+    fi
     ssh -S "$socket" -O check "$peer"
     timeout 2 bash -c 'true >"/dev/tcp/$1/5557"' _ "$host" || { echo "Pi Host unavailable at $host:5557" >&2; exit 1; }
     if ss -H -ltn '( sport = :18642 or sport = :18643 )' | grep -q .; then echo "Model ports already occupied" >&2; exit 1; fi
@@ -99,7 +117,11 @@ start)
     printf '%s' "$instruction" >"$run/instruction"
     sha256sum "$M3_CONFIG" >"$run/config.sha256"
     nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv >"$run/gpu-before.txt"
-    trap 'cleanup' ERR
+    # Install rollback before launching detached processes. ERR alone misses Ctrl-C.
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
     launch bridge python -u -c 'from alohamini_bridge.bridge_node import main; main()' --ros-args -p host:="$host" -p state_timestamp_mode:=request_bound -p command_timeout_sec:=0.20
     disable
     launch camera python -u examples/navigation/m3_camera_timing.py "$socket" "$peer" --ros-args -p host:="$host" -p 'camera_names:=[forward,chest]' -p publish_raw:=false -p timestamp_mode:=host_wall
@@ -113,7 +135,7 @@ start)
         if grep -q 'READY host=' "$run/lightnav.log" 2>/dev/null && grep -q 'Metric3D ready' "$run/depth.log" 2>/dev/null; then ready=true; break; fi
         sleep 1
     done
-    if ! "$ready"; then cleanup; echo "Model startup failed; inspect $run" >&2; exit 1; fi
+    if ! "$ready"; then echo "Model startup failed; inspect $run" >&2; exit 1; fi
     launch grid python -u examples/navigation/m2b_rgb_nodes.py grid --config "$M3_CONFIG"
     if [[ -n "$color" ]]; then
         launch arrival python -u examples/navigation/m2b_rgb_nodes.py arrival --config "$M3_CONFIG" --color "$color" --target-id "$M3_TARGET_ID"
@@ -122,9 +144,16 @@ start)
     launch brain python -u examples/navigation/m2b_rgb_nodes.py brain --config "$M3_CONFIG" --instruction "$instruction"
     sleep 2
     for role in "${roles[@]}"; do
-        if ! owned "$role"; then cleanup; echo "$role exited during startup; check $run/$role.log" >&2; exit 1; fi
+        if ! owned "$role"; then echo "$role exited during startup; check $run/$role.log" >&2; exit 1; fi
     done
     echo "Started with bridge commands disabled. Logs: $run"
+    if "$session"; then
+        # drive handles estop and disable; check the bridge acknowledgement again before teardown.
+        trap 'if disable; then cleanup; else echo "Bridge disable unconfirmed. Use physical E-stop and inspect bridge." >&2; exit 1; fi' EXIT
+        bash "$repo/examples/navigation/m3_navigation.sh" drive "trials/free-$(date +%Y%m%d-%H%M%S)-$$"
+    else
+        trap - EXIT
+    fi
     ;;
 preflight|drive)
     exec 8>"$run/trial.lock"; flock -n 8 || exit 1
@@ -170,6 +199,6 @@ status)
     ros2 topic info -v /cmd_vel || true
     nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv
     ;;
-*) echo "Usage: bash $0 {start [--chair]|preflight DIR [--chair]|drive DIR [--chair]|estop|stop|status}" >&2; exit 2 ;;
+*) echo "Usage: bash $0 {run 'instruction'|start [--chair]|preflight DIR [--chair]|drive DIR [--chair]|estop|stop|status}" >&2; exit 2 ;;
 esac
 

@@ -23,7 +23,13 @@ ssh -t -S "$M3_SSH_SOCKET" pi5@"$M3_PI_HOST" '~/miniconda3/envs/alohamini_host/b
 
 ## 默认自由导航
 
-完成上面的连接设置后，在 5090 的同一 Bash 终端执行。LightNav 在 `start` 时读取指令，`drive` 显示本次指令并提示输入 `GO`。确认路线净空且可以物理急停后再输入。
+树莓派 Host 已启动时，在 5090 上一行执行自由导航。脚本会检查 SSH、启动模型并显示本次指令。确认路线净空且可以物理急停后输入 `GO`。
+
+```bash
+bash ~/workspace/jjy/validation/m3_4-20261125/examples/navigation/m3_navigation.sh run "Follow the corridor and stop at the doorway."
+```
+
+加载模型时按 `Ctrl-C` 会撤销本次启动；行驶中按 `Ctrl-C` 会急停、禁用桥并收尾。每轮的结果、图像和 rosbag 在部署目录的 `trials/free-*` 下。如果已有另一个导航实例，脚本会提示占用。按步骤分别操作时可使用以下命令。
 
 ```bash
 nav=examples/navigation/m3_navigation.sh
