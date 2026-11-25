@@ -4,6 +4,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
 import math
+import os
 from pathlib import Path as FilePath
 import time
 import urllib.request
@@ -18,7 +19,7 @@ from nav_msgs.msg import OccupancyGrid,Path
 from sensor_msgs.msg import CompressedImage, JointState
 from std_msgs.msg import Bool,String
 
-from alohamini.cerebellum.local_grid import RollingLocalGrid
+from alohamini.cerebellum.local_grid import RollingLocalGrid, aligned_points, ground_ray_distance
 from alohamini.cerebellum.rgb_navigation import CAMERAS, HSVContact, LiftHistory, PoseHistory, Rectifier, TargetMemory
 from alohamini.cerebellum.state import Pose,load_config
 from lightnav_vln import camera_topic,exchange
@@ -96,6 +97,67 @@ class SpatialNode(CameraNode):
         return self.poses.at(t), (0. if cam=="forward" else self.lift.delta(t))
 
 
+class TargetVoteHistory:
+    """Read-only provenance for occupied cells in one odometry epoch."""
+    def __init__(self):
+        self.previous=set()
+        self.owned={}
+
+    def reconcile(self, occupied, target_counts, mixed, minimum, anchor, stamp_ns):
+        self.owned={key:proof for key,proof in self.owned.items()
+                    if key in occupied and key not in mixed and 0<=stamp_ns-proof[2]<500_000_000}
+        if anchor is not None:
+            for key,count in target_counts.items():
+                if (count>=minimum and key in occupied and key not in mixed
+                        and (key not in self.previous or key in self.owned)):
+                    self.owned[key]=(anchor.x,anchor.y,stamp_ns)
+        self.previous=occupied
+
+    def update(self, grid, mapper, image, depth, camera, delta, fit, pose, detector, stamp_ns, max_range):
+        ox,oy=(round(o/grid.resolution) for o in grid.origin)
+        occupied={(i+ox,j+oy) for i,j in grid.occupied}
+        hsv=cv2.cvtColor(image,cv2.COLOR_BGR2HSV)
+        mask=cv2.inRange(hsv,(detector.hue[0],detector.saturation,detector.value),
+                        (detector.hue[1],255,255))
+        mask[camera.arrival_excluded]=0
+        count,labels,stats,_=cv2.connectedComponentsWithStats(mask)
+        anchor=None
+        label=0
+        if count>1:
+            label=1+int(np.argmax(stats[1:,cv2.CC_STAT_AREA]))
+            x,y,w,h,area=stats[label]
+            if area>=detector.min_area and x>0 and y>0 and x+w<image.shape[1] and y+h<image.shape[0]:
+                bottom=int(y+h-1)
+                _,xs=np.nonzero(labels[max(0,bottom-2):bottom+1]==label)
+                ray=ground_ray_distance(float(np.median(xs)),bottom,camera.K,camera.T,delta)
+                if ray and ray[0][0]>0 and ray[1]<=.8:
+                    anchor=pose.transform(Pose(*ray[0],0.))
+        if anchor is None and not self.owned:
+            self.previous=occupied
+            return []
+        # Use the accepted fit and the very same rectified RGB and depth samples
+        # as the occupancy update. A single non-target hit in a cell vetoes it.
+        v,u=np.mgrid[:depth.shape[0]:mapper.stride,:depth.shape[1]:mapper.stride]
+        valid=np.isfinite(depth[v,u]) & (depth[v,u]>0) & ~camera.excluded[v,u]
+        u,v=u[valid],v[valid]
+        rel=(np.column_stack((u,v,np.ones_like(u)))@np.linalg.inv(camera.K).T*depth[v,u,None])@camera.T[:3,:3].T
+        translation=camera.T[:3,3].copy()
+        translation[2]+=delta
+        base=aligned_points(rel,translation,fit)
+        selected=(base[:,2]>mapper.obstacle_min_z_m)&(base[:,2]<=1.25)
+        if max_range is not None:
+            selected &= np.hypot(base[:,0],base[:,1])<=max_range
+        c,s=math.cos(pose.yaw),math.sin(pose.yaw)
+        xy=base[selected,:2]@np.array([[c,s],[-s,c]])+[pose.x,pose.y]
+        ij=np.floor(xy/grid.resolution).astype(np.int64)
+        is_target=(labels[v[selected],u[selected]]==label) & (anchor is not None)
+        keys,counts=np.unique(ij[is_target],axis=0,return_counts=True)
+        votes={tuple(k):n for k,n in zip(keys,counts)}
+        mixed=set(map(tuple,np.unique(ij[~is_target],axis=0)))
+        self.reconcile(occupied,votes,mixed,mapper.min_occupied_points,anchor,stamp_ns)
+        return [[int(i-ox),int(j-oy),x,y,t] for (i,j),(x,y,t) in self.owned.items()]
+
+
 class RGBGrid(SpatialNode):
     def __init__(self,args):
         super().__init__("rgb_grid_node",args)
@@ -104,6 +166,11 @@ class RGBGrid(SpatialNode):
         self.mapper=RollingLocalGrid(stride=4,min_occupied_points=grid_config.get("min_occupied_points",3),
                                      obstacle_min_z_m=grid_config.get("obstacle_min_z_m",.045))
         self.grid=self.create_publisher(OccupancyGrid,CTRL+"local_grid",1)
+        self.witness_pub=self.create_publisher(String,CTRL+"target_cell_witnesses",10)
+        self.target_id=os.environ.get("M3_TARGET_ID",args.target_id)
+        self.detector=HSVContact(os.environ.get("M3_COLOR",args.color),args.hue,args.min_area,
+                                 args.min_saturation,args.min_value)
+        self.witnesses=TargetVoteHistory()
         self.last_chest=0.
         self.last_dispatched_stamp=0.
         self.accepted={cam:0 for cam in CAMERAS}
@@ -112,6 +179,7 @@ class RGBGrid(SpatialNode):
 
     def reanchor(self):
         self.mapper.reanchor()
+        self.witnesses=TargetVoteHistory()
         self.last_dispatched_stamp=0.
 
     def depth(self,cam,data):
@@ -119,7 +187,7 @@ class RGBGrid(SpatialNode):
         req=urllib.request.Request(f"http://127.0.0.1:{self.args.depth_port}/rectified/{cam}",
                                    data=image.tobytes(),method="POST")
         with urllib.request.urlopen(req,timeout=2) as r:
-            return np.frombuffer(r.read(640*480*4+1),"<f4").reshape(480,640)
+            return image,np.frombuffer(r.read(640*480*4+1),"<f4").reshape(480,640)
 
     def tick(self):
         if self.pending is not None:
@@ -129,7 +197,7 @@ class RGBGrid(SpatialNode):
             self.pending=None
             self.dispatch()
             try:
-                depth=completed.result();t=stamp(msg);pose=self.poses.at(t)
+                image,depth=completed.result();t=stamp(msg);pose=self.poses.at(t)
                 if fresh(t,self.config["control"]["map_ttl_s"]) and fresh(self.wheel,.20) and pose is not None and epoch==self.poses.epoch:
                     c=self.cameras[cam]
                     result=self.mapper.update(depth,c.K,c.T,stamp=t,pose_odom=pose,self_mask=c.excluded,
@@ -145,7 +213,21 @@ class RGBGrid(SpatialNode):
                             cells=np.full((self.mapper.width,self.mapper.width),-1,np.int8)
                             for (x,y),v in grid.cells.items():cells[y,x]=int(v)
                             from array import array
-                            out.data=array("b",cells.tobytes());self.grid.publish(out)
+                            out.data=array("b",cells.tobytes())
+                            capture_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
+                            try:
+                                rows=self.witnesses.update(grid,self.mapper,image,depth,c,delta,result,pose,
+                                    self.detector,capture_ns,self.chest_max_range_m if cam=="chest" else None)
+                                packet=dict(epoch=epoch,stamp_ns=capture_ns,frame="odom",target_id=self.target_id,
+                                            origin=grid.origin,resolution=out.info.resolution,target_only_cells=rows)
+                                self.witness_pub.publish(String(data=json.dumps(packet,allow_nan=False)))
+                            except (ValueError,ArithmeticError,RuntimeError,cv2.error) as exc:
+                                self.witnesses.owned.clear()
+                                self.witnesses.previous={(i+round(grid.origin[0]/grid.resolution),
+                                                          j+round(grid.origin[1]/grid.resolution)) for i,j in grid.occupied}
+                                self.get_logger().warning(f"Target attribution unavailable: {exc}",throttle_duration_sec=2.)
+                            finally:
+                                self.grid.publish(out)
                             self.accepted[cam]+=1
                             if time.monotonic()-self.stats_at>=3:
                                 self.get_logger().info(f"map updates={self.accepted}, lift baseline={self.lift.baseline}")
