@@ -69,7 +69,8 @@ class FreeDriveSmoke(unittest.TestCase):
                 out=Path(tmp)/case
                 env=dict(os.environ,M3_CONFIG=str(root/"evidence/m3-low-speed-shared.json"),
                          M3_TARGET_ID="purple_toy" if case=="chair" else "")
-                cmd=[sys.executable,str(root/"examples/navigation/m3_trial_monitor.py"),str(out),"--operator-confirmed"]
+                cmd=[sys.executable,str(root/"examples/navigation/m3_trial_monitor.py"),str(out),
+                     "--dry-run" if case=="dry" else "--operator-confirmed"]
                 if case=="chair":cmd.append("--chair")
                 proc=subprocess.Popen(cmd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
                 begin=time.monotonic(); enabled_at=None; sent=False
@@ -88,7 +89,10 @@ class FreeDriveSmoke(unittest.TestCase):
                         for pub in cameras:pub.publish(cam)
                         m=OccupancyGrid();m.header.stamp=stamp;m.header.frame_id="odom"
                         m.info.width=m.info.height=16;m.info.resolution=.25;m.info.origin.orientation.w=1.
-                        m.data=[0]*256;grid.publish(m)
+                        cells=[0]*256
+                        if case=="free" and .05<elapsed<.45:
+                            cells[8*16]=100  # underneath the synthetic robot at (0,2)
+                        m.data=cells;grid.publish(m)
                         witness.publish(String(data=json.dumps(dict(target_id="purple_toy",frame="odom",epoch=1,
                             stamp_ns=ns_time,origin=[0.,0.],resolution=.25,target_only_cells=[]))))
                         d=DiagnosticStatus();d.name="AlohaMini Host state bridge"
@@ -96,12 +100,13 @@ class FreeDriveSmoke(unittest.TestCase):
                                   KeyValue(key="lift_command_ready",value="true")]
                         da=DiagnosticArray();da.header.stamp=stamp;da.status=[d];diag.publish(da)
                         pose.publish(String(data=json.dumps(dict(x=0.,y=2. if elapsed else 0.,yaw=0.,stamp_ns=ns_time,epoch=1))))
-                        done=case=="free" and elapsed>.6
-                        dec.publish(String(data=json.dumps(dict(state="REOBSERVE" if done else "TRACKING",
+                        done=(case=="free" and elapsed>.6) or (case=="dry" and now-begin>5.5)
+                        hold=case=="free" and .05<elapsed<.45
+                        dec.publish(String(data=json.dumps(dict(state="REOBSERVE" if done else "SAFETY_HOLD" if hold else "TRACKING",
                             reason="arrival_evidence_missing_or_invalid" if done else "best_score",
                             stop_source="model_stop" if done else None,map_source="measured_metric",clock_fault=False,
                             estop_latched=False,planned_velocity={"y_m_s":0.}))))
-                        velocity.publish(Twist())  # All fixture commands are zero.
+                        if case!="dry":velocity.publish(Twist())  # All fixture commands are zero.
                         for _ in range(4):ex.spin_once(timeout_sec=.004)
                         time.sleep(.008)
                     self.assertIsNotNone(proc.poll(),case)
@@ -113,6 +118,10 @@ class FreeDriveSmoke(unittest.TestCase):
                 if case=="chair":
                     self.assertEqual(calls,[],output)
                     self.assertFalse(result["preflight_passed"])
+                elif case=="dry":
+                    self.assertEqual(proc.returncode,0,output)
+                    self.assertEqual(calls,[])
+                    self.assertEqual(result["outcome"],"model_stop")
                 else:
                     self.assertEqual(calls,[True,False],output)
                     if case=="free":
@@ -121,5 +130,6 @@ class FreeDriveSmoke(unittest.TestCase):
                     else:
                         self.assertIn(True,trips,output)
                         self.assertNotEqual(proc.returncode,0)
-            for case in ("chair","free","interrupt"):
+            for case in ("chair","free","interrupt","dry"):
+                if case=="dry":ctrl.destroy_publisher(velocity)
                 with self.subTest(case=case):run(case)

@@ -42,6 +42,8 @@ class LauncherTests(unittest.TestCase):
             config = root / "config.json"
             config.write_text("{}")
             run = root / "logs"
+            run.mkdir()
+            (run / "arrival.pid").write_text("99999999 0")
             ros_log = root / "ros.log"
             env = dict(os.environ, CONDA_BASE=tmp, M3_CONFIG=str(config), M3_RUN_DIR=str(run),
                        ROS_DOMAIN_ID="181", M3_COLOR="", M3_TARGET_ID="", FAKE_ROS_LOG=str(ros_log),
@@ -71,6 +73,7 @@ class LauncherTests(unittest.TestCase):
                     if proc.poll() is None:
                         proc.kill()
             assert_clean()
+            self.assertFalse((run / "arrival.pid").exists())
             result = subprocess.run(cmd, env=dict(env, READY="yes"), input="CANCEL\n",
                                     capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -78,3 +81,9 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual((run / "instruction").read_text(), cmd[-1])
             self.assertNotIn("data: true", ros_log.read_text())
             assert_clean()
+            for op in ("start", "restart", "stop"):
+                result=subprocess.run(["bash", str(launcher), op], env=dict(env, READY="yes", M3_DRY_RUN="true"),
+                                      capture_output=True, text=True, timeout=18)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(list(run.glob("*.pid")))
+            self.assertNotIn("data: true", ros_log.read_text())

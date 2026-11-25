@@ -1,5 +1,31 @@
 # AlohaMini2 Pro · M3 自由导航与绕椅验收
 
+## 5090 常用指令
+
+树莓派 Host 已就绪时，在 5090 终端运行。第一条只观察，按 Ctrl-C 结束；第二条通过静检后等待现场输入 `GO`。
+
+```bash
+alohamini navigate run --dry-run --instruction "Follow the corridor and stop at the doorway."
+alohamini navigate run --instruction "Follow the corridor and stop at the doorway."
+alohamini navigate run --instruction "Approach the purple toy and stop." --color purple
+```
+
+默认使用 ROS 域 181、树莓派 `192.168.2.2` 和部署目录中的低速共享配置。可以传 `--pi-host`、`--ros-domain`、`--config`、`--output-dir`。每次 run 新建一个结果目录，静检和行驶记录分别保存在 `preflight/`、`drive/`。需要绕椅专项验收时加 `--chair`。
+
+```bash
+alohamini navigate start --instruction "Follow the corridor."
+alohamini navigate preflight
+alohamini navigate drive
+alohamini navigate status
+alohamini navigate estop
+alohamini navigate stop
+alohamini navigate restart --instruction "Follow the corridor."
+```
+
+另一个终端可随时执行 `estop` 或 `stop`。若选择了其他 ROS 域，每个终端传同一个 `--ros-domain`。自由模式中临时障碍的避让、制动和清障恢复由 20 Hz 控制器执行；轮速或控制器失联、手动急停、已确认目标过近会中止行驶。共享配置用车体凸包剔除自身深度投票，对每个新占据格要求两次不同曝光命中。障碍首次稳定入图的延迟取决于对同一格的再次观测。
+
+使用仓库的 editable 安装时，`python -m alohamini.cerebellum.cli` 提供同一组命令。独立安装的 CLI 需要 5090 上已部署导航脚本、模型、ROS 环境和签核标定。
+
 适用于 5090、双摄树莓派和已签核标定。下列命令在 5090 的 Bash 执行。本次部署目录为 `~/workspace/jjy/validation/m3_4-20261125`。所有操作终端使用同一个 ROS 域、SSH 控制套接字和服务日志目录。
 
 ## 连接与现场准备

@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from alohamini.cerebellum.controller import Controller
-from alohamini.cerebellum.local_grid import CalibrationSource, PREVIEW, RollingLocalGrid, ground_ray_distance
+from alohamini.cerebellum.local_grid import CalibrationSource, PREVIEW, RollingLocalGrid, ground_ray_distance, vote_mask
 from alohamini.cerebellum.obstacles import Cell
 from alohamini.cerebellum.scheduler import Tick
 from alohamini.cerebellum.state import Feedback, Pose, Reference, ZERO, load_config
@@ -36,6 +36,47 @@ def at(grid,x,y):
 
 
 class MappingTest(unittest.TestCase):
+    def test_self_points_and_optical_minimum(self):
+        footprint=[(.28,.29),(-.26,.29),(-.26,-.29),(.28,-.29)]
+        points=np.array([[.08,-.01,.1],[.281,0,.1],[.28,0,.1],[.4,0,.3]])
+        for poly in (footprint, footprint[::-1]):
+            self.assertEqual(vote_mask(points,np.array([.3,.2,.21,.19]),poly,None).tolist(),
+                             [False,True,True,False])
+        depth, floor=render()
+        # Extend a synthetic body over the left half of the brick.
+        poly=[(-.26,-.29),(.45,-.29),(.45,.29),(-.26,.29)]
+        m=RollingLocalGrid(stride=1)
+        self.assertTrue(m.update(depth,K,T,stamp=1.,pose_odom=ORIGIN,floor_mask=floor,self_footprint_m=poly).accepted)
+        grid=m.export(1.)
+        self.assertEqual(at(grid,.425,.025),Cell.UNKNOWN)
+        self.assertEqual(at(grid,.525,.025),Cell.OCCUPIED)
+
+    def test_confirmation_distinct_exposures_reset_free_expiry_and_epoch(self):
+        self.mapper=RollingLocalGrid(stride=1,min_hit_frames=2)
+        def hit(t):
+            self.assertTrue(self.push(t).accepted)
+            return at(self.mapper.export(t),.425,.025)==Cell.OCCUPIED
+        self.assertFalse(hit(1.))
+        self.assertFalse(hit(1.))
+        self.push(1.05,brick=False)
+        self.assertFalse(hit(1.10))
+        self.assertFalse(hit(1.50))
+        self.assertTrue(hit(1.60))
+        self.mapper.reanchor(2.)
+        self.assertFalse(hit(2.))
+        self.assertTrue(hit(2.10))
+
+    def test_moving_brick_confirmed_on_second_exposure(self):
+        m=RollingLocalGrid(stride=1,min_hit_frames=2)
+        depth,floor=render()
+        for frame in range(4):
+            # Shift the observed block sideways by two pixels per exposure.
+            t=1.+.1*frame
+            fit=m.update(np.roll(depth,2*frame,axis=1),K,T,stamp=t,pose_odom=ORIGIN,
+                         floor_mask=np.roll(floor,2*frame,axis=1))
+            self.assertTrue(fit.accepted)
+            self.assertEqual(bool(m.export(t).occupied),frame>=1)
+
     def setUp(self):
         self.mapper = RollingLocalGrid(stride=1)
 

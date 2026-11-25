@@ -19,7 +19,7 @@ from nav_msgs.msg import OccupancyGrid,Path
 from sensor_msgs.msg import CompressedImage, JointState
 from std_msgs.msg import Bool,String
 
-from alohamini.cerebellum.local_grid import RollingLocalGrid, aligned_points, ground_ray_distance
+from alohamini.cerebellum.local_grid import RollingLocalGrid, aligned_points, ground_ray_distance, vote_mask
 from alohamini.cerebellum.rgb_navigation import CAMERAS, HSVContact, LiftHistory, PoseHistory, Rectifier, TargetMemory
 from alohamini.cerebellum.state import Pose,load_config
 from lightnav_vln import camera_topic,exchange
@@ -102,6 +102,7 @@ class TargetVoteHistory:
     def __init__(self):
         self.previous=set()
         self.owned={}
+        self.unattributed_pending=set()
 
     def reconcile(self, occupied, target_counts, mixed, minimum, anchor, stamp_ns):
         self.owned={key:proof for key,proof in self.owned.items()
@@ -113,7 +114,7 @@ class TargetVoteHistory:
                     self.owned[key]=(anchor.x,anchor.y,stamp_ns)
         self.previous=occupied
 
-    def update(self, grid, mapper, image, depth, camera, delta, fit, pose, detector, stamp_ns, max_range):
+    def update(self, grid, mapper, image, depth, camera, delta, fit, pose, detector, stamp_ns, max_range, footprint=None):
         ox,oy=(round(o/grid.resolution) for o in grid.origin)
         occupied={(i+ox,j+oy) for i,j in grid.occupied}
         hsv=cv2.cvtColor(image,cv2.COLOR_BGR2HSV)
@@ -134,6 +135,9 @@ class TargetVoteHistory:
                     anchor=pose.transform(Pose(*ray[0],0.))
         if anchor is None and not self.owned:
             self.previous=occupied
+            self.unattributed_pending.intersection_update(mapper.pending)
+            self.unattributed_pending.update(k for k,(_,last) in mapper.pending.items()
+                                             if last==mapper.stamp)
             return []
         # Use the accepted fit and the very same rectified RGB and depth samples
         # as the occupancy update. A single non-target hit in a cell vetoes it.
@@ -145,8 +149,7 @@ class TargetVoteHistory:
         translation[2]+=delta
         base=aligned_points(rel,translation,fit)
         selected=(base[:,2]>mapper.obstacle_min_z_m)&(base[:,2]<=1.25)
-        if max_range is not None:
-            selected &= np.hypot(base[:,0],base[:,1])<=max_range
+        selected &= vote_mask(base, depth[v,u], footprint, max_range)
         c,s=math.cos(pose.yaw),math.sin(pose.yaw)
         xy=base[selected,:2]@np.array([[c,s],[-s,c]])+[pose.x,pose.y]
         ij=np.floor(xy/grid.resolution).astype(np.int64)
@@ -154,7 +157,13 @@ class TargetVoteHistory:
         keys,counts=np.unique(ij[is_target],axis=0,return_counts=True)
         votes={tuple(k):n for k,n in zip(keys,counts)}
         mixed=set(map(tuple,np.unique(ij[~is_target],axis=0)))
-        self.reconcile(occupied,votes,mixed,mapper.min_occupied_points,anchor,stamp_ns)
+        # Both exposures contributing to a newly confirmed cell must support
+        # target-only attribution before the chair supervisor may exempt it.
+        self.reconcile(occupied,votes,mixed|self.unattributed_pending,mapper.min_occupied_points,anchor,stamp_ns)
+        self.unattributed_pending.intersection_update(mapper.pending)
+        self.unattributed_pending.update(key for key,(_,last) in mapper.pending.items()
+                                         if last==mapper.stamp and (key in mixed
+                                             or votes.get(key,0)<mapper.min_occupied_points))
         return [[int(i-ox),int(j-oy),x,y,t] for (i,j),(x,y,t) in self.owned.items()]
 
 
@@ -164,6 +173,7 @@ class RGBGrid(SpatialNode):
         grid_config=self.config.get("rgb_grid",{})
         self.chest_max_range_m = grid_config.get("chest_max_range_m")
         self.mapper=RollingLocalGrid(stride=4,min_occupied_points=grid_config.get("min_occupied_points",3),
+                                     min_hit_frames=grid_config.get("min_hit_frames",1),
                                      obstacle_min_z_m=grid_config.get("obstacle_min_z_m",.045))
         self.grid=self.create_publisher(OccupancyGrid,CTRL+"local_grid",1)
         self.witness_pub=self.create_publisher(String,CTRL+"target_cell_witnesses",10)
@@ -201,7 +211,7 @@ class RGBGrid(SpatialNode):
                 if fresh(t,self.config["control"]["map_ttl_s"]) and fresh(self.wheel,.20) and pose is not None and epoch==self.poses.epoch:
                     c=self.cameras[cam]
                     result=self.mapper.update(depth,c.K,c.T,stamp=t,pose_odom=pose,self_mask=c.excluded,
-                                              lift_height_m=delta,calibration=c.source,
+                                              lift_height_m=delta,calibration=c.source,self_footprint_m=self.config["footprint_m"],
                                               max_range_m=self.chest_max_range_m if cam == "chest" else None)
                     if result.accepted:
                         grid=self.mapper.export(t)
@@ -217,7 +227,8 @@ class RGBGrid(SpatialNode):
                             capture_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
                             try:
                                 rows=self.witnesses.update(grid,self.mapper,image,depth,c,delta,result,pose,
-                                    self.detector,capture_ns,self.chest_max_range_m if cam=="chest" else None)
+                                    self.detector,capture_ns,self.chest_max_range_m if cam=="chest" else None,
+                                    self.config["footprint_m"])
                                 packet=dict(epoch=epoch,stamp_ns=capture_ns,frame="odom",target_id=self.target_id,
                                             origin=grid.origin,resolution=out.info.resolution,target_only_cells=rows)
                                 self.witness_pub.publish(String(data=json.dumps(packet,allow_nan=False)))

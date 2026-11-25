@@ -33,6 +33,21 @@ class ControllerTest(unittest.TestCase):
         _, _, reason = self.core.planner.rollout(grid, Pose(0, 0, 0), BodyVelocity(.25, 0, 0))
         self.assertEqual(reason, "occupied_footprint")
 
+    def test_live_footprint_hit_holds_then_recovers_without_reset(self):
+        states=[]
+        for i, obstacles in enumerate(((), ((0.,0.,.1,.1),), ())):
+            now=1.+.05*i
+            self.core.set_map(synthetic_grid(now,rectangles=obstacles))
+            self.core.feedback(Feedback(now,now,ZERO))
+            self.core.set_reference(Reference(now,now,(Pose(0,0,0),Pose(.8,0,0)),"odom"))
+            decision=self.core.tick(Tick(now,0.,0,.05))
+            states.append(decision.state)
+            if i==1:
+                self.assertEqual(decision.command,ZERO)
+            else:
+                self.assertGreater(decision.command.x_m_s,0.)
+        self.assertEqual(states,["TRACKING","SAFETY_HOLD","TRACKING"])
+
     def test_rotating_corner_and_lateral_unknown(self):
         grid = synthetic_grid(1., rectangles=((.20, .20, .25, .25),), resolution=.05)
         _, _, reason = self.core.planner.rollout(grid, Pose(0, 0, 0), BodyVelocity(0, 0, .4))

@@ -38,10 +38,13 @@ def _ensemble_coefficient(value: str) -> float | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["navigate"]:
+        from alohamini.cerebellum.cli import main as navigate
+        return navigate(argv[1:])
     from alohamini.environment import main as manage_environment
     from alohamini.environment import runtime_environment
 
-    argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["env"]:
         return manage_environment(argv[1:])
     try:
@@ -80,6 +83,7 @@ def _main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
+    commands.add_parser("navigate", help="LightNav 指令导航、干跑、急停与服务管理")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(
         "find-port", help="拔下单个控制板 USB 前后对比串口；先停止遥操、数采或 Host"

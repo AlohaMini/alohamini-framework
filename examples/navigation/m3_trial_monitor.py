@@ -71,7 +71,11 @@ def main():
     from std_srvs.srv import SetBool
     from rclpy.qos import qos_profile_sensor_data
     p=argparse.ArgumentParser();p.add_argument('out',type=Path);p.add_argument('--chair',action='store_true')
-    p.add_argument('--operator-confirmed',action='store_true');a=p.parse_args()
+    active=p.add_mutually_exclusive_group()
+    active.add_argument('--operator-confirmed',action='store_true')
+    active.add_argument('--dry-run',action='store_true')
+    p.add_argument('--observe-only-graph',action='store_true')
+    a=p.parse_args()
     if not __debug__ or os.environ.get('ROS_DOMAIN_ID') in (None,'','0') or os.environ.get('ROS_LOCALHOST_ONLY')!='1':
         raise RuntimeError('requires normal Python execution in an isolated loopback ROS domain')
     a.out.mkdir(parents=True,exist_ok=False)
@@ -155,23 +159,34 @@ def main():
                     xy=np.column_stack((origin[0]+(xx+.5)*m.info.resolution,origin[1]+(yy+.5)*m.info.resolution)))
         seen['grid']=time.monotonic()
     n.create_subscription(OccupancyGrid,C+'local_grid',grid,1)
-    def check_health(now):
-        for stream,limit in (('wheel',.14),('decision',.16),('grid',.65),('forward',.45),('chest',.45),('diag',2.)):
+    def check_health(now, *, startup=False):
+        strict = startup or a.chair
+        streams = [('wheel',.14),('decision',.16),('diag',2.)]
+        if strict:
+            streams.extend((('grid',.65),('forward',.45),('chest',.45)))
+        for stream,limit in streams:
             if now-seen.get(stream,-math.inf)>limit:
                 raise RuntimeError(f'{stream} missing or stale')
-        if not lift.samples or not 0<=time.time()-lift.samples[-1][0]<.25:
+        if strict and (not lift.samples or not 0<=time.time()-lift.samples[-1][0]<.25):
             raise RuntimeError('metric lift feedback missing or stale')
-        if (diag.get('lift_command_ready')!='true' or diag.get('level',2)>=2
-                or d.get('map_source')!='measured_metric' or d.get('clock_fault') or d.get('estop_latched')
-                or not 0<=time.time_ns()-maps['stamp_ns']<cfg['control']['map_ttl_s']*1e9
-                or not hw or not 0<=time.time_ns()-hw['stamp_ns']<250_000_000):
+        if ((strict and diag.get('lift_command_ready')!='true') or diag.get('level',2)>=2
+                or d.get('clock_fault') or d.get('estop_latched')
+                or (strict and (d.get('map_source')!='measured_metric'
+                    or not 0<=time.time_ns()-maps['stamp_ns']<cfg['control']['map_ttl_s']*1e9
+                    or not hw or not 0<=time.time_ns()-hw['stamp_ns']<250_000_000))):
             raise RuntimeError('bridge, lift, odometry, map or controller interlock')
         if bag.poll() is not None:
-            raise RuntimeError('rosbag recorder exited')
+            if strict:raise RuntimeError('rosbag recorder exited')
+            if 'recorder_exit' not in seen:
+                seen['recorder_exit']=now
+                log('recording_error',bag.returncode)
+                print('rosbag recorder exited; events.jsonl recording continues.',flush=True)
         if now-seen.get('graph',-math.inf)>=.2:
             for topic,owner in (('/cmd_vel','alohamini_cerebellum_dry_run'),(C+'local_grid','rgb_grid_node'),
                                 (C+'reference','lightnav_reference_bridge'),(C+'stop','lightnav_reference_bridge')):
-                if [i.node_name for i in n.get_publishers_info_by_topic(topic)]!=[owner]:
+                actual=[i.node_name for i in n.get_publishers_info_by_topic(topic)]
+                expected=[] if topic=='/cmd_vel' and (a.dry_run or a.observe_only_graph) else [owner]
+                if actual!=expected and (strict or topic=='/cmd_vel' or actual):
                     raise RuntimeError(f'unexpected publisher on {topic}')
             seen['graph']=now
     service=n.create_client(SetBool,'/alohamini_lerobot_bridge/command_enable')
@@ -194,7 +209,7 @@ def main():
     armed=False;result={'mode':'chair' if a.chair else 'free'}
     try:
         spin(4.5)
-        check_health(time.monotonic())
+        check_health(time.monotonic(), startup=True)
         control=cfg['control']
         if (diag.get('command_enabled')!='false' or not service.service_is_ready()
                 or any(i.node_name=='alohamini_lerobot_bridge' for i in n.get_subscriptions_info_by_topic('/cmd_vel'))):
@@ -220,7 +235,7 @@ def main():
                     and right_samples>=30 and vel[1]<-.003)
         print(json.dumps(dict(preflight=passes,**result)),flush=True)
         result['preflight_passed']=passes
-        if not a.operator_confirmed:
+        if not a.operator_confirmed and not a.dry_run:
             if not passes:raise RuntimeError('static gate did not pass')
             return
         if not passes:raise RuntimeError('preflight: bridge stays disabled')
@@ -236,14 +251,15 @@ def main():
             dist=target_range(target,target_id,time.time_ns(),control['arrival_age_s'])
             if dist is not None and dist<.105:
                 raise RuntimeError('protective target range floor')
-            live=maps['grid']
-            goal=confirmed_target_odom(target,history,epoch,time.time_ns(),target_id) if dist is not None else None
-            key=(epoch,maps['stamp_ns'],live.origin,live.resolution)
-            witnesses={(i,j) for i,j,x,y,t in witnesses_by_stamp.get(key,())
-                       if goal is not None and 0<=time.time_ns()-t<500_000_000
-                       and math.hypot(x-goal.x,y-goal.y)<=.12}
-            hit=occupancy_guard(initial_grid,live,cfg['footprint_m'],pose_now,cfg['planner']['margin_m'],goal,witnesses)
-            if hit:raise RuntimeError('occupancy guard: '+hit)
+            if a.chair:
+                live=maps['grid']
+                goal=confirmed_target_odom(target,history,epoch,time.time_ns(),target_id) if dist is not None else None
+                key=(epoch,maps['stamp_ns'],live.origin,live.resolution)
+                witnesses={(i,j) for i,j,x,y,t in witnesses_by_stamp.get(key,())
+                           if goal is not None and 0<=time.time_ns()-t<500_000_000
+                           and math.hypot(x-goal.x,y-goal.y)<=.12}
+                hit=occupancy_guard(initial_grid,live,cfg['footprint_m'],pose_now,cfg['planner']['margin_m'],goal,witnesses)
+                if hit:raise RuntimeError('occupancy guard: '+hit)
             if a.chair and (dist is None or travel<-.03 or travel>2. or not -1.05<=side<=.10
                     or abs(math.remainder(hw['yaw']-w0,math.tau))>1.25 or now-start>65
                     or (now-start>4 and math.hypot(travel,side)<.015)):
@@ -251,10 +267,13 @@ def main():
             done=completion(d,dist,wheel,control,a.chair)
             if done:
                 result.update(outcome=done,arrival_at=target.copy(),elapsed_s=now-start,stop_source=d['stop_source']);break
-            if not armed:
+            if a.dry_run and diag.get('command_enabled')!='false':
+                raise RuntimeError('bridge enabled during dry-run')
+            if not armed and not a.dry_run:
                 armed=True;enable(True)
             spin(.012)
-        enable(False);armed=False;spin(.7)
+        if armed:enable(False)
+        armed=False;spin(.7)
         result.update(final_pose=[hw['x'],hw['y'],hw['yaw']],final_wheel=wheel.copy(),final_decision=d['state'],final_target=target.copy())
         print(json.dumps(result),flush=True)
     except BaseException as exc:

@@ -128,11 +128,31 @@ def ground_ray_distance(u, v, K, T_base_from_optical, lift_height_m=0.):
     return (float(x), float(y)), math.hypot(x, y)
 
 
+def vote_mask(base, optical_z, footprint, max_range):
+    """Filter point observations; existing occupied cells are never carved out."""
+    keep = np.ones(len(base), dtype=bool)
+    if max_range is not None:
+        keep &= np.hypot(base[:, 0], base[:, 1]) <= max_range
+    if footprint is not None:
+        poly = np.asarray(footprint, dtype=float)
+        if poly.ndim != 2 or poly.shape[1] != 2 or len(poly) < 3 or not np.isfinite(poly).all():
+            raise ValueError("expected a finite convex footprint")
+        edges = np.roll(poly, -1, axis=0) - poly
+        turns = edges[:, 0]*np.roll(edges[:, 1], -1) - edges[:, 1]*np.roll(edges[:, 0], -1)
+        if not (np.all(turns > 0) or np.all(turns < 0)):
+            raise ValueError("expected an ordered strictly convex footprint")
+        inside = np.ones(len(base), dtype=bool)
+        for (x, y), (dx, dy) in zip(poly, edges):
+            inside &= np.sign(turns[0])*(dx*(base[:, 1]-y) - dy*(base[:, 0]-x)) > 0
+        keep &= (optical_z >= .20) & ~inside
+    return keep
+
+
 class RollingLocalGrid:
     """One odometry epoch. T maps optical xyz (right/down/forward) to base at zero lift."""
 
     def __init__(self, resolution=.05, size_m=4., memory_s=1.75, min_floor_inliers=64, stride=3,
-                 min_occupied_points=3, obstacle_min_z_m=.045):
+                 min_occupied_points=3, obstacle_min_z_m=.045, min_hit_frames=1):
         if not all(math.isfinite(x) and x > 0 for x in (resolution, size_m, memory_s)):
             raise ValueError("invalid window size, resolution or memory")
         if min_floor_inliers < 3 or type(stride) is not int or stride < 1:
@@ -142,6 +162,9 @@ class RollingLocalGrid:
         if not .045 <= obstacle_min_z_m < 1.25:
             raise ValueError("obstacle_min_z_m outside height bands")
         self.obstacle_min_z_m = obstacle_min_z_m
+        if type(min_hit_frames) is not int or min_hit_frames < 1:
+            raise ValueError("min_hit_frames must be a positive integer")
+        self.min_hit_frames = min_hit_frames
         self.min_occupied_points = min_occupied_points
         self.resolution = resolution
         self.width = round(size_m / resolution)
@@ -160,13 +183,15 @@ class RollingLocalGrid:
         self.pose = Pose(0., 0., 0.)
         self.source = PREVIEW
         self.evidence = {}  # odom cell -> (bounded log odds, last observed capture time)
+        self.pending = {}  # odom cell -> (distinct hits, last exposure)
 
     def _bounds(self, pose):
         return (math.floor(pose.x/self.resolution)-self.width//2,
                 math.floor(pose.y/self.resolution)-self.width//2)
 
     def update(self, depth, K, T_base_from_optical, *, stamp, pose_odom, floor_mask=None,
-               self_mask=None, lift_height_m=0., calibration=None, max_range_m: float | None = None):
+               self_mask=None, lift_height_m=0., calibration=None, max_range_m: float | None = None,
+               self_footprint_m=None):
         """Commit only accepted frames. Depth is optical-axis z in meters, not ray length."""
         if max_range_m is not None and (isinstance(max_range_m, bool)
                 or not math.isfinite(max_range_m) or max_range_m <= 0):
@@ -228,8 +253,8 @@ class RollingLocalGrid:
             return fit
 
         base = aligned_points(relative, translation, fit)
-        if max_range_m is not None:
-            base = base[np.hypot(base[:, 0], base[:, 1]) <= max_range_m]
+        if self_footprint_m is not None or max_range_m is not None:
+            base = base[vote_mask(base, z, self_footprint_m, max_range_m)]
         c,s = math.cos(pose_odom.yaw), math.sin(pose_odom.yaw)
         xy = base[:,:2] @ np.array([[c,s],[-s,c]]) + [pose_odom.x, pose_odom.y]
         i0,j0 = self._bounds(pose_odom)
@@ -248,6 +273,10 @@ class RollingLocalGrid:
         self.evidence = {key: entry for key, entry in self.evidence.items()
                          if stamp-entry[1] < self.memory_s and i0 <= key[0] < i0+self.width
                          and j0 <= key[1] < j0+self.width}
+        if self.min_hit_frames > 1:
+            self.pending = {key: item for key, item in self.pending.items()
+                            if stamp-item[1] < min(.30, self.memory_s)
+                            and i0 <= key[0] < i0+self.width and j0 <= key[1] < j0+self.width}
         # A supported hit establishes occupancy even after repeated floor
         # sightings; at saturation three observed free frames clear it.
         for observed_ids, increment in ((free_ids, -.6), (hit_ids, 1.6)):
@@ -255,6 +284,14 @@ class RollingLocalGrid:
                 j, i = divmod(cell_id, self.width)
                 key = (i+i0, j+j0)
                 prior = self.evidence.get(key, (0., stamp))[0]
+                if self.min_hit_frames > 1:
+                    if increment > 0 and prior <= 0:
+                        count, last = self.pending.get(key, (0, -math.inf))
+                        count += int(stamp > last)
+                        if count < self.min_hit_frames:
+                            self.pending[key] = (count, stamp)
+                            continue
+                    self.pending.pop(key, None)
                 self.evidence[key] = (max(-.8, min(1.5, prior+increment)), stamp)
         source = "measured_metric" if measured else PREVIEW
         self.source = source if self.stamp is None or self.source == source else PREVIEW
