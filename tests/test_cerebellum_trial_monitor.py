@@ -7,10 +7,36 @@ from alohamini.cerebellum.rgb_navigation import PoseHistory
 from alohamini.cerebellum.state import Pose
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples/navigation"))
-from m3_trial_monitor import confirmed_target_odom, occupancy_guard
+from m3_trial_monitor import completion, confirmed_target_odom, occupancy_guard, target_range
 
 
 class TrialMonitorTest(unittest.TestCase):
+    control = {"arrival_distance_m": .20, "still_linear_m_s": .015, "still_angular_rad_s": .05}
+
+    def test_free_navigation_without_a_metric_target(self):
+        observation = dict(source="measured_metric", target_id="purple_toy",
+                           target_confirmed=True, observed_ns=1_000_000_000, bumper_clearance_m=.15)
+        for selected, now in (("",1.1), ("blue_toy",1.1), ("purple_toy",1.6)):
+            self.assertIsNone(target_range(observation,selected,round(now*1e9),.5))
+        self.assertIsNone(target_range({},"purple_toy",1_100_000_000,.5))
+        self.assertEqual(target_range(observation,"purple_toy",1_100_000_000,.5),.15)
+        decision = dict(state="REOBSERVE",stop_source="model_stop",reason="arrival_evidence_missing_or_invalid")
+        self.assertEqual(completion(decision,None,(0,0,0),self.control,False),"model_stop")
+        self.assertIsNone(completion(decision,None,(.08,0,0),self.control,False))
+        self.assertIsNone(completion(decision,None,(0,0,0),self.control,True))
+        self.assertIsNone(completion(dict(state="TRACKING"),None,(0,0,0),self.control,False))
+        self.assertIsNone(completion(decision,.7,(0,0,0),self.control,False))
+        self.assertEqual(completion(dict(state="ARRIVED"),.19,(0,0,0),self.control,False),"metric_arrival")
+
+    def test_free_mode_keeps_live_obstacles_without_freezing_old_map(self):
+        poly=((-0.26,-.29),(.28,-.29),(.28,.29),(-.26,.29))
+        blocked=Grid(1.,'measured_metric','odom',.05,(0.,0.),{(1,1):100})
+        clear=Grid(2.,'measured_metric','odom',.05,(0.,0.),{})
+        pose=Pose(0.,0.,0.)
+        self.assertTrue(occupancy_guard(None,blocked,poly,pose,.025,None,()))
+        self.assertIsNone(occupancy_guard(None,clear,poly,pose,.025,None,()))
+        self.assertTrue(occupancy_guard(blocked,clear,poly,pose,.025,None,()))
+
     def test_mixed_votes_revoke_ownership_until_cell_clears(self):
         from m2b_rgb_nodes import TargetVoteHistory
         history=TargetVoteHistory()

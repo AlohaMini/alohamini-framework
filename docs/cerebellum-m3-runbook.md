@@ -1,4 +1,4 @@
-# AlohaMini2 Pro · M3 低速绕椅停靠
+# AlohaMini2 Pro · M3 自由导航与绕椅验收
 
 适用于 5090、双摄树莓派和已签核标定。下列命令在 5090 的 Bash 执行。本次部署目录为 `~/workspace/jjy/validation/m3_4-20261125`。所有操作终端使用同一个 ROS 域、SSH 控制套接字和服务日志目录。
 
@@ -21,26 +21,42 @@ ssh -S "$M3_SSH_SOCKET" -O check pi5@"$M3_PI_HOST" || ssh -MNf -S "$M3_SSH_SOCKE
 ssh -t -S "$M3_SSH_SOCKET" pi5@"$M3_PI_HOST" '~/miniconda3/envs/alohamini_host/bin/alohamini host --robot_model alohamini2pro --bind_host 192.168.2.2 --cameras forward chest'
 ```
 
-## 启动、核验、单次运行
+## 默认自由导航
+
+完成上面的连接设置后，在 5090 的同一 Bash 终端执行。LightNav 在 `start` 时读取指令，`drive` 显示本次指令并提示输入 `GO`。确认路线净空且可以物理急停后再输入。
 
 ```bash
-bash examples/navigation/m3_navigation.sh start
-bash examples/navigation/m3_navigation.sh status
+nav=examples/navigation/m3_navigation.sh
+unset M3_COLOR M3_TARGET_ID
+M3_INSTRUCTION="Follow the open corridor and stop at the doorway." bash "$nav" start
+bash "$nav" drive "trials/free-$(date +%Y%m%d-%H%M%S)"
+bash "$nav" stop
+```
+
+前视 LightNav-0 发布航点和 STOP，双摄持续更新目标约 10 Hz 的局部占据图。空地可直接前进，遇障碍由小脑选择可行方向。自由模式只做系统就绪检查，全程检查双摄、米制地图、轮速、升降、里程计、控制器、桥和速度发布者。可单独执行 `bash "$nav" preflight "trials/static-$(date +%s)"` 做只读核验。
+
+需要颜色目标近场防推停靠时，将示例中的启动行换成：
+
+```bash
+M3_COLOR=purple M3_INSTRUCTION="Find the purple toy and stop in front of it." bash "$nav" start
+```
+
+可选颜色为 `purple`、`blue`、`green`。有颜色目标也允许从目标尚不可见处起步。新鲜确认的目标进入 0.20 m 前缘净距时，小脑主动制动并核验 ARRIVED。没有有效目标测距时，模型 STOP 经防抖、制动和轮速静止核验后结束本轮，`result.json` 记录 `outcome=model_stop`。已确认的远处目标沿用重观察与新参考恢复流程。换指令或颜色前先执行 `stop`，再按新配置启动。
+
+## 显式绕椅验收
+
+办公椅置于车头正前方 0.8–1.0 m，玩具放在椅子右后方 1.4–1.8 m、从前视可见的位置。右侧至少留 1 m。确认先右移约 0.6–0.9 m、再向前约 1.2–1.5 m 的路线净空。
+
+```bash
+nav=examples/navigation/m3_navigation.sh
 run_id=$(date +%Y%m%d-%H%M%S)
-bash examples/navigation/m3_navigation.sh preflight "trials/static-$run_id"
+bash "$nav" start --chair
+bash "$nav" preflight "trials/chair-static-$run_id" --chair
+bash "$nav" drive "trials/chair-drive-$run_id" --chair
+bash "$nav" stop
 ```
 
-`start` 先启动原生桥并核实命令已禁用，随后启动时间校正双摄、Metric3D-384 与 LightNav-0、建图和到位节点、低速小脑以及前视导航。模型端口为本机 18642 和 18643。若树莓派时钟漂移，查看 camera.log 的 Pi-PC 区间与 grid.log 两路地图更新数。在桥禁用时校时。等待同步后重启已退出的本轮服务，再做静态核验。
-
-椅子位于车头正前 0.8–1.0 m，紫色玩具在右后方开阔侧，起点可见玩具，右侧净空至少 1 m。静态核验采样 4.5 秒。通过条件包括车轮静止、升降就绪、唯一速度发布者、双摄图像、新鲜有效测距、实测椅子占据和最近 3 秒内至少 30 个右绕决策。结果保存在本次目录的 result.json。改变摆放或配置后重新核验。
-
-操作员确认向右约 0.6–0.9 m，再沿椅子右侧向前约 1.2–1.5 m 的整段路线净空、可随时急停后执行：
-
-```bash
-bash examples/navigation/m3_navigation.sh drive "trials/drive-$run_id"
-```
-
-核对终端提示并输入 GO。脚本先启动 rosbag，再次执行静态核验，通过后才调用原生桥使能服务。控制器依据独立曝光确认的目标前缘净距主动制动并验证到位。成功记录应同时包含对外 ARRIVED、正常停止的轮速和桥禁用应答。椅脚剐蹭和玩具碰触由现场操作员核验。
+`start --chair` 默认配置紫色玩具；`drive DIR --chair` 才启用专项门禁，要求椅子入图、目标可见、最近 3 秒至少 30 个右绕周期，并在运动中检查专项位移、用时和目标跟踪。验收记录包括对外 ARRIVED、停稳轮速、桥禁用应答及现场零触碰确认。
 
 ## 参数
 
@@ -51,7 +67,7 @@ bash examples/navigation/m3_navigation.sh drive "trials/drive-$run_id"
 | 几何 | 收臂轮廓 x 为 −0.26 至 +0.28 m，y 为 ±0.29 m。到位阈值 0.20 m 按前缘净距计算，正前方相当于距底盘中心 0.48 m。|
 | 共享卡时效 | 参考 2.0 s、地图 0.8 s、目标观测 0.5 s。监督器另核验地图接收间隔 0.65 s。独享卡应以实测采集到推理返回的时延和相邻参考到达间隔确定 TTL，再重做静态验收。|
 | 双摄建图范围 | 共享配置 `rgb_grid.chest_max_range_m=1.15`。胸部只向距底盘中心水平半径 ≤ 1.15 m 的格子投占据票和空闲票。前视覆盖全射程。地面拟合仍使用完整深度图，独立目标测距沿用原有范围。|
-| 目标 | 默认紫色。颜色由 `M3_COLOR` 指定，`M3_TARGET_ID` 与 `M3_INSTRUCTION` 应描述同一目标，修改后重新启动。|
+| 目标 | 自由模式默认仅使用语言指令。设置 `M3_COLOR` 后启用米制目标定位，可用 `M3_TARGET_ID` 指定消息标识。|
 | 近场与绕行 | 已启用 `metric_arrival_autostop`、`metric_target_detour`。UNKNOWN 计入代价，实占据格及刹车扫掠仍执行硬拒绝。测量模式地面拟合倾角上限 12°。|
 
 ## 急停与收尾
