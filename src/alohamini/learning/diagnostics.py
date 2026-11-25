@@ -1,10 +1,214 @@
 """Optional measurements at optimizer and evaluation boundaries."""
 
+import json
+import logging
 import math
-from collections import defaultdict
+import platform
+import subprocess
+import threading
+import time
+from collections import defaultdict, deque
+from pathlib import Path
 
 import torch
 from torch.utils.data import Subset
+
+
+def environment_fingerprint(cwd=None):
+    """Capture lightweight runtime and git provenance without failing offline runs."""
+    info = {
+        "python": platform.python_version(),
+        "git_commit": None,
+        "git_dirty": None,
+    }
+    repo = Path(cwd) if cwd else Path(__file__).resolve().parent
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+        if commit.returncode == 0 and commit.stdout.strip():
+            info["git_commit"] = commit.stdout.strip()
+            dirty = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+            if dirty.returncode == 0:
+                info["git_dirty"] = bool(dirty.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return info
+
+
+class BoundedJsonlWriter:
+    """Bounded-memory background JSONL writer with snapshot serialization and flush barriers."""
+
+    def __init__(self, path, *, max_records=4096, max_bytes=16 * 1024 * 1024):
+        self.path = Path(path)
+        self.max_records = max_records
+        self.max_bytes = max_bytes
+        self._stream = self.path.open("xb")
+        self._cond = threading.Condition()
+        self._queue = deque()
+        self._queued_bytes = 0
+        self._inflight = 0
+        self._closed = False
+        self._written = 0
+        self._write_errors = 0
+        self._last_error = None
+        self._last_flush_s = 0.0
+        self._thread = threading.Thread(
+            target=self._run, name=f"jsonl-{self.path.name}", daemon=True
+        )
+        self._thread.start()
+
+    def write(self, record):
+        """Serialize on the caller thread to isolate mutable objects and reject NaN/Inf."""
+        payload = (json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+        size = len(payload)
+        with self._cond:
+            if self._closed:
+                raise ValueError("Writer is closed")
+            # Apply backpressure when the background writer falls behind memory budget.
+            while (
+                not self._closed
+                and self._last_error is None
+                and (
+                    len(self._queue) >= self.max_records
+                    or (self._queued_bytes + size > self.max_bytes and self._queue)
+                )
+            ):
+                self._cond.wait(timeout=0.05)
+            if self._last_error is not None:
+                raise OSError(f"Failed writing {self.path.name}") from self._last_error
+            self._queue.append(payload)
+            self._queued_bytes += size
+            self._cond.notify_all()
+
+    def flush(self):
+        with self._cond:
+            while (self._queue or self._inflight) and self._last_error is None and not self._closed:
+                self._cond.wait(timeout=0.05)
+            if self._last_error is not None:
+                raise OSError(f"Failed flushing {self.path.name}") from self._last_error
+
+    def stats(self):
+        with self._cond:
+            return {
+                "queued": len(self._queue),
+                "queued_bytes": self._queued_bytes,
+                "written": self._written,
+                "write_errors": self._write_errors,
+                "last_flush_s": self._last_flush_s,
+            }
+
+    def _run(self):
+        logger = logging.getLogger(__name__)
+        while True:
+            batch = []
+            batch_bytes = 0
+            with self._cond:
+                while not self._queue and not self._closed:
+                    self._cond.wait()
+                if not self._queue and self._closed:
+                    break
+                while self._queue:
+                    item = self._queue.popleft()
+                    batch.append(item)
+                    batch_bytes += len(item)
+                    if batch_bytes >= 256 * 1024:
+                        break
+                self._queued_bytes -= batch_bytes
+                self._inflight += len(batch)
+                self._cond.notify_all()
+            started = time.perf_counter()
+            try:
+                self._stream.write(b"".join(batch))
+                self._stream.flush()
+            except OSError as exc:
+                logger.warning("Failed writing training log %s: %s", self.path.name, exc)
+                with self._cond:
+                    self._inflight -= len(batch)
+                    self._write_errors += 1
+                    self._last_error = exc
+                    self._queue.clear()
+                    self._queued_bytes = 0
+                    self._cond.notify_all()
+                break
+            else:
+                elapsed = time.perf_counter() - started
+                with self._cond:
+                    self._inflight -= len(batch)
+                    self._written += len(batch)
+                    self._last_flush_s = elapsed
+                    self._cond.notify_all()
+
+    def close(self):
+        with self._cond:
+            if self._closed:
+                return
+            self._closed = True
+            self._cond.notify_all()
+        self._thread.join(timeout=10.0)
+        try:
+            self._stream.flush()
+        finally:
+            self._stream.close()
+        if self._last_error is not None:
+            raise OSError(f"Failed closing {self.path.name}") from self._last_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
+def gradient_alignment(losses, parameters):
+    """Low-frequency diagnostic: per-term gradient norms and pairwise cosine similarity."""
+    params = [p for p in parameters if p.requires_grad]
+    names = list(losses)
+    if len(names) < 2 or not params:
+        return {}
+    vectors = {}
+    metrics = {}
+    for index, name in enumerate(names):
+        grads = torch.autograd.grad(
+            losses[name],
+            params,
+            retain_graph=index < len(names) - 1,
+            allow_unused=True,
+        )
+        present = [g.detach().float().reshape(-1) for g in grads if g is not None]
+        if not present:
+            metrics[f"grad_term/{name}_norm"] = 0.0
+            continue
+        flat = torch.cat(present)
+        norm = torch.linalg.vector_norm(flat).item()
+        metrics[f"grad_term/{name}_norm"] = norm if math.isfinite(norm) else None
+        if math.isfinite(norm) and norm > 0:
+            vectors[name] = (flat, norm)
+    for i, a in enumerate(names):
+        if a not in vectors:
+            continue
+        va, na = vectors[a]
+        for b in names[i + 1 :]:
+            if b not in vectors:
+                continue
+            vb, nb = vectors[b]
+            if va.numel() == vb.numel():
+                cos = (torch.dot(va, vb).item()) / (na * nb)
+                metrics[f"grad_cos/{a}__{b}"] = cos if math.isfinite(cos) else None
+    return metrics
 
 
 def trainability(model):

@@ -42,9 +42,11 @@ from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
 from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.data_index import batches_per_epoch
 from alohamini.learning.diagnostics import (
+    BoundedJsonlWriter,
     FixedTrainSubset,
     ModuleUpdates,
     diagnostic_options,
+    environment_fingerprint,
     trainability,
 )
 from alohamini.learning.ema import EMAManager, validate_ema_setup
@@ -817,7 +819,11 @@ def _train(settings, execution, *, prepared=None):
         metrics_name = (
             "metrics.jsonl" if not resume_state else f"metrics-from-{start_step}-{attempt}.jsonl"
         )
+        events_name = (
+            "events.jsonl" if not resume_state else f"events-from-{start_step}-{attempt}.jsonl"
+        )
         if execution.main:
+            fingerprint = environment_fingerprint()
             schema = {
                 "version": 1,
                 "training_console": "mean of successful global optimizer steps in log window",
@@ -835,6 +841,9 @@ def _train(settings, execution, *, prepared=None):
                     "effective_batch_size": effective_batch_size,
                     "torch": str(torch.__version__),
                     "accelerate": accelerate_version,
+                    "python": fingerprint["python"],
+                    "git_commit": fingerprint["git_commit"],
+                    "git_dirty": fingerprint["git_dirty"],
                     "optimizer_groups": [
                         {
                             k: v
@@ -851,12 +860,18 @@ def _train(settings, execution, *, prepared=None):
             (output / metrics_name.replace(".jsonl", "-schema.json")).write_text(
                 json.dumps(schema, indent=2) + "\n"
             )
+        warmup_steps = int((cfg.get("scheduler") or {}).get("warmup_steps") or 0)
         with (
             progress.track(),
-            (output / metrics_name).open("x") if execution.main else nullcontext() as stream,
-            (output / ("validation-" + metrics_name)).open("x")
+            BoundedJsonlWriter(output / metrics_name)
+            if execution.main
+            else nullcontext() as stream,
+            BoundedJsonlWriter(output / ("validation-" + metrics_name))
             if execution.main and validation
             else nullcontext() as validation_stream,
+            BoundedJsonlWriter(output / events_name)
+            if execution.main
+            else nullcontext() as events_stream,
         ):
             logger.debug("Per-update metrics: %s", output / metrics_name)
             logger.info(
@@ -867,6 +882,16 @@ def _train(settings, execution, *, prepared=None):
             skipped = 0
             skipped_total = 0
             loop_started = time.perf_counter()
+            if events_stream:
+                events_stream.write(
+                    {
+                        "type": "resume" if resume_state else "start",
+                        "step": start_step,
+                        "elapsed_s": 0.0,
+                        "event_time_s": time.time(),
+                        "target_steps": steps,
+                    }
+                )
             while step < steps:
                 started = time.perf_counter()
                 previous_consumed = consumed
@@ -910,6 +935,16 @@ def _train(settings, execution, *, prepared=None):
                                 "AMP overflow: skipped update; scale=%s",
                                 execution.scaler.get_scale(),
                             )
+                            if events_stream:
+                                events_stream.write(
+                                    {
+                                        "type": "amp_overflow",
+                                        "step": step,
+                                        "elapsed_s": time.perf_counter() - loop_started,
+                                        "event_time_s": time.time(),
+                                        "skipped_total": skipped_total,
+                                    }
+                                )
                         if skipped >= 20:
                             raise RuntimeError(
                                 "20 consecutive AMP overflows; check data/model precision"
@@ -921,11 +956,14 @@ def _train(settings, execution, *, prepared=None):
                     continue
                 skipped = 0
                 step += 1
+                update_s = time.perf_counter() - started - data_s
+                step_s = data_s + update_s
                 record = {
                     "step": step,
                     "dataloading_s": data_s,
                     **update,
-                    "update_s": time.perf_counter() - started - data_s,
+                    "update_s": update_s,
+                    "step_s": step_s,
                 }
                 if execution.device.type == "cuda":
                     record["gpu_mem_gb"] = (
@@ -939,6 +977,8 @@ def _train(settings, execution, *, prepared=None):
                         elapsed_s=time.perf_counter() - loop_started,
                         event_time_s=time.time(),
                         skipped_updates=skipped_total,
+                        nonfinite_count=int(record["grad_norm"] is None),
+                        samples_per_s=window_count / step_s if step_s > 0 else 0.0,
                     )
                     clip = cfg["optimizer"]["grad_clip_norm"]
                     if clip > 0 and record["grad_norm"] is not None:
@@ -952,8 +992,17 @@ def _train(settings, execution, *, prepared=None):
                 if scheduler:
                     scheduler.step()
                 if stream:
-                    stream.write(json.dumps(record, allow_nan=False) + "\n")
-                    stream.flush()
+                    stream.write(record)
+                if events_stream and warmup_steps > 0 and step == warmup_steps:
+                    events_stream.write(
+                        {
+                            "type": "warmup_end",
+                            "step": step,
+                            "elapsed_s": record["elapsed_s"],
+                            "event_time_s": record["event_time_s"],
+                            "lr": record["lr"],
+                        }
+                    )
                 if log_freq > 0 and step % log_freq == 0:
                     progress.log(step)
                 if (
@@ -1023,8 +1072,19 @@ def _train(settings, execution, *, prepared=None):
                                 **paired,
                                 **metric_result,
                             }
-                            validation_stream.write(json.dumps(evaluation, allow_nan=False) + "\n")
+                            validation_stream.write(evaluation)
                             validation_stream.flush()
+                            if events_stream:
+                                events_stream.write(
+                                    {
+                                        "type": "validation",
+                                        "step": step,
+                                        "elapsed_s": evaluation["elapsed_s"],
+                                        "event_time_s": evaluation["event_time_s"],
+                                        "loss": eval_loss,
+                                        "weights": evaluation["weights"],
+                                    }
+                                )
                             logger.info(
                                 "step %d: eval_loss=%.4f%s",
                                 step,
@@ -1068,7 +1128,28 @@ def _train(settings, execution, *, prepared=None):
                         )
                         if execution.main:
                             logger.debug("Saved checkpoint: %s", saved)
+                            if stream:
+                                stream.flush()
+                            if events_stream:
+                                events_stream.write(
+                                    {
+                                        "type": "checkpoint",
+                                        "step": step,
+                                        "elapsed_s": time.perf_counter() - loop_started,
+                                        "event_time_s": time.time(),
+                                    }
+                                )
+                                events_stream.flush()
                     execution.barrier()
+            if events_stream:
+                events_stream.write(
+                    {
+                        "type": "complete",
+                        "step": step,
+                        "elapsed_s": time.perf_counter() - loop_started,
+                        "event_time_s": time.time(),
+                    }
+                )
         checkpoint = output / "checkpoint"
         eval_checkpoint = (
             output / "checkpoint-ema"

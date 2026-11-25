@@ -350,3 +350,32 @@ def test_trainability_and_probe_use_actual_weight_changes():
     actual = probe.measure(snapshot)
     assert actual["module/1/grad_norm"] == pytest.approx(2 * 2**0.5)
     assert actual["module/1/relative_update"] == pytest.approx(1 / 6)
+
+
+def test_bounded_writer_fingerprint_and_gradient_alignment(tmp_path):
+    from alohamini.learning.diagnostics import (
+        BoundedJsonlWriter,
+        environment_fingerprint,
+        gradient_alignment,
+    )
+
+    fp = environment_fingerprint()
+    assert fp["python"] and isinstance(fp["python"], str)
+
+    out = tmp_path / "metrics.jsonl"
+    with BoundedJsonlWriter(out, max_records=4, max_bytes=1024) as writer:
+        for i in range(10):
+            writer.write({"step": i, "loss": float(i)})
+        writer.flush()
+        st = writer.stats()
+        assert st["written"] == 10 and st["write_errors"] == 0
+    rows = [json.loads(line) for line in out.read_text().splitlines()]
+    assert len(rows) == 10 and rows[-1]["step"] == 9
+
+    w = torch.nn.Parameter(torch.tensor([3.0, 4.0]))
+    aligned = gradient_alignment(
+        {"a": (w * torch.tensor([1.0, 0.0])).sum(), "b": (w * torch.tensor([0.0, 2.0])).sum()}, [w]
+    )
+    assert aligned["grad_term/a_norm"] == pytest.approx(1.0)
+    assert aligned["grad_term/b_norm"] == pytest.approx(2.0)
+    assert aligned["grad_cos/a__b"] == pytest.approx(0.0, abs=1e-6)
