@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./monitor.css" />
@@ -27,11 +27,12 @@
         <circle cx="10" cy="10" r="6" />
         <path d="m15 15 5 5" />
       </symbol>
-      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
       <symbol id="icon-import" viewBox="0 0 24 24">
         <path d="M12 3v11m-4-4 4 4 4-4M4 15v5h16v-5" />
       </symbol>
-      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24">
+        <path d="M12 4v10m-4-4 4 4 4-4M5 18h14" />
+      </symbol>
       <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6" /></symbol>
       <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14m8-14v14" /></symbol>
       <symbol id="icon-play" viewBox="0 0 24 24"><path d="m7 4 12 8-12 8V4Z" /></symbol>
@@ -40,15 +41,18 @@
         <ellipse cx="12" cy="12" rx="4" ry="9" />
         <path d="M3 12h18" />
       </symbol>
-      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v12H3V7Z" /></symbol>
-      <symbol id="icon-clock" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 6v6l4 2" />
+      <symbol id="icon-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4" />
+      </symbol>
+      <symbol id="icon-moon" viewBox="0 0 24 24">
+        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
       </symbol>
       <symbol id="icon-panel" viewBox="0 0 24 24">
         <rect x="3" y="4" width="18" height="16" rx="2" />
         <path d="M9 4v16" />
       </symbol>
+      <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
     </svg>
     <header class="topbar">
       <button class="icon-button" id="menu" aria-controls="sidebar">
@@ -57,6 +61,7 @@
       <nav class="tabs" data-label="views">
         <button data-tab="metrics" data-t="metrics"></button>
         <button data-tab="diagnostics" data-t="diagnostics"></button>
+        <button data-tab="compare" data-t="compareTab"></button>
         <button data-tab="evaluation" data-t="evaluation"></button>
         <button data-tab="config" data-label="config">
           <span class="full-tab-name" data-t="config"></span
@@ -68,6 +73,9 @@
         <button id="live" class="live-control">
           <span class="status-dot"></span><span id="live-label"></span
           ><svg class="icon"><use id="live-icon" href="#icon-pause" /></svg>
+        </button>
+        <button id="theme" class="quiet" data-label="toggleTheme">
+          <svg class="icon"><use id="theme-icon" href="#icon-moon" /></svg>
         </button>
         <button id="language" class="quiet">
           <svg class="icon"><use href="#icon-globe" /></svg><span id="language-label"></span>
@@ -96,6 +104,10 @@
         <div id="run-list" aria-describedby="run-help"></div>
         <section id="display-settings" hidden>
           <h2 data-t="display"></h2>
+          <label class="search compact-search">
+            <svg class="icon"><use href="#icon-search" /></svg>
+            <input type="search" id="metric-filter" data-ph="filterCharts" data-label="filterCharts" />
+          </label>
           <button type="button" class="secondary metric-picker" id="metrics-btn" aria-haspopup="dialog">
             <svg class="icon"><use href="#icon-grid" /></svg><span data-t="chooseMetrics"></span>
           </button>
@@ -104,21 +116,47 @@
             ><select id="axis"></select
           ></label>
           <label class="setting-row"
-            ><span data-t="trend"></span
-            ><select id="trend"></select
+            ><span data-t="yScale"></span
+            ><select id="y-scale"></select
           ></label>
+          <label class="width-control" id="smooth-row">
+            <span data-t="smoothing"></span><output for="smooth-slider" id="smooth-value"></output>
+            <input
+              id="smooth-slider"
+              data-label="smoothing"
+              type="range"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.90"
+            />
+          </label>
           <label class="width-control">
             <span data-t="chartWidth"></span><output for="chart-width" id="width-value"></output>
             <input
               id="chart-width"
               data-label="chartWidth"
               type="range"
-              min="240"
+              min="280"
               max="1200"
               step="20"
-              value="640"
+              value="560"
             />
           </label>
+          <div class="toggle-grid">
+            <label class="check-pill">
+              <input type="checkbox" id="toggle-raw" checked />
+              <span data-t="showRaw"></span>
+            </label>
+            <label class="check-pill">
+              <input type="checkbox" id="toggle-events" checked />
+              <span data-t="showEvents"></span>
+            </label>
+            <label class="check-pill" id="stitch-pill" hidden>
+              <input type="checkbox" id="toggle-stitch" checked />
+              <span data-t="stitchResumes"></span>
+            </label>
+          </div>
           <div id="interval-tools" hidden></div>
         </section>
       </div>
@@ -138,27 +176,28 @@
         <div id="run-view" hidden>
           <dl class="readouts" id="kpis"></dl>
           <section id="metrics-view">
-            <div id="chart-pages" class="controls" hidden>
-              <button class="quiet" id="charts-prev" data-label="previousPage">‹</button
-              ><span id="chart-page-status" class="detail" aria-live="polite"></span
-              ><button class="quiet" id="charts-next" data-label="nextPage">›</button>
-            </div>
+            <div id="loss-share-strip" class="share-strip" hidden></div>
             <div id="charts"></div>
           </section>
           <section id="diagnostics-view" hidden>
             <div class="toolbar diag-toolbar">
-              <h2 data-t="windowComparison"></h2>
+              <h2 data-t="diagTitle"></h2>
               <div class="controls">
+                <label class="axis"
+                  ><span data-t="diagScope"></span
+                  ><select id="stat-scope"></select
+                ></label>
                 <label class="axis"
                   ><span data-t="trainMetric"></span
                   ><select id="stat-metric"></select
                 ></label>
-                <label class="axis"
+                <label class="axis" id="stat-window-wrap"
                   ><span data-t="window"></span
                   ><select id="stat-window"></select
                 ></label>
               </div>
             </div>
+            <div id="stat-alerts" class="alert-strip" hidden></div>
             <div id="stat-results">
               <div id="stat-trends" class="diag-panel"></div>
               <div class="diag-middle">
@@ -177,8 +216,25 @@
                   <div id="stat-validation"></div>
                 </section>
               </div>
+              <div class="diag-middle" id="stat-extra-grid"></div>
               <div id="stat-details"></div>
             </div>
+          </section>
+          <section id="compare-view" hidden>
+            <div class="toolbar">
+              <h2 data-t="compareTitle"></h2>
+              <div class="controls">
+                <label class="check-pill">
+                  <input type="checkbox" id="compare-all-attempts" />
+                  <span data-t="showAllAttempts"></span>
+                </label>
+                <label class="check-pill">
+                  <input type="checkbox" id="compare-seed-band" />
+                  <span data-t="seedBand"></span>
+                </label>
+              </div>
+            </div>
+            <div id="compare-content"></div>
           </section>
           <section id="evaluation-view" hidden>
             <div class="toolbar">
@@ -193,6 +249,10 @@
             <div class="toolbar">
               <h2 data-t="savedConfig"></h2>
               <div class="controls">
+                <label class="check-pill" id="config-diff-wrap" hidden>
+                  <input type="checkbox" id="config-diff" />
+                  <span data-t="diffOnly"></span>
+                </label>
                 <span id="config-import"></span
                 ><input
                   id="config-filter"

@@ -381,3 +381,207 @@ def test_legacy_asset_locators_belong_to_initial_policy_and_refresh(tmp_path):
         changed["recorded_asset_paths"] == {}
         and changed["metadata_version"] != summary["metadata_version"]
     )
+
+
+def test_ema_derived_metrics_stitched_resumes_events_compare_and_etag(tmp_path):
+    runs_dir = tmp_path / "runs"
+    exp = runs_dir / "pi05_exp"
+    write_json(
+        exp / "train.json",
+        {
+            "policy": "pi05",
+            "steps": 120,
+            "batch_size": 4,
+            "gradient_accumulation_steps": 2,
+            "seed": 42,
+            "optimizer": {
+                "type": "adamw",
+                "lr": 2.5e-5,
+                "grad_clip_norm": 1.0,
+                "weight_decay": 0.01,
+            },
+            "scheduler": {"type": "cosine", "warmup_steps": 10},
+        },
+    )
+    write_json(
+        exp / "resume-80-1000.json",
+        {
+            "policy": "pi05",
+            "steps": 120,
+            "batch_size": 4,
+            "gradient_accumulation_steps": 2,
+            "seed": 42,
+            "optimizer": {
+                "type": "adamw",
+                "lr": 2.5e-5,
+                "grad_clip_norm": 1.0,
+                "weight_decay": 0.01,
+            },
+            "scheduler": {"type": "cosine", "warmup_steps": 10},
+        },
+    )
+    # Initial run steps 1..90, then resumed from step 80 for steps 81..120
+    init_rows = [
+        {
+            "step": i,
+            "loss": 1.0 - 0.005 * i,
+            "grad_norm": 1.5 if i % 2 == 0 else 0.5,
+            "lr": 2.5e-5,
+            "update_s": 0.6,
+            "dataloading_s": 0.4,
+            "metrics": {"loss_flow": (1.0 - 0.005 * i) * 0.8, "loss_vlm": (1.0 - 0.005 * i) * 0.2},
+        }
+        for i in range(1, 91)
+    ]
+    (exp / "metrics.jsonl").write_text("".join(json.dumps(r) + "\n" for r in init_rows))
+    (exp / "validation-metrics.jsonl").write_text(
+        '{"step":20,"loss":0.5}\n{"step":40,"loss":0.6}\n{"step":60,"loss":0.75}\n{"step":80,"loss":0.9}\n'
+    )
+    resume_rows = [
+        {
+            "step": i,
+            "loss": 0.5 - 0.002 * (i - 80),
+            "grad_norm": 1.4 if i % 2 == 0 else 0.6,
+            "lr": 1.2e-5,
+            "update_s": 0.5,
+            "dataloading_s": 0.5,
+            "metrics": {
+                "loss_flow": (0.5 - 0.002 * (i - 80)) * 0.8,
+                "loss_vlm": (0.5 - 0.002 * (i - 80)) * 0.2,
+            },
+        }
+        for i in range(81, 121)
+    ]
+    (exp / "metrics-from-80-1000.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in resume_rows)
+    )
+    (exp / "checkpoints/000080/pretrained_model").mkdir(parents=True)
+
+    monitor = Monitor(runs_dir, tmp_path / "logs", [])
+    entries = monitor.catalog.discover()
+    assert len(entries) == 2 and entries[0]["group_id"] == entries[1]["group_id"]
+    resumed = next(e for e in entries if e["attempt"] == "80-1000")
+    run_obj = monitor.catalog.get(resumed["id"])
+
+    # Stitched summary & series combine 1..80 from initial + 81..120 from resume
+    summary = monitor.summary(run_obj, stitch=True)
+    assert summary["stitched"] is True and summary["resume_steps"] == [80]
+    assert summary["phases"]["train"]["records"] == 120
+    assert summary["phases"]["validation"]["best"]["step"] == 20
+    assert "derived/clip_fraction" in summary["phases"]["train"]["derived_metrics"]
+    assert "derived/generalization_gap" in summary["phases"]["train"]["derived_metrics"]
+
+    chart = monitor.chart(
+        run_obj,
+        [
+            "loss",
+            "lr",
+            "derived/clip_fraction",
+            "derived/samples_per_s",
+            "derived/generalization_gap",
+        ],
+        "step",
+        None,
+        None,
+        512,
+        {"train": None, "validation": None},
+        smooth=0.6,
+        stitch=True,
+    )
+    assert chart["train"]["extent"] == [1.0, 120.0]
+    assert chart["clip_threshold"] == 1.0
+    assert "lr" in chart["train"]["smoothed"] and "loss" in chart["train"]["smoothed"]
+    assert "loss" in chart["train"]["bounds"]
+    assert len(chart["train"]["series"]["derived/samples_per_s"]["points"]) == 120
+    assert len(chart["validation"]["series"]["derived/generalization_gap"]["points"]) == 4
+
+    # Diagnostics: custom range, stages, component shares, and automated alerts
+    diag = monitor.diagnostics(run_obj, 20, "loss", None, low=1, high=120, axis="step", stitch=True)
+    assert diag["range_mode"] == "custom" and len(diag["stages"]) == 3
+    assert diag["components"]["loss_flow"]["share_pct"] == pytest.approx(80.0, rel=1e-2)
+    alert_codes = {a["code"] for a in diag["alerts"]}
+    assert {"overfitting", "heavy_clipping", "data_bottleneck"} <= alert_codes
+
+    # Events & Compare & CSV & ETag 304 over HTTP
+    with MonitorServer(0, monitor, ["http://localhost:8123"]) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with urlopen(f"{base}/api/v1/runs/{resumed['id']}/events?stitch=1", timeout=5) as res:
+                ev_types = {e["type"] for e in json.load(res)["events"]}
+                assert {"warmup_end", "resume", "validation_best", "checkpoint"} <= ev_types
+                etag = res.headers["ETag"]
+            with pytest.raises(HTTPError) as not_mod:
+                urlopen(
+                    Request(
+                        f"{base}/api/v1/runs/{resumed['id']}/events?stitch=1",
+                        headers={"If-None-Match": etag},
+                    ),
+                    timeout=5,
+                )
+            assert not_mod.value.code == 304
+
+            with urlopen(f"{base}/api/v1/compare", timeout=5) as res:
+                comp = json.load(res)["runs"]
+                assert len(comp) == 2
+                res_row = next(r for r in comp if r["id"] == resumed["id"])
+                assert res_row["val_loss_best"] == pytest.approx(0.5)
+                assert res_row["hparams"]["effective_batch_size"] == 8.0
+
+            with urlopen(
+                f"{base}/api/v1/runs/{resumed['id']}/export.csv?metric=loss&stitch=1", timeout=5
+            ) as res:
+                csv_text = res.read().decode("utf-8")
+                assert csv_text.startswith("step,train:loss")
+                assert "120," in csv_text
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+
+
+def test_evaluation_residual_and_kinematics_modes(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    ds = tmp_path / "datasets/kin"
+    write_json(
+        ds / "meta/info.json",
+        {
+            "format": "alohamini-episodes",
+            "fps": 10,
+            "features": {
+                "action": {"names": ["j0"], "shape": [1], "units": ["rad"]},
+                "observation.state": {"names": ["j0"], "shape": [1], "units": ["rad"]},
+            },
+        },
+    )
+    ep_dir = ds / "episodes/episode_000000"
+    write_json(ep_dir / "episode.json", {"length": 6})
+    # Quadratic position q(t) = 0.5 * t^2 at 10Hz => v = t, a = 1, jerk = 0
+    ts = [i * 0.1 for i in range(6)]
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": [0] * 6,
+                "frame_index": list(range(6)),
+                "action": [[0.5 * t * t + 0.1] for t in ts],
+                "observation.state": [[0.5 * t * t] for t in ts],
+            }
+        ),
+        ep_dir / "frames.parquet",
+    )
+    m = Monitor(tmp_path / "runs", tmp_path / "logs", [ds.parent])
+    key = m.datasets.listing()[0]["id"]
+    res = m.datasets.trajectory(key, 0, "j0", 64, mode="residual")
+    assert res["summary"]["residual"]["bias"] == pytest.approx(0.1)
+    assert res["summary"]["residual"]["mae"] == pytest.approx(0.1)
+    assert res["series"]["residual"]["points"][0] == [0, pytest.approx(0.1)]
+
+    acc = m.datasets.trajectory(key, 0, "j0", 64, mode="acceleration")
+    assert acc["unit"] == "rad/s²"
+    assert acc["summary"]["kinematics"]["rms"] == pytest.approx(1.0, rel=1e-4)
+
+    jerk = m.datasets.trajectory(key, 0, "j0", 64, mode="jerk")
+    assert jerk["unit"] == "rad/s³"
+    assert jerk["summary"]["kinematics"]["max_abs"] == pytest.approx(0.0, abs=1e-6)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import mimetypes
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from alohamini.paths import WorkspacePaths
 
+from .evaluation import TRAJECTORY_MODES
 from .history import AXES, number
 from .workspace import Monitor, console_tail
 
@@ -35,6 +37,15 @@ def bound(value):
     return result
 
 
+def smoothing(value):
+    if value is None or value == "":
+        return 0.0
+    result = float(value)
+    if not number(result) or not 0.0 <= result < 0.999:
+        raise ValueError("Expected smooth in [0, 0.999)")
+    return result
+
+
 def dispatch(monitor, parts, query):
     def arg(key, default=None):
         values = query.get(key)
@@ -49,6 +60,8 @@ def dispatch(monitor, parts, query):
 
     if parts == ["runs"]:
         return {"runs": monitor.catalog.discover()}
+    if parts == ["compare"]:
+        return monitor.compare()
     if parts == ["datasets"]:
         return {"datasets": monitor.datasets.listing()}
     if len(parts) in (2, 3) and parts[0] == "datasets":
@@ -56,19 +69,37 @@ def dispatch(monitor, parts, query):
             run = monitor.catalog.get(arg("run")) if arg("run") else None
             return monitor.datasets.details(parts[1], run)
         if parts[2] == "trajectory":
+            mode = arg("mode", "position")
+            if mode not in TRAJECTORY_MODES:
+                raise ValueError("Invalid trajectory mode")
             return monitor.datasets.trajectory(
-                parts[1], integer(arg("episode", "0"), 0, 10**9), arg("field"), budget()
+                parts[1],
+                integer(arg("episode", "0"), 0, 10**9),
+                arg("field"),
+                budget(),
+                mode=mode,
             )
     if len(parts) in (2, 3) and parts[0] == "runs":
         run = monitor.catalog.get(parts[1])
+        stitch = arg("stitch") == "1"
         if len(parts) == 2:
-            return monitor.summary(run, brief=arg("brief") == "1")
+            return monitor.summary(run, brief=arg("brief") == "1", stitch=stitch)
+        if parts[2] == "events":
+            return monitor.events(run, stitch=stitch)
         if parts[2] == "diagnostics":
+            axis = arg("axis", "step")
+            low, high = bound(arg("min")), bound(arg("max"))
+            if axis not in AXES or (low is not None and high is not None and low > high):
+                raise ValueError("Invalid diagnostics axis or range")
             return monitor.diagnostics(
                 run,
                 integer(arg("window", "100"), 2, 4096),
                 arg("metric", "loss"),
                 bound(arg("target")),
+                low=low,
+                high=high,
+                axis=axis,
+                stitch=stitch,
             )
         if parts[2] == "series":
             axis = arg("axis", "step")
@@ -76,7 +107,7 @@ def dispatch(monitor, parts, query):
             low, high = bound(arg("min")), bound(arg("max"))
             if (
                 axis not in AXES
-                or len(keys) > 32
+                or len(keys) > 48
                 or (low is not None and high is not None and low > high)
             ):
                 raise ValueError("Invalid axis, range or metric count")
@@ -90,6 +121,8 @@ def dispatch(monitor, parts, query):
                 budget(),
                 cursors,
                 integer(arg("mean_window", "0"), 0, 4096),
+                smooth=smoothing(arg("smooth")),
+                stitch=stitch,
             )
         if parts[2] == "records":
             phase = arg("phase", "train")
@@ -104,30 +137,45 @@ def dispatch(monitor, parts, query):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AlohaMiniMonitor/1"
+    server_version = "AlohaMiniMonitor/2"
 
     def log_message(self, fmt, *args):
         logging.getLogger(__name__).debug(fmt, *args)
 
-    def send_bytes(self, status, body, content_type):
+    def _cors_headers(self):
+        origin = self.headers.get("Origin")
+        if origin and origin in self.server.origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Expose-Headers", "ETag")
+            self.send_header("Vary", "Origin")
+
+    def send_bytes(self, status, body, content_type, *, etag=None, disposition=None):
+        if etag and status == 200 and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self._cors_headers()
+            self.end_headers()
+            return
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
-        origin = self.headers.get("Origin")
-        if origin and origin in self.server.origins:
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
+        if etag:
+            self.send_header("ETag", etag)
+        if disposition:
+            self.send_header("Content-Disposition", disposition)
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
     def result(self, status, value):
-        self.send_bytes(
-            status,
-            json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(),
-            "application/json; charset=utf-8",
-        )
+        body = json.dumps(
+            value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode()
+        etag = f'"{hashlib.sha256(body).hexdigest()[:20]}"' if status == 200 else None
+        self.send_bytes(status, body, "application/json; charset=utf-8", etag=etag)
 
     def do_GET(self):
         try:
@@ -139,6 +187,26 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith("/api/v1/"):
                 parts = url.path[8:].split("/")
                 query = parse_qs(url.query, max_num_fields=64)
+                if len(parts) == 3 and parts[0] == "runs" and parts[2] == "export.csv":
+                    run = self.server.monitor.catalog.get(parts[1])
+                    axis = (query.get("axis") or ["step"])[0]
+                    if axis not in AXES:
+                        raise ValueError("Invalid axis")
+                    keys = list(dict.fromkeys(query.get("metric", ["loss"])))
+                    low = bound((query.get("min") or [None])[0])
+                    high = bound((query.get("max") or [None])[0])
+                    stitch = (query.get("stitch") or ["0"])[0] == "1"
+                    data = self.server.monitor.export_csv(run, keys, axis, low, high, stitch=stitch)
+                    safe_name = "".join(
+                        c if c.isalnum() or c in "._-" else "_" for c in run.root.name
+                    )
+                    self.send_bytes(
+                        200,
+                        data,
+                        "text/csv; charset=utf-8",
+                        disposition=f'attachment; filename="{safe_name}-metrics.csv"',
+                    )
+                    return
                 self.result(200, dispatch(self.server.monitor, parts, query))
             elif url.path in self.server.assets:
                 data, mime = self.server.assets[url.path]
@@ -162,7 +230,7 @@ class MonitorServer(ThreadingHTTPServer):
         self.origins = set(origins)
         self.assets = {}
         for path in ASSETS.iterdir():
-            if path.suffix in {".html", ".css", ".js"}:
+            if path.suffix in {".html", ".css", ".js", ".svg"}:
                 mime = mimetypes.guess_type(path.name)[0] or "text/plain"
                 self.assets["/" + path.name] = path.read_bytes(), mime + "; charset=utf-8"
         self.assets["/"] = self.assets["/index.html"]

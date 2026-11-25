@@ -37,13 +37,14 @@ export function configurationFacts(run) {
   const rows = new Map(),
     cfg = run.config || {},
     rt = run.schema?.runtime || {};
-  function add(key, label, value, details = [], aliases = []) {
+  function add(key, label, value, details = [], aliases = [], helpKey = null) {
     if (value == null || value === "" || rows.has(key)) return;
     rows.set(key, {
       label: t(label) + (key.startsWith("import.") ? " · " + t("supplied") : ""),
       value: String(value),
       details: details.filter(([, v]) => v != null && v !== ""),
       aliases,
+      helpKey: helpKey || label,
     });
   }
   function read(report, source, imported = false) {
@@ -183,13 +184,19 @@ export function configurationFacts(run) {
       "frozenParams",
       fmt(frozen) + (total ? " (" + fmt((100 * frozen) / total, true) + "%)" : ""),
       breakdown,
+      [],
+      "frozenParams",
     );
+  }
+  if (rt.git_commit) {
+    add("runtime.git_commit", "git_commit", rt.git_commit + (rt.git_dirty ? " (dirty)" : ""));
   }
   for (const key of [
     "effective_batch_size",
     "training_samples",
     "validation_samples",
     "excluded_samples",
+    "python",
     "torch",
     "accelerate",
   ])

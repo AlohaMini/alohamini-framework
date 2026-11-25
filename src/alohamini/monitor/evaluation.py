@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import math
 import re
 from array import array
 from pathlib import Path
 
 from .files import directories, document, identifier, stamp
-from .history import Series
+from .history import Series, number, quantile
+
+TRAJECTORY_MODES = ("position", "residual", "velocity", "acceleration", "jerk")
 
 
 def fields(info, column):
@@ -35,6 +38,57 @@ def field_unit(info, column, name, index):
     if isinstance(units, list) and index < len(units):
         return units[index]
     return None
+
+
+def _finite_difference(frames, values, dt, order):
+    """Order-k finite difference respecting non-contiguous frame indices."""
+    cur_f = list(frames)
+    cur_v = list(values)
+    for _ in range(order):
+        next_f, next_v = [], []
+        for i in range(1, len(cur_f)):
+            df = cur_f[i] - cur_f[i - 1]
+            v0, v1 = cur_v[i - 1], cur_v[i]
+            if df > 0 and math.isfinite(v0) and math.isfinite(v1):
+                next_f.append(cur_f[i])
+                next_v.append((v1 - v0) / (df * dt))
+        cur_f, cur_v = next_f, next_v
+    return cur_f, cur_v
+
+
+def _residual_stats(action_vals, state_vals):
+    diffs = [
+        a - s
+        for a, s in zip(action_vals, state_vals, strict=True)
+        if math.isfinite(a) and math.isfinite(s)
+    ]
+    if not diffs:
+        return None
+    abs_diffs = sorted(abs(v) for v in diffs)
+    n = len(diffs)
+    return {
+        "n": n,
+        "bias": math.fsum(diffs) / n,
+        "mae": math.fsum(abs_diffs) / n,
+        "rmse": math.sqrt(math.fsum(v * v for v in diffs) / n),
+        "p50": quantile(abs_diffs, 0.5),
+        "p90": quantile(abs_diffs, 0.9),
+        "p95": quantile(abs_diffs, 0.95),
+        "max_abs": abs_diffs[-1],
+    }
+
+
+def _kinematic_stats(values):
+    finite = sorted(abs(v) for v in values if math.isfinite(v))
+    if not finite:
+        return None
+    n = len(finite)
+    return {
+        "n": n,
+        "rms": math.sqrt(math.fsum(v * v for v in finite) / n),
+        "p95_abs": quantile(finite, 0.95),
+        "max_abs": finite[-1],
+    }
 
 
 class EvaluationLibrary:
@@ -115,7 +169,9 @@ class EvaluationLibrary:
             "policy": checkpoint.get("kind"),
         }
 
-    def trajectory(self, key, episode, field, budget):
+    def trajectory(self, key, episode, field, budget, mode="position"):
+        if mode not in TRAJECTORY_MODES:
+            raise ValueError(f"Unsupported trajectory mode: {mode}")
         try:
             import pyarrow.compute as pc
             import pyarrow.dataset as ds
@@ -182,10 +238,56 @@ class EvaluationLibrary:
                     values.append(row, v)
         if not frames:
             raise ValueError("Episode has no frames")
+
+        fps = info.get("fps")
+        has_fps = number(fps) and fps > 0
+        dt = 1.0 / float(fps) if has_fps else 1.0
+        base_unit = units["action"]
+        summary = {}
+        if "observation.state" in series:
+            summary["residual"] = _residual_stats(
+                series["action"].values, series["observation.state"].values
+            )
+
+        if mode == "position":
+            plotted = {k: s.plot(frames, 0, len(frames), budget) for k, s in series.items()}
+            out_unit = base_unit
+        elif mode == "residual":
+            if "observation.state" not in series:
+                raise ValueError("Residual requires matching observation.state with the same unit")
+            res = Series()
+            for row, (a, s) in enumerate(
+                zip(series["action"].values, series["observation.state"].values, strict=True)
+            ):
+                res.append(row, a - s if math.isfinite(a) and math.isfinite(s) else None)
+            plotted = {"residual": res.plot(frames, 0, len(frames), budget)}
+            out_unit = base_unit
+        else:
+            order = {"velocity": 1, "acceleration": 2, "jerk": 3}[mode]
+            plotted = {}
+            for k, s in series.items():
+                df_frames, df_vals = _finite_difference(frames, s.values, dt, order)
+                if k == "action":
+                    summary["kinematics"] = _kinematic_stats(df_vals)
+                if not df_frames:
+                    plotted[k] = {"count": 0, "points": []}
+                    continue
+                d_axis = array("q", df_frames)
+                d_series = Series()
+                for row, v in enumerate(df_vals):
+                    d_series.append(row, v)
+                plotted[k] = d_series.plot(d_axis, 0, len(d_axis), budget)
+            time_unit = "s" if has_fps else "frame"
+            suffix = {1: f"/{time_unit}", 2: f"/{time_unit}²", 3: f"/{time_unit}³"}[order]
+            out_unit = (base_unit + suffix) if base_unit else ("unit" + suffix)
+
         return {
             "field": field,
-            "unit": units["action"],
+            "unit": out_unit,
             "frames": len(frames),
+            "fps": fps if has_fps else None,
+            "mode": mode,
             "axis": "frame",
-            "series": {k: s.plot(frames, 0, len(frames), budget) for k, s in series.items()},
+            "summary": summary,
+            "series": plotted,
         }

@@ -1,11 +1,17 @@
-import { $, api, btn, el, fmt, modal, opt, t } from "./ui.js";
-import { colors, Plot } from "./plot.js";
+import { $, api, btn, describe, el, explain, fmt, fmtPct, modal, opt, t, table } from "./ui.js";
+import { paletteColor, Plot } from "./plot.js";
 
 function stored(id) {
   try {
-    return JSON.parse(localStorage.getItem("am:eval:" + id)) || { datasets: [], reports: [] };
+    return (
+      JSON.parse(localStorage.getItem("am:eval:" + id)) || {
+        datasets: [],
+        reports: [],
+        closedLoop: [],
+      }
+    );
   } catch {
-    return { datasets: [], reports: [] };
+    return { datasets: [], reports: [], closedLoop: [] };
   }
 }
 function field(label, control) {
@@ -13,12 +19,30 @@ function field(label, control) {
   node.append(control);
   return node;
 }
-function fact(parent, label, value) {
+function fact(parent, label, value, helpKey = null) {
   const item = el("span");
-  item.append(document.createTextNode(label + " "), el("b", null, value));
+  const lbl = el("span", null, label + " ");
+  if (helpKey && explain(helpKey)) describe(lbl, explain(helpKey));
+  item.append(lbl, el("b", null, value));
   parent.append(item);
 }
+
 function readReport(data, name) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw Error(t("reportBad"));
+  // Support closed-loop rollout report JSON
+  if (Number.isFinite(data.success_rate)) {
+    return {
+      kind: "closed_loop",
+      name,
+      success_rate: data.success_rate,
+      episodes: data.episodes ?? data.num_episodes ?? null,
+      task: typeof data.task === "string" ? data.task : null,
+      checkpoint: typeof data.checkpoint === "string" ? data.checkpoint : null,
+      failure_modes:
+        data.failure_modes && typeof data.failure_modes === "object" ? data.failure_modes : null,
+      notes: typeof data.notes === "string" ? data.notes : null,
+    };
+  }
   const values = data?.mae_by_action;
   const valid = (map, signed = false) =>
     map &&
@@ -30,6 +54,9 @@ function readReport(data, name) {
     !valid(values) ||
     (data.bias_by_action != null && !valid(data.bias_by_action, true)) ||
     (data.rmse_by_action != null && !valid(data.rmse_by_action)) ||
+    (data.p50_by_action != null && !valid(data.p50_by_action)) ||
+    (data.p90_by_action != null && !valid(data.p90_by_action)) ||
+    (data.p95_by_action != null && !valid(data.p95_by_action)) ||
     (data.by_horizon != null &&
       (!Array.isArray(data.by_horizon) ||
         !data.by_horizon.every(
@@ -41,10 +68,14 @@ function readReport(data, name) {
   )
     throw Error(t("reportBad"));
   return {
+    kind: "offline",
     name,
     mae_by_action: values,
     bias_by_action: data.bias_by_action,
     rmse_by_action: data.rmse_by_action,
+    p50_by_action: data.p50_by_action,
+    p90_by_action: data.p90_by_action,
+    p95_by_action: data.p95_by_action,
     by_horizon: data.by_horizon,
     valid_action_steps: data.valid_action_steps,
     checkpoint: typeof data.checkpoint === "string" ? data.checkpoint : null,
@@ -52,6 +83,7 @@ function readReport(data, name) {
     weights: data.weights,
   };
 }
+
 export class Evaluation {
   constructor(onChange) {
     this.onChange = onChange;
@@ -97,8 +129,14 @@ export class Evaluation {
         }
         const report = readReport(raw, source.name);
         const data = stored(run.id);
-        data.reports = data.reports.filter((r) => r.name !== report.name);
-        data.reports.push(report);
+        data.closedLoop = data.closedLoop || [];
+        if (report.kind === "closed_loop") {
+          data.closedLoop = data.closedLoop.filter((r) => r.name !== report.name);
+          data.closedLoop.push(report);
+        } else {
+          data.reports = data.reports.filter((r) => r.name !== report.name);
+          data.reports.push(report);
+        }
         this.save(run, data);
         $("dialog").close();
       } catch (e) {
@@ -129,12 +167,18 @@ export class Evaluation {
     const view = $("evaluation-results");
     view.replaceChildren();
     const saved = stored(run.id);
+    const closedLoop = saved.closedLoop || [];
     if (saved.datasets.length) {
       const h = el("div", "toolbar");
       h.append(el("h2", null, t("datasets")));
       view.append(h);
     }
-    if (!saved.datasets.length && !saved.reports.length && !run.offline?.mae_by_action) {
+    if (
+      !saved.datasets.length &&
+      !saved.reports.length &&
+      !closedLoop.length &&
+      !run.offline?.mae_by_action
+    ) {
       const empty = el("div", "card evaluation-block");
       empty.append(el("h3", null, t("evalEmpty")), el("p", "detail", t("evalHint")));
       view.append(empty);
@@ -147,6 +191,46 @@ export class Evaluation {
         block.replaceChildren(el("p", "notice", e.message), this.removeDataset(run, id));
       });
     });
+
+    // Closed-loop evaluation reports
+    if (closedLoop.length) {
+      const h = el("div", "toolbar");
+      h.append(el("h2", null, t("closedLoop")));
+      view.append(h);
+      for (const r of closedLoop) {
+        const card = el("div", "card evaluation-block");
+        const head = el("div", "section-title");
+        head.append(
+          el("h3", null, r.name),
+          btn(
+            t("remove"),
+            () => {
+              const data = stored(run.id);
+              data.closedLoop = (data.closedLoop || []).filter((x) => x.name !== r.name);
+              this.save(run, data);
+            },
+            "quiet",
+          ),
+        );
+        const facts = el("div", "eval-facts");
+        const pct = r.success_rate <= 1 ? r.success_rate * 100 : r.success_rate;
+        fact(facts, t("successRate"), fmtPct(pct));
+        if (r.episodes != null) fact(facts, t("episodes"), fmt(r.episodes));
+        if (r.task) fact(facts, t("task"), r.task);
+        card.append(head, facts);
+        if (r.checkpoint) card.append(el("p", "path", r.checkpoint));
+        if (r.failure_modes && Object.keys(r.failure_modes).length) {
+          table(
+            card,
+            ["failureModes", "count"],
+            Object.entries(r.failure_modes).map(([k, v]) => [k, fmt(v)]),
+          );
+        }
+        view.append(card);
+      }
+    }
+
+    // Offline action-error reports
     const reports = [];
     if (run.offline?.mae_by_action) reports.push({ ...run.offline, name: t("finalReport") });
     reports.push(...saved.reports);
@@ -156,9 +240,14 @@ export class Evaluation {
       const controls = el("div", "controls"),
         measure = el("select"),
         horizon = el("select");
-      const available = ["mae_by_action", "bias_by_action", "rmse_by_action"].filter((k) =>
-        reports.some((r) => r[k]),
-      );
+      const available = [
+        "mae_by_action",
+        "bias_by_action",
+        "rmse_by_action",
+        "p50_by_action",
+        "p90_by_action",
+        "p95_by_action",
+      ].filter((k) => reports.some((r) => r[k]));
       measure.replaceChildren(...available.map((k) => opt(k, t(k))));
       measure.setAttribute("aria-label", t("reportMetric"));
       horizon.setAttribute("aria-label", t("horizon"));
@@ -169,7 +258,6 @@ export class Evaluation {
           ),
         ),
       ].sort((a, b) => a - b);
-      // Index-based horizons with undeclared offsets are kept distinct from physical frame offsets.
       const indices = [
         ...new Set(
           reports.flatMap((r) =>
@@ -189,8 +277,8 @@ export class Evaluation {
       if (offsets.length + indices.length) controls.append(hl);
       title.append(controls);
       const wrap = el("div", "table-wrap"),
-        table = el("table"),
-        head = table.createTHead().insertRow();
+        tbl = el("table"),
+        head = tbl.createTHead().insertRow();
       head.append(el("th", null, t("channel")));
       for (const report of reports) {
         const th = el("th", null, report.name);
@@ -219,7 +307,7 @@ export class Evaluation {
           );
         head.append(th);
       }
-      const rows = table.createTBody();
+      const rows = tbl.createTBody();
       function fill() {
         hl.hidden = measure.value !== "mae_by_action";
         const perHorizon = !hl.hidden && horizon.value !== "all";
@@ -241,7 +329,7 @@ export class Evaluation {
       }
       measure.onchange = horizon.onchange = fill;
       fill();
-      wrap.append(table);
+      wrap.append(tbl);
       view.append(title, wrap);
     }
     await Promise.all(recordings);
@@ -271,7 +359,9 @@ export class Evaluation {
     fact(facts, t("source"), d.format);
     block.append(head, facts);
     if (d.task) block.append(el("p", "detail", d.task));
-    block.append(el("span", "tag", t("manifest_" + d.manifest_match)));
+    const matchCls =
+      d.manifest_match === "match" ? "ok" : d.manifest_match === "different" ? "warn" : "";
+    block.append(el("span", "tag " + matchCls, t("manifest_" + d.manifest_match)));
     if (d.checkpoint) block.append(el("p", "path", d.checkpoint));
     if (!d.episode_count || !d.fields.length) return;
     const controls = el("div", "toolbar"),
@@ -280,16 +370,27 @@ export class Evaluation {
     episode.type = "number";
     episode.step = "1";
     episode.min = "0";
-    episode.style.width = "7em";
+    episode.style.width = "6.5em";
     const previous = this.choices.get(id) || {};
     episode.max = d.episode_ids?.at(-1) ?? d.episode_count - 1;
     episode.value = previous.episode ?? d.episode_ids?.[0] ?? 0;
     const select = document.createElement("select");
     d.fields.forEach((k) => select.add(opt(k, k)));
     if (d.fields.includes(previous.field)) select.value = previous.field;
-    group.append(field(t("episode"), episode), field(t("actionField"), select));
+    const modeSelect = document.createElement("select");
+    for (const m of ["position", "residual", "velocity", "acceleration", "jerk"]) {
+      modeSelect.add(opt(m, t("mode_" + m)));
+    }
+    modeSelect.value = previous.mode || "position";
+    group.append(
+      field(t("episode"), episode),
+      field(t("actionField"), select),
+      field(t("trajMode"), modeSelect),
+    );
     controls.append(group);
     block.append(controls);
+    const statsStrip = el("div", "eval-facts");
+    block.append(statsStrip);
     const plot = new Plot(block);
     this.plots.push(plot);
     const status = el("p", "detail");
@@ -308,15 +409,17 @@ export class Evaluation {
         plot.card.hidden = true;
         return;
       }
-      this.choices.set(id, { episode: ep, field: select.value });
+      this.choices.set(id, { episode: ep, field: select.value, mode: modeSelect.value });
       status.textContent = t("loading");
       plot.card.hidden = true;
+      statsStrip.replaceChildren();
       try {
         const data = await api(
           "datasets/" + id + "/trajectory",
           {
             episode: ep,
             field: select.value,
+            mode: modeSelect.value,
             points: Math.min(2048, Math.max(256, Math.round(block.clientWidth))),
           },
           signal,
@@ -325,19 +428,36 @@ export class Evaluation {
         const lines = Object.entries(data.series).map(([k, s], i) => ({
           ...s,
           id: k,
-          color: colors[i],
+          color: paletteColor(i),
           dash: i > 0,
           label: t(k),
         }));
+        const res = data.summary?.residual;
+        const kin = data.summary?.kinematics;
+        if (kin) {
+          fact(statsStrip, t("rms"), fmt(kin.rms, true));
+          fact(statsStrip, t("p95"), fmt(kin.p95_abs, true));
+          fact(statsStrip, t("maxAbs"), fmt(kin.max_abs, true));
+        } else if (res) {
+          fact(statsStrip, t("bias"), (res.bias > 0 ? "+" : "") + fmt(res.bias, true));
+          fact(statsStrip, t("mae"), fmt(res.mae, true));
+          fact(statsStrip, t("rmse"), fmt(res.rmse, true));
+          fact(statsStrip, t("p50"), fmt(res.p50, true));
+          fact(statsStrip, t("p90"), fmt(res.p90, true));
+          fact(statsStrip, t("p95"), fmt(res.p95, true));
+          fact(statsStrip, t("maxAbs"), fmt(res.max_abs, true));
+        }
         status.textContent = "";
         plot.card.hidden = false;
+        const refs =
+          modeSelect.value === "residual" ? [{ value: 0, label: "0" }] : [];
         plot.update({
-          title: t("trajectory") + " · " + data.field,
-          description: t("frame") + " · " + (data.unit || t("recordedUnit")),
+          title: `${t("mode_" + modeSelect.value)} · ${data.field}`,
+          description: `${t("frame")} · ${data.unit || t("recordedUnit")}`,
           axis: "frame",
           unit: data.unit || t("recordedUnit"),
           lines,
-          featured: true,
+          refs,
         });
       } catch (e) {
         if (!signal.aborted && seq === revision) status.textContent = e.message;
@@ -345,6 +465,7 @@ export class Evaluation {
     };
     select.onchange = fetchPlot;
     episode.onchange = fetchPlot;
+    modeSelect.onchange = fetchPlot;
     await fetchPlot();
   }
 }
