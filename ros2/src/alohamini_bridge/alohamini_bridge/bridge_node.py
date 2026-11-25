@@ -213,8 +213,8 @@ class AlohaMiniBridge(Node):
         if self.max_clock_offset_ms <= 0:
             raise ValueError("max_clock_offset_ms must be positive")
         self.state_timestamp_mode = parameter("state_timestamp_mode")
-        if self.state_timestamp_mode not in ("receipt", "host_wall"):
-            raise ValueError("state_timestamp_mode must be receipt or host_wall")
+        if self.state_timestamp_mode not in ("receipt", "host_wall", "request_bound"):
+            raise ValueError("state_timestamp_mode must be receipt, host_wall or request_bound")
         self.base_frame = parameter("base_frame")
         command_timeout = finite_number(parameter("command_timeout_sec"), "command timeout")
         if not 0 < command_timeout <= 1:
@@ -501,7 +501,7 @@ class AlohaMiniBridge(Node):
             and sample - self._last_host_sample > self.obs_timeout
         ):
             self.mapper.reset()
-        stamp = self.observation_stamp(observation)
+        stamp = self.observation_stamp(observation, snapshot.request_started_s)
         x = finite_number(observation["x.vel"], "x.vel")
         y = finite_number(observation["y.vel"], "y.vel")
         if self.swap_xy:
@@ -560,7 +560,21 @@ class AlohaMiniBridge(Node):
         self.joint_pub.publish(derived)
         self.derived_wheel_pub.publish(derived)
 
-    def observation_stamp(self, observation):
+    def observation_stamp(self, observation, request_started_s):
+        if self.state_timestamp_mode == "request_bound":
+            # Earliest sample time consistent with the request/reply. The Host
+            # status is sampled after request arrival, and its state may be cached.
+            # Subtract the full Host cache age measured on its own steady clock.
+            wall_ns = self.get_clock().now().nanoseconds
+            age = time.monotonic() - request_started_s
+            timing = observation["_host_timing"]
+            cache_age = (observation["_safety"]["sampled_at_monotonic_s"]
+                         - timing["state_sample_started_monotonic_s"])
+            if not (0 <= age and 0 <= cache_age and age + cache_age <= self.max_age):
+                raise ValueError("request_bound: sample age exceeds bridge deadline")
+            ns = wall_ns - math.ceil((age + cache_age) * 1e9)
+            self.last_state_clock_offset_ms = math.nan
+            return TimeMsg(sec=ns // 1_000_000_000, nanosec=ns % 1_000_000_000)
         if self.state_timestamp_mode == "receipt":
             self.last_state_clock_offset_ms = math.nan
             return self.get_clock().now().to_msg()

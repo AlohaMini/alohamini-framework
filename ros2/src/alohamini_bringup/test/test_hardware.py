@@ -420,6 +420,24 @@ def test_explicit_host_wall_stamp_does_not_fall_back_to_receipt(bridge):
         bridge.handle_observation(snapshot)
 
 
+def test_request_bound_ignores_host_wall_and_keeps_full_age(bridge):
+    bridge.state_timestamp_mode = "request_bound"
+    snap = observation(sample=10.)
+    snap.payload["_host_timing"]["state_sample_unix_ns"] += 17_000_000
+    timing = snap.payload["_host_timing"]
+    now = bridge.get_clock().now().nanoseconds
+    start = time.monotonic() - .015
+    stamp = bridge.observation_stamp(snap.payload, start)
+    ns = stamp.sec * 10**9 + stamp.nanosec
+    cache = snap.payload["_safety"]["sampled_at_monotonic_s"] - timing["state_sample_started_monotonic_s"]
+    assert (bridge.get_clock().now().nanoseconds-ns)/1e9 >= .015 + cache
+    assert ns >= now - (.015 + cache + .010)*1e9
+    with pytest.raises(ValueError, match="request_bound"):
+        bridge.observation_stamp(snap.payload, start - bridge.max_age)
+    with pytest.raises(ValueError, match="request_bound"):
+        bridge.observation_stamp(snap.payload, start + 1.)
+
+
 def test_host_reference_is_required_and_changed_profiles_are_rejected(bridge):
     snapshot = observation()
     profile = snapshot.payload["_robot_metadata"].pop("reference_calibration")
