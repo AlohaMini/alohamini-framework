@@ -95,7 +95,8 @@ def main():
         data=json.loads(m.data)
         if data.get('target_id')!=os.environ['M3_TARGET_ID'] or data.get('frame')!='odom':
             return
-        key=(data['epoch'],data['stamp_ns'],tuple(data['origin']),data['resolution'])
+        # MapMetaData.resolution is a ROS float32; JSON preserves Python's double.
+        key=(data['epoch'],data['stamp_ns'],tuple(data['origin']),float(np.float32(data['resolution'])))
         witnesses_by_stamp[key]=data['target_only_cells']
         while len(witnesses_by_stamp)>32:
             witnesses_by_stamp.popitem(last=False)
