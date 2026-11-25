@@ -1,0 +1,31 @@
+{
+  "control": {
+    "frequency_hz": 20.0, "feedback_age_s": 0.12, "max_wheel_gap_s": 0.25,
+    "reference_ttl_s": 0.45, "map_ttl_s": 0.5, "command_ttl_s": 0.10,
+    "arrival_age_s": 0.5, "stop_confirm_s": 0.15, "still_linear_m_s": 0.015,
+    "still_angular_rad_s": 0.05, "arrival_distance_m": 0.20
+  },
+  "limits": {
+    "forward_m_s": 0.25, "reverse_m_s": 0.10, "lateral_m_s": 0.15,
+    "linear_m_s": 0.25, "yaw_rad_s": 0.40, "accel_m_s2": 0.8, "yaw_accel_rad_s2": 1.5,
+    "brake_m_s2": 0.6, "yaw_brake_rad_s2": 1.0, "wheel_ticks_s": 3000
+  },
+  "planner": {
+    "guide_lookahead_m": 0.8, "detour_step_m": 0.08, "detour_width_m": 0.88,
+    "corner_tolerance_m": 0.025, "approach_gain_s_inv": 1.4,
+    "horizon_s": 0.5, "step_s": 0.1, "sweep_resolution_m": 0.025,
+    "margin_m": 0.025, "clearance_cap_m": 0.35, "side_deadband_m_s": 0.01,
+    "side_hold_s": 0.4, "switch_advantage": 0.08,
+    "progress_weight": 2.0, "path_weight": 1.5, "heading_weight": 0.18,
+    "clearance_weight": 0.35, "smoothness_weight": 0.35, "continuity_weight": 0.05
+  },
+  "footprint_m": [[0.21, 0.19], [-0.21, 0.19], [-0.21, -0.19], [0.21, -0.19]],
+  "ros_clock": {"max_wall_steady_step_s": 0.05, "max_stamp_age_s": 2.0},
+  "provenance": {
+    "control": "20 Hz design target; 0.12/0.25/0.45 seconds from deployed trial lookups; other values are offline assumptions.",
+    "limits": "0.25 m/s and 0.40 rad/s from trial limits; 3000 ticks/s from BaseDrive; other dynamics are offline assumptions.",
+    "braking": "UNCALIBRATED. Offline assumptions only; measure on the actual floor and navigation posture.",
+    "footprint": "UNCALIBRATED. Synthetic 0.42 x 0.38 m rectangle; measure base_link-relative wheels, attachments and arms.",
+    "planner": "Offline design assumptions; tune on labeled data before commissioning."
+  }
+}
