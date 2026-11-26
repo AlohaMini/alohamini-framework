@@ -12,6 +12,18 @@ from alohamini.cerebellum import cli
 
 
 class NavigationCLI(unittest.TestCase):
+    def test_supported_colors_and_opt_out(self):
+        for words, flags, expected in (
+            ("Stop at the PURPLE toy", [], "purple"), ("靠近蓝色玩具", [], "blue"),
+            ("寻找绿色目标 green", [], "green"), ("靠近紫色玩具", [], "purple"),
+            ("Find the blueberry", [], None), ("blue and green", [], None),
+            ("approach blue", ["--no-color-arrival"], None),
+            ("blue and green", ["--color","green"], "green"),
+        ):
+            with self.subTest(words=words, flags=flags):
+                args=cli.parser().parse_args(["run","--instruction",words,*flags])
+                self.assertEqual(cli.arrival_color(args),expected)
+
     def test_parser_and_top_level_dispatch(self):
         from alohamini.cli import main
         args = cli.parser().parse_args(["run", "--instruction", "go left"])

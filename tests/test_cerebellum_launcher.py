@@ -8,6 +8,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+
+from alohamini.cerebellum import cli
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux process groups and flock")
@@ -34,7 +37,9 @@ class LauncherTests(unittest.TestCase):
                 "ssh": "exit 0", "ss": "exit 0", "nvidia-smi": "exit 0",
                 "timeout": 'shift; if [[ "$1" == bash ]]; then exit 0; fi; exec "$@"',
                 "ros2": 'echo "$*" >> "$FAKE_ROS_LOG"; if [[ "$1" == service ]]; then echo success=True; fi',
-                "python": "exec sleep 60",
+                "python": ('if [[ "$2" == examples/navigation/m3_trial_monitor.py ]]; then\n'
+                           '  echo "${3##*/} $M3_COLOR $M3_TARGET_ID" >> "$TRACE"; exit 0\n'
+                           'fi\nexec sleep 60'),
             }.items():
                 path = bin_dir / name
                 path.write_text("#!/bin/bash\n" + body + "\n")
@@ -87,3 +92,17 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(list(run.glob("*.pid")))
             self.assertNotIn("data: true", ros_log.read_text())
+
+            # Use the real shell profile writer and guard across fresh subprocesses.
+            for case, flags in (("explicit",["--color","purple"]), ("inferred",[])):
+                trace=root/(case+".trace")
+                with self.subTest(case=case), patch.dict(os.environ,dict(env,READY="yes",
+                                                          TRACE=str(trace),M3_TARGET_ID="stale_id")):
+                    args=cli.parser().parse_args(["run","--instruction","Approach the purple toy.",
+                                                  "--dry-run","--output-dir",str(root/case),*flags])
+                    self.assertEqual(cli.execute(args,launcher),0)
+                    self.assertEqual((run/"profile").read_text().splitlines()[1:],["purple_toy","purple"])
+                    self.assertEqual(trace.read_text().splitlines(),["preflight purple purple_toy",
+                                                                     "drive purple purple_toy"])
+                    self.assertFalse(list(run.glob("*.pid")))
+                    self.assertNotIn("data: true",ros_log.read_text())

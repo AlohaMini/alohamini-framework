@@ -203,7 +203,11 @@ def main():
     def trip(msg):
         estop.publish(Bool(data=True));log('estop',msg)
     bag=subprocess.Popen(['ros2','bag','record','-a','-o',str(a.out/'bag')],stdout=(a.out/'bag.log').open('w'),stderr=subprocess.STDOUT,start_new_session=True)
+    class EndObservation(Exception):
+        """Operator interruption of a read-only dry run."""
     def interrupted(signum, frame):
+        if a.dry_run:
+            raise EndObservation(signum)
         raise InterruptedError(f'supervisor received signal {signum}')
     for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
     armed=False;result={'mode':'chair' if a.chair else 'free'}
@@ -276,6 +280,12 @@ def main():
         armed=False;spin(.7)
         result.update(final_pose=[hw['x'],hw['y'],hw['yaw']],final_wheel=wheel.copy(),final_decision=d['state'],final_target=target.copy())
         print(json.dumps(result),flush=True)
+    except EndObservation as exc:
+        signum=exc.args[0]
+        result.update(outcome='observation_interrupted',signal=signum,last_target=target.copy())
+        log('observation_interrupted',signum)
+        print(f'Dry-run observation ended ({signal.Signals(signum).name}).',flush=True)
+        raise SystemExit(128+signum) from None
     except BaseException as exc:
         log('failure',str(exc));result['failure']=str(exc)
         if armed:

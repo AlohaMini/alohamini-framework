@@ -10,6 +10,8 @@ alohamini navigate run --instruction "Follow the corridor and stop at the doorwa
 alohamini navigate run --instruction "Approach the purple toy and stop." --color purple
 ```
 
+正式 CLI 会从指令里识别唯一的颜色词（purple/紫色、blue/蓝色、green/绿色），并打印启用的近场目标。出现多种颜色时用 `--color` 明确选择。需要只按 LightNav 的航点与 STOP 运行时加 `--no-color-arrival`。
+
 默认使用 ROS 域 181、树莓派 `192.168.2.2` 和部署目录中的低速共享配置。可以传 `--pi-host`、`--ros-domain`、`--config`、`--output-dir`。每次 run 新建一个结果目录，静检和行驶记录分别保存在 `preflight/`、`drive/`。需要绕椅专项验收时加 `--chair`。
 
 ```bash
@@ -22,7 +24,7 @@ alohamini navigate stop
 alohamini navigate restart --instruction "Follow the corridor."
 ```
 
-另一个终端可随时执行 `estop` 或 `stop`。若选择了其他 ROS 域，每个终端传同一个 `--ros-domain`。自由模式中临时障碍的避让、制动和清障恢复由 20 Hz 控制器执行；轮速或控制器失联、手动急停、已确认目标过近会中止行驶。共享配置用车体凸包剔除自身深度投票，对每个新占据格要求两次不同曝光命中。障碍首次稳定入图的延迟取决于对同一格的再次观测。
+另一个终端可随时执行 `estop` 或 `stop`。若选择了其他 ROS 域，每个终端传同一个 `--ros-domain`。自由模式中临时障碍的避让、制动和清障恢复由 20 Hz 控制器执行；轮速或控制器失联、手动急停、已确认目标过近会中止行驶。共享配置剔除车体凸包内部和光学深度小于 0.20 m 的投票，新栅格在一次曝光达到占据点数门槛后即可入图。
 
 使用仓库的 editable 安装时，`python -m alohamini.cerebellum.cli` 提供同一组命令。独立安装的 CLI 需要 5090 上已部署导航脚本、模型、ROS 环境和签核标定。
 
@@ -99,7 +101,7 @@ bash "$nav" stop
 | 几何 | 收臂轮廓 x 为 −0.26 至 +0.28 m，y 为 ±0.29 m。到位阈值 0.20 m 按前缘净距计算，正前方相当于距底盘中心 0.48 m。|
 | 共享卡时效 | 参考 2.0 s、地图 0.8 s、目标观测 0.5 s。监督器另核验地图接收间隔 0.65 s。独享卡应以实测采集到推理返回的时延和相邻参考到达间隔确定 TTL，再重做静态验收。|
 | 双摄建图范围 | 共享配置 `rgb_grid.chest_max_range_m=1.15`。胸部只向距底盘中心水平半径 ≤ 1.15 m 的格子投占据票和空闲票。前视覆盖全射程。地面拟合仍使用完整深度图，独立目标测距沿用原有范围。|
-| 目标 | 自由模式默认仅使用语言指令。设置 `M3_COLOR` 后启用米制目标定位，可用 `M3_TARGET_ID` 指定消息标识。|
+| 目标 | 正式 CLI 自动识别指令里唯一的支持颜色，也可传 `--color` 或 `--no-color-arrival`。使用底层 Bash 入口时由 `M3_COLOR` 选择目标，`M3_TARGET_ID` 可覆盖默认标识。|
 | 近场与绕行 | 已启用 `metric_arrival_autostop`、`metric_target_detour`。UNKNOWN 计入代价，实占据格及刹车扫掠仍执行硬拒绝。测量模式地面拟合倾角上限 12°。|
 
 ## 急停与收尾

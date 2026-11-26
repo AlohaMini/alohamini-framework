@@ -2,6 +2,7 @@
 import argparse
 import ipaddress
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -27,7 +28,9 @@ def parser():
         sub.add_argument("--ros-domain", type=int, choices=range(1, 233), metavar="1..232", default=181)
         if name in ("start", "restart", "run"):
             sub.add_argument("--instruction", required=name == "run", help="LightNav 自然语言指令")
-            sub.add_argument("--color", choices=("purple", "blue", "green"), help="可选近场目标颜色")
+            arrival = sub.add_mutually_exclusive_group()
+            arrival.add_argument("--color", choices=("purple", "blue", "green"), help="明确指定近场目标颜色")
+            arrival.add_argument("--no-color-arrival", action="store_true", help="仅按导航指令运行，关闭颜色停靠")
             sub.add_argument("--pi-host", type=ipaddress.IPv4Address, default="192.168.2.2", help="树莓派 IPv4 地址")
         if name in ("start", "restart", "run", "drive", "preflight"):
             sub.add_argument("--config", type=Path, help="低速导航配置 JSON 的路径")
@@ -92,13 +95,39 @@ class Session:
             raise subprocess.CalledProcessError(rc, args)
 
 
+def arrival_color(args):
+    if args.no_color_arrival:
+        if args.chair:
+            raise ValueError("--chair requires a metric target; remove --no-color-arrival or --chair")
+        print("[arrival] disabled by --no-color-arrival", flush=True)
+        return None
+    if args.color:
+        print(f"[arrival] enabled color={args.color} from --color", flush=True)
+        return args.color
+    instruction = args.instruction or ""
+    colors = [c for c, zh in (("purple", "紫色"), ("blue", "蓝色"), ("green", "绿色"))
+              if zh in instruction or re.search(rf"\b{c}\b", instruction, re.IGNORECASE | re.ASCII)]
+    if len(colors) == 1:
+        print(f"[arrival] auto-enabled color={colors[0]} from instruction", flush=True)
+        return colors[0]
+    if args.chair:
+        if colors:
+            raise ValueError("Ambiguous chair target; select --color explicitly")
+        print("[arrival] enabled color=purple from --chair preset", flush=True)
+        return "purple"
+    reason = "multiple supported colors; select --color" if colors else "no supported color in instruction"
+    print(f"[arrival] disabled: {reason}", flush=True)
+    return None
+
+
 def execute(args, script):
     env = dict(os.environ, ROS_DOMAIN_ID=str(args.ros_domain), ROS_LOCALHOST_ONLY="1")
     for key in ("M3_STOP_TOKEN", "M3_SESSION_TOKEN"):
         env.pop(key, None)
     if hasattr(args, "instruction"):
-        env.update(M3_INSTRUCTION=args.instruction or "", M3_COLOR=args.color or "",
-                   M3_TARGET_ID="", M3_PI_HOST=str(args.pi_host))
+        color = arrival_color(args)
+        env.pop("M3_TARGET_ID", None)
+        env.update(M3_INSTRUCTION=args.instruction or "", M3_COLOR=color or "", M3_PI_HOST=str(args.pi_host))
         env["M3_DRY_RUN"] = "true" if args.dry_run else "false"
     elif getattr(args, "dry_run", False):
         env["M3_DRY_RUN"] = "true"
