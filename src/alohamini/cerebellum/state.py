@@ -28,10 +28,15 @@ def load_config(path=None):
         raise ValueError("invalid planner unknown policy or weight")
     if type(cfg["control"].setdefault("metric_arrival_autostop", False)) is not bool:
         raise ValueError("metric_arrival_autostop must be a boolean")
+    if type(cfg["control"].setdefault("continuous_follow", False)) is not bool:
+        raise ValueError("continuous_follow must be a boolean")
+    if cfg["control"]["continuous_follow"] and cfg["control"]["metric_arrival_autostop"]:
+        raise ValueError("continuous_follow cannot use one-shot metric arrival")
     for name in ("control", "limits", "planner", "ros_clock"):
         if not all(type(v) in (int, float) and math.isfinite(v) and v > 0 for k,v in cfg[name].items()
                    if (name, k) not in {("planner", "unknown_policy"), ("planner", "unknown_weight"),
-                                        ("control", "metric_arrival_autostop"), ("planner", "metric_target_detour")}):
+                                        ("control", "metric_arrival_autostop"), ("control", "continuous_follow"),
+                                        ("planner", "metric_target_detour")}):
             raise ValueError(f"{name}: expected positive finite parameters")
     return cfg
 

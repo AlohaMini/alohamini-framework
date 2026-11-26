@@ -48,7 +48,9 @@ def target_range(target, target_id, now_ns, max_age):
     return None
 
 
-def completion(decision, distance, wheel, control, chair):
+def completion(decision, distance, wheel, control, chair, *, follow=False):
+    if follow:
+        return None
     if (math.hypot(*wheel[:2]) > control['still_linear_m_s']
             or abs(wheel[2]) > control['still_angular_rad_s']):
         return None
@@ -70,7 +72,10 @@ def main():
     from sensor_msgs.msg import CompressedImage, JointState
     from std_srvs.srv import SetBool
     from rclpy.qos import qos_profile_sensor_data
-    p=argparse.ArgumentParser();p.add_argument('out',type=Path);p.add_argument('--chair',action='store_true')
+    p=argparse.ArgumentParser();p.add_argument('out',type=Path)
+    mode=p.add_mutually_exclusive_group()
+    mode.add_argument('--chair',action='store_true')
+    mode.add_argument('--follow',action='store_true')
     active=p.add_mutually_exclusive_group()
     active.add_argument('--operator-confirmed',action='store_true')
     active.add_argument('--dry-run',action='store_true')
@@ -133,6 +138,8 @@ def main():
     from alohamini.cerebellum.state import load_config
     import numpy as np
     cfg=load_config(Path(os.environ['M3_CONFIG']))
+    if a.follow != cfg["control"]["continuous_follow"] or (a.follow and target_id):
+        raise ValueError("monitor follow mode must match the controller and use no color target")
     maps={}; seen['grid']=0
     witnesses_by_stamp=OrderedDict()
     def witness(m):
@@ -210,7 +217,7 @@ def main():
             raise EndObservation(signum)
         raise InterruptedError(f'supervisor received signal {signum}')
     for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
-    armed=False;result={'mode':'chair' if a.chair else 'free'}
+    armed=False;result={'mode':'follow' if a.follow else 'chair' if a.chair else 'free'}
     try:
         spin(4.5)
         check_health(time.monotonic(), startup=True)
@@ -268,7 +275,7 @@ def main():
                     or abs(math.remainder(hw['yaw']-w0,math.tau))>1.25 or now-start>65
                     or (now-start>4 and math.hypot(travel,side)<.015)):
                 raise RuntimeError('chair approach envelope: '+str((travel,side,d['state'],d['reason'])))
-            done=completion(d,dist,wheel,control,a.chair)
+            done=completion(d,dist,wheel,control,a.chair,follow=a.follow)
             if done:
                 result.update(outcome=done,arrival_at=target.copy(),elapsed_s=now-start,stop_source=d['stop_source']);break
             if a.dry_run and diag.get('command_enabled')!='false':

@@ -39,6 +39,7 @@ class Controller:
         self.selected = None
         self.stop_requested = False
         self.stop_source = None
+        self.last_follow_stop = None
         self.reobserving = False
         self.arrival = None
         self.still_since = None
@@ -87,7 +88,10 @@ class Controller:
     def reference_fault(self, reason):
         self.reference, self.last_reference_error = None, reason
 
-    def stop(self, source="model_stop"):
+    def stop(self, source="model_stop", *, received=None):
+        if self.c.get("continuous_follow") and source == "model_stop":
+            self.reference = None
+            self.last_follow_stop = received
         if not self.stop_requested:
             self.stop_requested = True
             self.stop_source = source
@@ -180,17 +184,28 @@ class Controller:
                 return result("STOPPED", "first_still_feedback", expires=now)
             if sample.stamp - self.still_since < self.c["stop_confirm_s"]:
                 return result("VERIFYING_ARRIVAL", "confirming_measured_stillness", expires=now)
-            evidence = self.arrival
-            if (not self.valid_arrival(now, measured_only=self.stop_source == "metric_arrival_autostop")
-                    or evidence.stamp < self.stop_since):
-                return result("REOBSERVE", "arrival_evidence_missing_or_invalid", expires=now)
-            if evidence.distance_m <= self.c["arrival_distance_m"]:
-                return result("ARRIVED", "target_confirmed_within_distance_and_still", expires=now)
             ref = self.reference
-            if not (self.reobserving and map_ok and ref and ref.capture > self.stop_since
+            follow = self.c.get("continuous_follow") and self.stop_source == "model_stop"
+            if follow:
+                # Only an exposure taken after confirmed standstill and the latest
+                # debounced STOP can release this latch, including for odom paths.
+                cutoff = max(self.stop_since, self.still_since + self.c["stop_confirm_s"])
+                if self.last_follow_stop is not None:
+                    cutoff = max(cutoff, self.last_follow_stop)
+                waiting = "waiting_for_follow_reference"
+            else:
+                evidence = self.arrival
+                if (not self.valid_arrival(now, measured_only=self.stop_source == "metric_arrival_autostop")
+                        or evidence.stamp < self.stop_since):
+                    return result("REOBSERVE", "arrival_evidence_missing_or_invalid", expires=now)
+                if evidence.distance_m <= self.c["arrival_distance_m"]:
+                    return result("ARRIVED", "target_confirmed_within_distance_and_still", expires=now)
+                cutoff = self.stop_since
+                waiting = "target_outside_arrival_distance"
+            if not ((follow or self.reobserving) and map_ok and ref and ref.capture > cutoff
                     and mode_age(now, ref.capture, self.c["reference_ttl_s"]) and ref.received <= now
-                    and (ref.frame == "odom" or self.odom.at(ref.capture) is not None)):
-                return result("REOBSERVE", "target_outside_arrival_distance", expires=now)
+                    and ((not follow and ref.frame == "odom") or self.odom.at(ref.capture) is not None)):
+                return result("REOBSERVE", waiting, expires=now)
             self.stop_requested = False
             self.stop_source = None
             self.stop_since = self.still_since = self.arrival = None

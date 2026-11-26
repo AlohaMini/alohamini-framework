@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # M3 AlohaMini2 Pro operator entry point, on the inference workstation.
 set -eo pipefail
+if [[ ${1:-} == follow ]]; then
+    shift
+    exec "${CONDA_BASE:-$HOME/miniconda3}/bin/alohamini" navigate follow "$@"
+fi
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
 jjy=${JJY_HOME:-"$HOME/workspace/jjy"}
@@ -58,16 +62,22 @@ disable() {
 cleanup() {
     local role pid n stat birth entry
     local -a sessions=()
-    for role in brain controller arrival grid services camera bridge; do
+    local service_group=""
+    for role in brain controller arrival grid camera bridge services; do
         if owned "$role"; then
             read -r pid birth <"$run/$role.pid"
             sessions+=("$pid:$birth")
+            # Let camera consumers finish in-flight requests before closing their servers.
+            if [[ "$role" == services ]]; then service_group="$pid:$birth"; continue; fi
             kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
         fi
     done
     for entry in "${sessions[@]}"; do
         pid=${entry%:*}
         birth=${entry#*:}
+        if [[ "$entry" == "$service_group" ]] && owned services; then
+            kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+        fi
         # A model child may outlive the supervisor in its setsid group.
         for ((n=0; n<70; n++)); do
             if [[ -r "/proc/$pid/stat" && "$(awk '{print $22}' "/proc/$pid/stat")" != "$birth" ]]; then break; fi
@@ -94,6 +104,7 @@ if [[ "$action" == run ]]; then
     set -- start
 fi
 chair=false
+follow=false
 if [[ "$action" == start || "$action" == restart || "$action" == preflight || "$action" == drive ]]; then
     offset=2
     if [[ "$action" == preflight || "$action" == drive ]]; then
@@ -103,13 +114,18 @@ if [[ "$action" == start || "$action" == restart || "$action" == preflight || "$
     case "${*:$offset}" in
         '') ;;
         --chair) chair=true ;;
-        *) echo "Only --chair is supported after the positional arguments." >&2; exit 2 ;;
+        --follow) follow=true ;;
+        *) echo "Only --chair or --follow is supported after the positional arguments." >&2; exit 2 ;;
     esac
 fi
 case "$action" in
 start|restart)
     dry=${M3_DRY_RUN:-false}
     case "$dry" in false) actuate=true;; true) actuate=false;; *) echo "Invalid dry-run mode" >&2; exit 2;; esac
+    if "$follow"; then
+        export M3_CONFIG=${requested_config:-"$repo/evidence/m4-follow-shared.json"}
+        unset M3_COLOR M3_TARGET_ID
+    fi
     color=${M3_COLOR:-}
     if "$chair"; then color=${color:-purple}; fi
     case "$color" in ''|purple|blue|green) ;; *) echo "Unsupported M3_COLOR: $color" >&2; exit 2 ;; esac
@@ -159,6 +175,7 @@ start|restart)
     printf '%s\n' "$M3_CONFIG" "$M3_TARGET_ID" "$color" >"$run/profile"
     printf '%s' "$instruction" >"$run/instruction"
     printf '%s\n' "$dry" >"$run/dry-run"
+    printf '%s\n' "$follow" >"$run/follow"
     printf '%s\n' "${M3_SESSION_TOKEN:-standalone}" >"$run/session"
     sha256sum "$M3_CONFIG" >"$run/config.sha256"
     nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv >"$run/gpu-before.txt"
@@ -221,7 +238,11 @@ preflight|drive)
     if [[ -n "$M3_TARGET_ID" ]]; then roles+=(arrival); fi
     for role in "${roles[@]}"; do owned "$role" || { echo "Missing $role" >&2; exit 1; }; done
     sha256sum -c "$run/config.sha256"
+    startup_follow=false
+    if [[ -f "$run/follow" ]]; then read -r startup_follow <"$run/follow"; fi
+    [[ "$startup_follow" == "$follow" ]] || { echo "Follow mode differs from startup." >&2; exit 2; }
     args=()
+    if "$follow"; then args+=(--follow); fi
     dry=$(cat "$run/dry-run")
     [[ "$dry" == true || "$dry" == false ]] || exit 2
     [[ "${M3_DRY_RUN:-$dry}" == "$dry" ]] || { echo "Dry-run mode differs from the startup profile." >&2; exit 2; }
@@ -235,6 +256,7 @@ preflight|drive)
         echo "Observing only. Bridge commands disabled; Ctrl-C ends recording."
     elif [[ "$action" == drive ]]; then
         if "$chair"; then echo 'Right detour about 0.6–0.9 m, then forward about 1.2–1.5 m.'
+        elif "$follow"; then printf 'Continuous follow: %s\n' "$instruction"
         else printf 'Free navigation: %s\n' "$instruction"; fi
         printf 'Clear the route, physical E-stop in reach. Type GO: '
         read -r answer; [[ "$answer" == GO ]] || exit 2
@@ -269,6 +291,6 @@ status)
     ros2 topic info -v /cmd_vel || true
     nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv
     ;;
-*) echo "Usage: bash $0 {run 'instruction'|start [--chair]|restart [--chair]|preflight DIR [--chair]|drive DIR [--chair]|estop|stop|status}" >&2; exit 2 ;;
+*) echo "Usage: bash $0 {follow --instruction 'instruction'|run 'instruction'|start [--chair]|restart [--chair]|preflight DIR [--chair]|drive DIR [--chair]|estop|stop|status}" >&2; exit 2 ;;
 esac
 

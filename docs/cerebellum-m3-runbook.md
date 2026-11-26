@@ -1,5 +1,20 @@
 # AlohaMini2 Pro · M3 自由导航与绕椅验收
 
+## 5090 持续跟随
+
+在双摄 Host 就绪的 5090 上运行。第一条观察真实图像、小脑决策和地图，第二条通过静检后等待输入 `GO` 再使能底盘。
+
+```bash
+alohamini navigate follow --dry-run --instruction "Follow the person in front of you."
+alohamini navigate follow --instruction "Follow the person in front of you."
+```
+
+前视图像供 LightNav-0 生成航点，两路图像供局部建图。跟随模式关闭颜色停靠。连续两帧模型 STOP 会触发制动，轮速确认停稳后保持零速。只有停稳后的新航点、可插值的里程计和新鲜地图同时有效，控制器才恢复规划。模型根据图像和指令判断跟随对象；当前实现没有身份跟踪器，遮挡或多人交叉时可能换人。
+
+专用配置 `evidence/m4-follow-shared.json` 的前进、横移、倒车上限为 0.20、0.14、0.06 m/s，平移合速度上限为 0.20 m/s，偏航上限为 0.45 rad/s。SlowFast 使用整段视觉历史，跟随客户端每处理 64 帧在下一次预测前重置模型上下文，沿用同一指令和递增帧序号。参考路径有效期为 2.0 s，地图有效期为 0.8 s。
+
+用 `Ctrl-C` 结束本轮，或在另一终端执行 `alohamini navigate estop` 锁存急停并禁用桥。若指定了 `--ros-domain`，急停命令使用同一域。可传 `--pi-host`、`--output-dir` 或基于 M4 配置的 `--config`。正式 CLI 同时支持 `bash examples/navigation/m3_navigation.sh follow --instruction "..."`。
+
 ## 5090 常用指令
 
 树莓派 Host 已就绪时，在 5090 终端运行。第一条只观察，按 Ctrl-C 结束；第二条通过静检后等待现场输入 `GO`。

@@ -86,17 +86,29 @@ LOW_SPEED_CAPS = {
 }
 
 
+ACTUATION_CAPS = {
+    "alohamini2pro-m3-low-speed-v1": LOW_SPEED_CAPS,
+    "alohamini2pro-m4-follow-v1": {
+        **LOW_SPEED_CAPS, "forward_m_s": .20, "linear_m_s": .20,
+        "lateral_m_s": .14, "yaw_rad_s": .45,
+    },
+}
+
+
 def actuator_enabled(dry_run, enable_actuators, grid_source, config_path, config, model):
     if dry_run is True and enable_actuators is False:
         return False
     if dry_run is not False or enable_actuators is not True:
         raise ValueError("actuator output requires both explicit unlocks")
+    profile = config.get("actuation_profile")
     if (grid_source != "measured_metric" or model != "alohamini2pro" or not config_path
-            or config.get("actuation_profile") != "alohamini2pro-m3-low-speed-v1"):
+            or profile not in ACTUATION_CAPS):
         raise ValueError("expected measured_metric and explicit AlohaMini2 Pro low-speed profile")
-    for key, cap in LOW_SPEED_CAPS.items():
+    if bool(config["control"].get("continuous_follow")) != (profile == "alohamini2pro-m4-follow-v1"):
+        raise ValueError("actuation profile does not match continuous_follow")
+    for key, cap in ACTUATION_CAPS[profile].items():
         if not 0 < config["limits"][key] <= cap:
-            raise ValueError(f"unsafe M3 low-speed limit: {key}")
+            raise ValueError(f"unsafe low-speed limit for {profile}: {key}")
     return True
 
 
@@ -179,6 +191,8 @@ def main():
             if live and self.get_parameter("use_sim_time").value:
                 raise ValueError("live output requires a system clock")
             self.target_id = self.declare_parameter("target_id", "").value
+            if config["control"]["continuous_follow"] and self.target_id:
+                raise ValueError("continuous_follow requires an empty metric target ID")
             self.controller = Controller(config, model)
             self.debounce = StopDebounce(self.declare_parameter("stop_confirm_count", 1).value)
             self.loop = Periodic(config["control"]["frequency_hz"])
@@ -270,7 +284,7 @@ def main():
 
         def on_stop(self, msg):
             if self.debounce.observe(msg.data):
-                self.controller.stop()
+                self.controller.stop(received=time.perf_counter())
 
         def on_arrival(self, msg):
             try:

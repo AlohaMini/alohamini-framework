@@ -1,10 +1,10 @@
 """M2b isolated perception processes. Every output is data for the dry-run controller."""
 import argparse
-import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
+import signal
 from pathlib import Path as FilePath
 import time
 import urllib.request
@@ -12,6 +12,7 @@ import urllib.request
 import cv2
 import numpy as np
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped
@@ -22,7 +23,7 @@ from std_msgs.msg import Bool,String
 from alohamini.cerebellum.local_grid import RollingLocalGrid, aligned_points, ground_ray_distance, vote_mask
 from alohamini.cerebellum.rgb_navigation import CAMERAS, HSVContact, LiftHistory, PoseHistory, Rectifier, TargetMemory
 from alohamini.cerebellum.state import Pose,load_config
-from lightnav_vln import camera_topic,exchange
+from lightnav_vln import camera_topic, exchange, request_prediction
 
 CTRL="/alohamini_cerebellum_dry_run/"
 SENSOR=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -225,20 +226,20 @@ class RGBGrid(SpatialNode):
                             from array import array
                             out.data=array("b",cells.tobytes())
                             capture_ns=msg.header.stamp.sec*10**9+msg.header.stamp.nanosec
-                            try:
-                                rows=self.witnesses.update(grid,self.mapper,image,depth,c,delta,result,pose,
-                                    self.detector,capture_ns,self.chest_max_range_m if cam=="chest" else None,
-                                    self.config["footprint_m"])
-                                packet=dict(epoch=epoch,stamp_ns=capture_ns,frame="odom",target_id=self.target_id,
-                                            origin=grid.origin,resolution=out.info.resolution,target_only_cells=rows)
-                                self.witness_pub.publish(String(data=json.dumps(packet,allow_nan=False)))
-                            except (ValueError,ArithmeticError,RuntimeError,cv2.error) as exc:
-                                self.witnesses.owned.clear()
-                                self.witnesses.previous={(i+round(grid.origin[0]/grid.resolution),
-                                                          j+round(grid.origin[1]/grid.resolution)) for i,j in grid.occupied}
-                                self.get_logger().warning(f"Target attribution unavailable: {exc}",throttle_duration_sec=2.)
-                            finally:
-                                self.grid.publish(out)
+                            if self.target_id:
+                                try:
+                                    rows=self.witnesses.update(grid,self.mapper,image,depth,c,delta,result,pose,
+                                        self.detector,capture_ns,self.chest_max_range_m if cam=="chest" else None,
+                                        self.config["footprint_m"])
+                                    packet=dict(epoch=epoch,stamp_ns=capture_ns,frame="odom",target_id=self.target_id,
+                                                origin=grid.origin,resolution=out.info.resolution,target_only_cells=rows)
+                                    self.witness_pub.publish(String(data=json.dumps(packet,allow_nan=False)))
+                                except (ValueError,ArithmeticError,RuntimeError,cv2.error) as exc:
+                                    self.witnesses.owned.clear()
+                                    self.witnesses.previous={(i+round(grid.origin[0]/grid.resolution),
+                                                              j+round(grid.origin[1]/grid.resolution)) for i,j in grid.occupied}
+                                    self.get_logger().warning(f"Target attribution unavailable: {exc}",throttle_duration_sec=2.)
+                            self.grid.publish(out)
                             self.accepted[cam]+=1
                             if time.monotonic()-self.stats_at>=3:
                                 self.get_logger().info(f"map updates={self.accepted}, lift baseline={self.lift.baseline}")
@@ -316,7 +317,8 @@ class Brain(CameraNode):
         self.started_at=0.
 
     def predict(self,seq,data):
-        return exchange(self.ws,"next",dict(seq=seq,instruction=self.args.instruction,image=base64.b64encode(data).decode()))
+        return request_prediction(self.ws, seq, data, self.args.instruction,
+                                  continuous_follow=self.config["control"]["continuous_follow"])
 
     def tick(self):
         if self.pending is not None:
@@ -363,11 +365,28 @@ def main():
     p.add_argument("--target-id",default="purple_toy")
     p.add_argument("--instruction",default="Approach the purple toy and stop in front of it.")
     a=p.parse_args()
-    cv2.setNumThreads(1);rclpy.init(args=[])
-    node={"grid":RGBGrid,"arrival":ArrivalNode,"brain":Brain}[a.node](a)
-    try:rclpy.spin(node)
-    except KeyboardInterrupt:pass
-    finally:node.destroy_node();rclpy.try_shutdown()
+    cv2.setNumThreads(1)
+    rclpy.init(args=[], signal_handler_options=SignalHandlerOptions.NO)
+    stopping = False
+
+    def stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+
+    handlers = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    node = None
+    try:
+        node = {"grid":RGBGrid,"arrival":ArrivalNode,"brain":Brain}[a.node](a)
+        while not stopping:
+            rclpy.spin_once(node, timeout_sec=.10)
+    finally:
+        try:
+            if node is not None:
+                node.destroy_node()
+        finally:
+            rclpy.try_shutdown()
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
 
 
 if __name__=="__main__":

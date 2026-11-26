@@ -16,6 +16,7 @@ def parser():
     actions = root.add_subparsers(dest="action", required=True)
     for name, help_text in (
         ("run", "启动、静检、等待 GO 并导航，退出时关闭会话"),
+        ("follow", "持续跟随，模型停车后等待新航点，Ctrl-C 结束"),
         ("start", "启动服务并禁用底盘桥命令"),
         ("drive", "使用当前服务执行导航"),
         ("preflight", "只读检查当前服务和传感器"),
@@ -26,17 +27,19 @@ def parser():
     ):
         sub = actions.add_parser(name, help=help_text, description=help_text)
         sub.add_argument("--ros-domain", type=int, choices=range(1, 233), metavar="1..232", default=181)
-        if name in ("start", "restart", "run"):
-            sub.add_argument("--instruction", required=name == "run", help="LightNav 自然语言指令")
-            arrival = sub.add_mutually_exclusive_group()
-            arrival.add_argument("--color", choices=("purple", "blue", "green"), help="明确指定近场目标颜色")
-            arrival.add_argument("--no-color-arrival", action="store_true", help="仅按导航指令运行，关闭颜色停靠")
+        if name in ("start", "restart", "run", "follow"):
+            sub.add_argument("--instruction", required=name in ("run", "follow"), help="LightNav 自然语言指令")
+            if name != "follow":
+                arrival = sub.add_mutually_exclusive_group()
+                arrival.add_argument("--color", choices=("purple", "blue", "green"), help="明确指定近场目标颜色")
+                arrival.add_argument("--no-color-arrival", action="store_true", help="仅按导航指令运行，关闭颜色停靠")
             sub.add_argument("--pi-host", type=ipaddress.IPv4Address, default="192.168.2.2", help="树莓派 IPv4 地址")
-        if name in ("start", "restart", "run", "drive", "preflight"):
+        if name in ("start", "restart", "run", "follow", "drive", "preflight"):
             sub.add_argument("--config", type=Path, help="低速导航配置 JSON 的路径")
-            sub.add_argument("--chair", action="store_true", help="启用绕椅专项验收条件")
+            if name != "follow":
+                sub.add_argument("--chair", action="store_true", help="启用绕椅专项验收条件")
             sub.add_argument("--dry-run", action="store_true", help="静态观察，底盘桥保持禁用")
-        if name in ("preflight", "drive", "run"):
+        if name in ("preflight", "drive", "run", "follow"):
             sub.add_argument("--output-dir", type=Path, help="新建的结果目录；run 下包含 preflight/ 和 drive/")
     return root
 
@@ -124,8 +127,9 @@ def execute(args, script):
     env = dict(os.environ, ROS_DOMAIN_ID=str(args.ros_domain), ROS_LOCALHOST_ONLY="1")
     for key in ("M3_STOP_TOKEN", "M3_SESSION_TOKEN"):
         env.pop(key, None)
+    follow = args.action == "follow"
     if hasattr(args, "instruction"):
-        color = arrival_color(args)
+        color = None if follow else arrival_color(args)
         env.pop("M3_TARGET_ID", None)
         env.update(M3_INSTRUCTION=args.instruction or "", M3_COLOR=color or "", M3_PI_HOST=str(args.pi_host))
         env["M3_DRY_RUN"] = "true" if args.dry_run else "false"
@@ -134,14 +138,21 @@ def execute(args, script):
     if getattr(args, "config", None):
         env["M3_CONFIG"] = str(args.config.expanduser().resolve())
     flags = ["--chair"] if getattr(args, "chair", False) else []
+    if follow:
+        from .state import load_config
+        config = args.config or script.parents[2] / "evidence/m4-follow-shared.json"
+        env["M3_CONFIG"] = str(config.expanduser().resolve())
+        if not load_config(env["M3_CONFIG"])["control"]["continuous_follow"]:
+            raise ValueError("follow requires control.continuous_follow=true")
+        flags = ["--follow"]
     session = Session(script, env)
     output = getattr(args, "output_dir", None)
-    if args.action in ("run", "drive", "preflight"):
+    if args.action in ("run", "follow", "drive", "preflight"):
         output = (output.expanduser().resolve() if output else script.parents[2] / "trials" /
                   (args.action + "-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")))
     old = {s: signal.signal(s, session.interrupt) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
     try:
-        if args.action == "run":
+        if args.action in ("run", "follow"):
             output.mkdir(parents=True, exist_ok=False)
             print(f"导航记录 {output}", flush=True)
             env["M3_SESSION_TOKEN"] = uuid4().hex

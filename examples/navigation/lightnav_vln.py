@@ -18,10 +18,18 @@ def exchange(ws, action, data):
     return reply
 
 
-def predict(ws, seq, jpeg, instruction):
-    reply = exchange(ws, "next", {
+def request_prediction(ws, seq, jpeg, instruction, *, continuous_follow=False):
+    # SlowFast stores complete episodes. Rotate visual history before frame 65;
+    # the ROS sequence and controller STOP/estop state are independent of reset.
+    if continuous_follow and seq > 1 and (seq - 1) % 64 == 0:
+        exchange(ws, "reset", {})
+    return exchange(ws, "next", {
         "seq": seq, "instruction": instruction, "image": base64.b64encode(jpeg).decode("ascii")
     })
+
+
+def predict(ws, seq, jpeg, instruction):
+    reply = request_prediction(ws, seq, jpeg, instruction)
     if type(reply.get("seq")) is not int or reply["seq"] != seq or type(reply.get("stop")) is not bool:
         raise ValueError("Invalid sequence or stop flag")
     if reply["stop"]:

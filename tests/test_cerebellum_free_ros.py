@@ -67,11 +67,11 @@ class FreeDriveSmoke(unittest.TestCase):
             def run(case):
                 calls.clear();trips.clear()
                 out=Path(tmp)/case
-                env=dict(os.environ,M3_CONFIG=str(root/"evidence/m3-low-speed-shared.json"),
+                env=dict(os.environ,M3_CONFIG=str(root/"evidence"/("m4-follow-shared.json" if case=="follow" else "m3-low-speed-shared.json")),
                          M3_TARGET_ID="purple_toy" if case=="chair" else "")
                 cmd=[sys.executable,str(root/"examples/navigation/m3_trial_monitor.py"),str(out),
                      "--dry-run" if case=="dry" else "--operator-confirmed"]
-                if case=="chair":cmd.append("--chair")
+                if case in ("follow","chair"):cmd.append("--"+case)
                 proc=subprocess.Popen(cmd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
                 begin=time.monotonic(); enabled_at=None; sent=False
                 try:
@@ -79,7 +79,7 @@ class FreeDriveSmoke(unittest.TestCase):
                         now=time.monotonic()
                         if True in calls and enabled_at is None:enabled_at=now
                         elapsed=0 if enabled_at is None else now-enabled_at
-                        if case=="interrupt" and elapsed>.35 and not sent:
+                        if (case=="interrupt" and elapsed>.35 or case=="follow" and elapsed>1.2) and not sent:
                             proc.send_signal(signal.SIGINT);sent=True
                         stamp=fixture.get_clock().now().to_msg()
                         ns_time=stamp.sec*10**9+stamp.nanosec
@@ -100,7 +100,7 @@ class FreeDriveSmoke(unittest.TestCase):
                                   KeyValue(key="lift_command_ready",value="true")]
                         da=DiagnosticArray();da.header.stamp=stamp;da.status=[d];diag.publish(da)
                         pose.publish(String(data=json.dumps(dict(x=0.,y=2. if elapsed else 0.,yaw=0.,stamp_ns=ns_time,epoch=1))))
-                        done=(case=="free" and elapsed>.6) or (case=="dry" and now-begin>5.5)
+                        done=(case in ("free","follow") and elapsed>.6) or (case=="dry" and now-begin>5.5)
                         hold=case=="free" and .05<elapsed<.45
                         dec.publish(String(data=json.dumps(dict(state="REOBSERVE" if done else "SAFETY_HOLD" if hold else "TRACKING",
                             reason="arrival_evidence_missing_or_invalid" if done else "best_score",
@@ -128,8 +128,11 @@ class FreeDriveSmoke(unittest.TestCase):
                         self.assertEqual(proc.returncode,0,output)
                         self.assertEqual(result["outcome"],"model_stop")
                     else:
+                        if case=="follow":
+                            self.assertTrue(sent, output)
+                            self.assertEqual(result["last_decision"]["state"], "REOBSERVE")
                         self.assertIn(True,trips,output)
                         self.assertNotEqual(proc.returncode,0)
-            for case in ("chair","free","interrupt","dry"):
+            for case in ("chair","free","interrupt","follow","dry"):
                 if case=="dry":ctrl.destroy_publisher(velocity)
                 with self.subTest(case=case):run(case)

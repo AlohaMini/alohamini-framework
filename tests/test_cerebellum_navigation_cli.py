@@ -49,9 +49,13 @@ class NavigationCLI(unittest.TestCase):
                               'if [[ "$1" == drive ]]; then exec sleep 60; fi\n')
             harness = ("import sys; from pathlib import Path; from alohamini.cerebellum import cli; "
                        "sys.exit(cli.execute(cli.parser().parse_args(sys.argv[2:]),Path(sys.argv[1])))")
-            for idx, sig in enumerate((signal.SIGINT, signal.SIGTERM, None)):
+            for idx, sig in enumerate((signal.SIGINT, signal.SIGTERM, None, signal.SIGINT)):
                 trace = root/f"trace-{idx}"
                 args = ["run", "--instruction", "Go left", "--dry-run", "--chair", "--output-dir", str(root/f"out-{idx}")]
+                if idx == 3:
+                    profile = Path(__file__).resolve().parents[1]/"evidence/m4-follow-shared.json"
+                    args = ["follow","--instruction","Follow the person in blue","--dry-run",
+                            "--config",str(profile),"--output-dir",str(root/f"out-{idx}")]
                 with subprocess.Popen([sys.executable,"-c",harness,str(script),*args],
                                       env=dict(os.environ,TRACE=str(trace),FAIL="no" if sig else "yes")) as proc:
                     try:
