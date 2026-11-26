@@ -1,41 +1,90 @@
-"""Static/live capture adapter. Convert Pi exposure timestamps to the local clock."""
-import json
-import subprocess
+"""Convert Pi exposure timestamps to the workstation clock before publishing."""
 import sys
 import threading
 import time
-import rclpy
-from alohamini_camera.camera_node import AlohaMiniCameraNode, ros_stamp_from_unix_ns
+
+from m3_clock_check import assess, measure
+
+
+class CameraClock:
+    """Replace the complete anchor on a good probe. Expiry is checked on every frame."""
+
+    def __init__(self):
+        self.anchor = None
+
+    def refresh(self, samples, now):
+        result = assess(samples, bound_ns=None)
+        lo, hi = result["pi_minus_pc_ns"]
+        details = (f"lo_ns={lo} hi_ns={hi} width_ms={(hi - lo) / 1e6:.3f} "
+                   f"min_rtt_ms={result['min_rtt_ns'] / 1e6:.3f} "
+                   f"used={result['used']}/{len(samples)}")
+        if not result["passed"]:
+            raise ValueError(f"{result['reason']}: {details}")
+        # Taking the upper bound prevents dating an exposure later than it occurred.
+        self.anchor = (now, hi)
+        return details
+
+    def corrected_stamp(self, capture_ns, now, wall_ns):
+        anchor = self.anchor
+        if anchor is None:
+            raise ValueError("no valid Pi clock anchor")
+        if now - anchor[0] > 30:
+            raise ValueError("Pi clock anchor older than 30 s")
+        corrected = capture_ns - anchor[1]
+        age_ns = wall_ns - corrected
+        if not 0 <= age_ns < 250_000_000:
+            raise ValueError(f"camera outside capture deadline: age_ms={age_ns / 1e6:.3f}")
+        return corrected
+
 
 def main():
-    ctl=sys.argv.pop(1)
-    peer=sys.argv.pop(1)
-    offset=[None]
-    done=threading.Event()
-    def probe():
-        while not done.is_set():
-            try:
-                r=subprocess.run([sys.executable,'examples/navigation/m3_clock_check.py','--ssh-control',ctl,peer],capture_output=True,text=True,timeout=7)
-                d=json.loads(r.stdout);lo,hi=d['pi_minus_pc_ns']
-                if not (0<=hi-lo<=1_000_000 and max(abs(lo),abs(hi))<40_000_000):
-                    raise ValueError("uncertain Pi clock")
-                offset[0]=(time.monotonic(),hi)
-                print("measured Pi-PC ns",lo,hi,flush=True)
-            except Exception as exc:
-                offset[0]=None;print(exc,flush=True)
-            done.wait(3.)
-    class Timed(AlohaMiniCameraNode):
-        def frame_stamp(self,frame):
-            anchor=offset[0]
-            if anchor is None or time.monotonic()-anchor[0]>5:
-                raise ValueError("missing fresh clock calibration")
-            corrected=frame.capture_unix_ns-anchor[1]
-            if not 0 <= time.time_ns()-corrected < 250_000_000:
-                raise ValueError("camera outside capture deadline")
-            return ros_stamp_from_unix_ns(corrected)
-    rclpy.init();node=Timed();threading.Thread(target=probe,daemon=True).start()
-    try:rclpy.spin(node)
-    except KeyboardInterrupt:pass
-    finally:done.set();node.destroy_node();rclpy.try_shutdown()
+    import rclpy
+    from rclpy.executors import ExternalShutdownException
+    from alohamini_camera.camera_node import AlohaMiniCameraNode, ros_stamp_from_unix_ns
 
-if __name__=='__main__':main()
+    ctl, peer = sys.argv.pop(1), sys.argv.pop(1)
+    clock = CameraClock()
+    done = threading.Event()
+
+    def refresh():
+        try:
+            samples = measure(peer, ctl)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"Pi clock probe failed: {exc}; lo_ns=n/a hi_ns=n/a min_rtt_ms=n/a",
+                  flush=True)
+            return
+        try:
+            details = clock.refresh(samples, time.monotonic())
+            print(f"measured Pi-PC {details}", flush=True)
+        except ValueError as exc:
+            print(f"Pi clock probe failed: {exc}", flush=True)
+
+    def probe():
+        while not done.wait(3):
+            refresh()
+
+    class Timed(AlohaMiniCameraNode):
+        def frame_stamp(self, frame):
+            stamp = clock.corrected_stamp(frame.capture_unix_ns, time.monotonic(), time.time_ns())
+            return ros_stamp_from_unix_ns(stamp)
+
+    # Probe before subscribing so startup does not discard frames during the SSH handshake.
+    refresh()
+    rclpy.init()
+    node = Timed()
+    worker = threading.Thread(target=probe, daemon=True)
+    worker.start()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        done.set()
+        print(f"camera summary: received={node.received} rejected={node.invalid}", flush=True)
+        node.destroy_node()
+        rclpy.try_shutdown()
+        worker.join(timeout=8)
+
+
+if __name__ == "__main__":
+    main()
